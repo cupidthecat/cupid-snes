@@ -1,4 +1,4 @@
-# snes
+# cupid-snes
 
 A C++20 SNES emulator with an SDL3 frontend and a core that can be used from tests and command-line tools. The project focuses on the console bus, cartridge hardware, audio, video timing, and the parts of the system that can be checked without a game running.
 
