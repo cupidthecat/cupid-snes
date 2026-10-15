@@ -2,7 +2,7 @@
 // core/src/ppu/PpuRender.cpp
 // Scanline rendering for backgrounds, sprites, and color math.
 
-// PpuRender.cpp — SNES PPU scanline rendering pipeline
+// PpuRender.cpp - SNES PPU scanline rendering pipeline
 //
 // Implements the scanline rendering pipeline:
 //   - IO state snapshot per visible scanline
@@ -50,7 +50,7 @@ bool OamTraceEnabled() {
 
 void Ppu::BuildLightTable() {
     // 16 brightness levels × 32768 BGR555 entries
-    // Index and output are both plain BGR555 — no channel swapping.
+    // Index and output are both plain BGR555 - no channel swapping.
     lightTableData_ = std::make_unique<uint16_t[]>(16 * 32768);
     for (int l = 0; l < 16; l++) {
         lightTable_[l] = lightTableData_.get() + l * 32768;
@@ -68,7 +68,7 @@ void Ppu::BuildLightTable() {
     }
 }
 
-// OAM parsing — raw bytes → structured Object array
+// OAM parsing - raw bytes → structured Object array
 
 void Ppu::ParseOam() {
     for (int n = 0; n < 128; n++) {
@@ -98,12 +98,12 @@ void Ppu::ParseOam() {
     }
 }
 
-// Scanline snapshot — called each visible scanline during emulation
+// Scanline snapshot - called each visible scanline during emulation
 
 // ScanlineBegin is defined in Ppu.cpp; we update it here with caching.
 // The actual caching is done via the new body (see wire-up below).
 
-// Frame rendering — renders all cached scanlines at VBlank
+// Frame rendering - renders all cached scanlines at VBlank
 
 void Ppu::RenderFrame() {
     if (lineCount_ == 0) return;
@@ -157,7 +157,7 @@ void Ppu::RenderFrame() {
     gRenderFrame++;
 }
 
-// RenderLine — the core per-scanline pipeline
+// RenderLine - the core per-scanline pipeline
 
 void Ppu::RenderLine(Line& line) {
   const auto &events = rasterEvents_[line.y];
@@ -256,7 +256,7 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
   }
 }
 
-// InitLineBuffers — fill with backdrop color
+// InitLineBuffers - fill with backdrop color
 
 void Ppu::InitLineBuffers(Line& line) {
     bool hires = line.io.pseudoHires || line.io.bgMode == 5 || line.io.bgMode == 6;
@@ -269,7 +269,7 @@ void Ppu::InitLineBuffers(Line& line) {
     }
 }
 
-// PlotAbove / PlotBelow — priority-based pixel merge
+// PlotAbove / PlotBelow - priority-based pixel merge
 
 void Ppu::PlotAbove(Line& line, int x, uint8_t source,
                     uint8_t priority, uint16_t color) {
@@ -285,7 +285,7 @@ void Ppu::PlotBelow(Line& line, int x, uint8_t source,
     }
 }
 
-// DirectColor — BG1 direct color mode (modes 3/4)
+// DirectColor - BG1 direct color mode (modes 3/4)
 
 uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
     // paletteIndex = bgr bits from palette number (3 bits)
@@ -296,7 +296,7 @@ uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
         ((paletteColor << 7) & 0x6000) + ((paletteIndex << 10) & 0x1000));  // B
 }
 
-// GetTile — tilemap word lookup
+// GetTile - tilemap word lookup
 //
 // The tilemap contains 16-bit entries: vhopppcc cccccccc
 //   v=vflip h=hflip o=priority ppp=palette cccccccccc=character
@@ -320,7 +320,7 @@ uint16_t Ppu::GetTile(const Line& line, const Background& bg,
     return line.vram[(bg.screenAddress + offset) & 0x7FFF];
 }
 
-// RenderBackground — tiled BG rendering (modes 0-6, 2/4/8bpp)
+// RenderBackground - tiled BG rendering (modes 0-6, 2/4/8bpp)
 //
 
 void Ppu::RenderBackground(Line& line, const Background& bg, uint8_t source) {
@@ -443,7 +443,7 @@ void Ppu::RenderBackground(Line& line, const Background& bg, uint8_t source) {
 
         uint32_t tileNumber = tileEntry & 0x03FF;
 
-        // 16×16 tile handling — note: additions happen BEFORE 10-bit mask,
+        // 16×16 tile handling - note: additions happen BEFORE 10-bit mask,
         // Apply the ten-bit tile-number mask after adding the subtile offset.
         if (tileWidth == 4 && (static_cast<bool>(hoffset2 & 8) ^ static_cast<bool>(mirrorX)))
             tileNumber += 1;
@@ -558,7 +558,7 @@ void Ppu::RenderBackground(Line& line, const Background& bg, uint8_t source) {
     }
 }
 
-// RenderMode7 — Mode 7 affine-transformed background
+// RenderMode7 - Mode 7 affine-transformed background
 //
 
 void Ppu::RenderMode7(Line& line, const Background& bg, uint8_t source) {
@@ -677,13 +677,13 @@ void Ppu::RenderMode7(Line& line, const Background& bg, uint8_t source) {
     }
 }
 
-// RenderObjects — sprite rendering
+// RenderObjects - sprite rendering
 //
 
 void Ppu::RenderObjects(Line& line, const ObjectIO& obj) {
     if (!obj.aboveEnable && !obj.belowEnable) return;
 
-    // Phase 1: Sprite evaluation — find which sprites are on this scanline
+    // Phase 1: Sprite evaluation - find which sprites are on this scanline
     bool winAbove[256], winBelow[256];
     RenderWindow(line, obj.window, obj.window.aboveEnable, winAbove);
     RenderWindow(line, obj.window, obj.window.belowEnable, winBelow);
@@ -738,7 +738,7 @@ void Ppu::RenderObjects(Line& line, const ObjectIO& obj) {
         itemCount++;
     }
 
-    // Phase 2: Tile fetching (reverse order — lower index = higher priority)
+    // Phase 2: Tile fetching (reverse order - lower index = higher priority)
     for (int n = itemCount - 1; n >= 0; n--) {
         const auto& item = line.items[n];
         if (!item.valid) continue;
@@ -861,7 +861,7 @@ void Ppu::RenderObjects(Line& line, const ObjectIO& obj) {
     }
 }
 
-// RenderWindow — compute window mask for a BG/OBJ layer
+// RenderWindow - compute window mask for a BG/OBJ layer
 //
 // output[x] = true means pixel is INSIDE the window → will be clipped
 
@@ -890,7 +890,7 @@ void Ppu::RenderWindow(const Line& line, const WindowLayer& wl, bool enable,
         return;
     }
 
-    // Both windows enabled — combine with mask logic
+    // Both windows enabled - combine with mask logic
     for (int x = 0; x < 256; x++) {
         bool one = (x >= line.io.window.oneLeft && x <= line.io.window.oneRight) ^ wl.oneInvert;
         bool two = (x >= line.io.window.twoLeft && x <= line.io.window.twoRight) ^ wl.twoInvert;
@@ -903,7 +903,7 @@ void Ppu::RenderWindow(const Line& line, const WindowLayer& wl, bool enable,
     }
 }
 
-// RenderWindowColor — compute window mask for color math
+// RenderWindowColor - compute window mask for color math
 //
 // mask: 0=always on, 1=inside window only, 2=outside window only, 3=never
 // output[x] = true means color math/display is ENABLED at this pixel
@@ -956,7 +956,7 @@ void Ppu::RenderWindowColor(const Line& line, const WindowColor& wc,
     }
 }
 
-// CompositePixel — color math compositing per pixel
+// CompositePixel - color math compositing per pixel
 //
 
 uint16_t Ppu::CompositePixel(const Line &line, int x, ColorMathLatch &latch) const {

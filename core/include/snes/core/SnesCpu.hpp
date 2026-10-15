@@ -3,7 +3,7 @@
 // SNES CPU wrapper interface.
 
 #pragma once
-// SnesCpu.hpp — SNES-specific CPU wrapper
+// SnesCpu.hpp - SNES-specific CPU wrapper
 //
 // Inherits the pure Processor65816 core and implements:
 //   - Virtual bus: read/write/idle with SNES memory-map timing
@@ -23,7 +23,7 @@
 
 namespace snes::core {
 
-// SnesCpu — SNES 65816 CPU
+// SnesCpu - SNES 65816 CPU
 class SnesCpu : public Processor65816 {
 public:
     explicit SnesCpu(ICpuBus& bus);
@@ -110,7 +110,7 @@ private:
   std::function<uint32_t()> resumeStep_;
   std::function<void()> discardStep_;
 
-  // Clock accounting — adds master clocks
+  // Clock accounting - adds master clocks
   void addClocks(uint32_t clocks);
 
   // NMI / IRQ state

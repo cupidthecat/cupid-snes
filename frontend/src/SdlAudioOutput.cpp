@@ -2,7 +2,7 @@
 // frontend/src/SdlAudioOutput.cpp
 // SDL audio queue and device management.
 
-// SdlAudioOutput.cpp — SDL3-based audio output implementation
+// SdlAudioOutput.cpp - SDL3-based audio output implementation
 
 #include "SdlAudioOutput.hpp"
 
@@ -35,7 +35,7 @@ SdlAudioOutput::SdlAudioOutput(const Config& config) {
     stream_ = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
         &spec,
-        nullptr,   // no callback — push model
+        nullptr,  // no callback - push model
         nullptr);  // no userdata
 
     if (!stream_) {

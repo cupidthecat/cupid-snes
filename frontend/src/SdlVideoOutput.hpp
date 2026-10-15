@@ -3,7 +3,7 @@
 // SDL video output interface.
 
 #pragma once
-// SdlVideoOutput.hpp — SDL3-based video output for the SNES emulator
+// SdlVideoOutput.hpp - SDL3-based video output for the SNES emulator
 //
 // Creates an SDL window + renderer + streaming texture.  Each call to
 // Present() uploads the PPU framebuffer and draws it scaled to the window.
@@ -13,7 +13,7 @@
 // The texture always matches the incoming VideoFrame dimensions so
 // that varying frame sizes (e.g. overscan 256×239) are handled.
 //
-// SDL3 API (not SDL2) — uses SDL_CreateWindow / SDL_CreateRenderer /
+// SDL3 API (not SDL2) - uses SDL_CreateWindow / SDL_CreateRenderer /
 // SDL_CreateTexture / SDL_UpdateTexture / SDL_RenderTexture.
 
 #include "snes/core/Platform.hpp"

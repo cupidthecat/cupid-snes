@@ -3,11 +3,11 @@
 // DSP-1 command interface.
 
 #pragma once
-// Dsp1.hpp — DSP-1 (uPD77C25) coprocessor HLE
+// Dsp1.hpp - DSP-1 (uPD77C25) coprocessor HLE
 //
 // High-level emulation of the DSP-1 math coprocessor used in SNES games
-// like Super Mario Kart. Ported from bsnes's dsp1emu (by Overload, The
-// Dumper, Neviksti, Andreas Naive).
+// like Super Mario Kart. Original research by Overload, The Dumper,
+// Neviksti, and Andreas Naive.
 //
 // The cartridge board selects the data and status address windows.
 

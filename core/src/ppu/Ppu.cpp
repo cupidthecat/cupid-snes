@@ -2,13 +2,13 @@
 // core/src/ppu/Ppu.cpp
 // PPU registers, memory ports, counters, and frame state.
 
-// Ppu.cpp — SNES PPU register model implementation
+// Ppu.cpp - SNES PPU register model implementation
 //
-// Implements all PPU registers $2100–$213F following bsnes ppu-fast/io.cpp.
+// Implements PPU registers $2100-$213F and their bus-side effects.
 // This file handles the register read/write interface and VRAM/OAM/CGRAM
 // access.  Rendering pipeline is in PpuRender.cpp.
 //
-// Reference: bsnes sfc/ppu-fast/io.cpp, ppu-fast/ppu.cpp
+// Register state controls memory access and the rendering pipeline.
 
 #include "snes/core/Ppu.hpp"
 #include <algorithm>
@@ -428,7 +428,7 @@ uint8_t Ppu::ReadCgram(bool highByte, uint8_t address) {
     // During active rendering (display enabled, visible scanline, in active dots),
     // reads are redirected to the latched address.  Outside active dots (HBlank)
     // the CPU can access CGRAM normally even on visible scanlines.
-    // bsnes: hcounter >= 88 && hcounter < 1096
+    // Active display spans master clocks 88 through 1095.
     if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp()
         && currentHClock_ >= 88 && currentHClock_ < 1096) {
         address = latch_.cgramAddress;
@@ -456,13 +456,13 @@ void Ppu::LatchCounters(uint16_t hcounter, uint16_t vcounter) {
     latch_.counters = true;
 }
 
-// ReadIO — read PPU register ($2134–$213F, plus open-bus for write-only)
+// ReadIO - read PPU register ($2134–$213F, plus open-bus for write-only)
 //
-// Reference: bsnes ppu-fast/io.cpp readIO()
+// Read the selected register and apply its read-side effects.
 uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
     switch (addr & 0xFFFF) {
 
-    // Write-only registers — return PPU1 MDR
+    // Write-only registers - return PPU1 MDR
     case 0x2104: case 0x2105: case 0x2106: case 0x2108:
     case 0x2109: case 0x210A: case 0x2114: case 0x2115:
     case 0x2116: case 0x2118: case 0x2119: case 0x211A:
@@ -471,28 +471,28 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu1.mdr;
     }
 
-    // $2134 — MPYL (mode 7 multiply result low)
+    // $2134 - MPYL (mode 7 multiply result low)
     case 0x2134: {
         int32_t result = static_cast<int16_t>(io_.mode7.a) *
                          static_cast<int8_t>(io_.mode7.b >> 8);
         return latch_.ppu1.mdr = static_cast<uint8_t>(result);
     }
 
-    // $2135 — MPYM (mode 7 multiply result mid)
+    // $2135 - MPYM (mode 7 multiply result mid)
     case 0x2135: {
         int32_t result = static_cast<int16_t>(io_.mode7.a) *
                          static_cast<int8_t>(io_.mode7.b >> 8);
         return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 8);
     }
 
-    // $2136 — MPYH (mode 7 multiply result high)
+    // $2136 - MPYH (mode 7 multiply result high)
     case 0x2136: {
         int32_t result = static_cast<int16_t>(io_.mode7.a) *
                          static_cast<int8_t>(io_.mode7.b >> 8);
         return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 16);
     }
 
-    // $2137 — SLHV (software latch H/V counters)
+    // $2137 - SLHV (software latch H/V counters)
     // When PIO bit 7 is high, reading this register latches the current
     // H/V counters.  The actual counter values come from the timing layer
     // via the onCounterLatch_ callback.
@@ -503,7 +503,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return openBus;
     }
 
-    // $2138 — OAMDATAREAD
+    // $2138 - OAMDATAREAD
     case 0x2138: {
         uint8_t data = ReadOam(io_.oamAddress);
         io_.oamAddress = (io_.oamAddress + 1) & 0x03FF;
@@ -511,7 +511,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu1.mdr = data;
     }
 
-    // $2139 — VMDATALREAD (VRAM data read low)
+    // $2139 - VMDATALREAD (VRAM data read low)
     case 0x2139: {
         uint8_t data = static_cast<uint8_t>(latch_.vram);
         if (io_.vramIncrementMode == 0) {
@@ -521,7 +521,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu1.mdr = data;
     }
 
-    // $213A — VMDATAHREAD (VRAM data read high)
+    // $213A - VMDATAHREAD (VRAM data read high)
     case 0x213A: {
         uint8_t data = static_cast<uint8_t>(latch_.vram >> 8);
         if (io_.vramIncrementMode == 1) {
@@ -531,7 +531,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu1.mdr = data;
     }
 
-    // $213B — CGDATAREAD
+    // $213B - CGDATAREAD
     case 0x213B: {
         if (!io_.cgramReadLatch) {
             io_.cgramReadLatch = true;
@@ -545,7 +545,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu2.mdr;
     }
 
-    // $213C — OPHCT (horizontal counter read, toggle high/low)
+    // $213C - OPHCT (horizontal counter read, toggle high/low)
     case 0x213C: {
         if (!latch_.hcounter) {
             latch_.hcounter = true;
@@ -558,7 +558,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu2.mdr;
     }
 
-    // $213D — OPVCT (vertical counter read, toggle high/low)
+    // $213D - OPVCT (vertical counter read, toggle high/low)
     case 0x213D: {
         if (!latch_.vcounter) {
             latch_.vcounter = true;
@@ -571,7 +571,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu2.mdr;
     }
 
-    // $213E — STAT77 (PPU1 status: version + OBJ overflow flags)
+    // $213E - STAT77 (PPU1 status: version + OBJ overflow flags)
     case 0x213E: {
         latch_.ppu1.mdr = (latch_.ppu1.mdr & 0x10) | 0x01; // bit 4 is open bus
         latch_.ppu1.mdr |= (io_.obj.rangeOver ? 1 : 0) << 6;
@@ -579,7 +579,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
         return latch_.ppu1.mdr;
     }
 
-    // $213F — STAT78 (PPU2 status: version + region + field + counter latch)
+    // $213F - STAT78 (PPU2 status: version + region + field + counter latch)
     case 0x213F: {
         // Reset H/V counter toggles
         latch_.hcounter = false;
@@ -609,13 +609,13 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
     return openBus;
 }
 
-// WriteIO — write PPU register ($2100–$2133)
+// WriteIO - write PPU register ($2100–$2133)
 //
-// Reference: bsnes ppu-fast/io.cpp writeIO()
+// Update the selected register and apply its write-side effects.
 void Ppu::WriteIO(uint32_t addr, uint8_t data) {
     switch (addr & 0xFFFF) {
 
-    // $2100 — INIDISP (display control)
+    // $2100 - INIDISP (display control)
     case 0x2100: {
         const IO before = io_;
         if (io_.displayDisable && currentLine_ == VDisp()) {
@@ -627,7 +627,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2101 — OBSEL (object size + base address)
+    // $2101 - OBSEL (object size + base address)
     case 0x2101: {
         uint8_t oldBaseSize = io_.obj.baseSize;
         io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0x6000);
@@ -642,14 +642,14 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2102 — OAMADDL (OAM address low)
+    // $2102 - OAMADDL (OAM address low)
     case 0x2102: {
         io_.oamBaseAddress = (io_.oamBaseAddress & 0x0200) | (static_cast<uint16_t>(data) << 1);
         OamAddressReset();
         return;
     }
 
-    // $2103 — OAMADDH (OAM address high + priority rotation)
+    // $2103 - OAMADDH (OAM address high + priority rotation)
     case 0x2103: {
         io_.oamBaseAddress = ((data & 1) << 9) | (io_.oamBaseAddress & 0x01FE);
         io_.oamPriority    = (data >> 7) & 1;
@@ -657,7 +657,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2104 — OAMDATA (OAM data write)
+    // $2104 - OAMDATA (OAM data write)
     case 0x2104: {
         bool latchBit = io_.oamAddress & 1;
         uint16_t address = io_.oamAddress;
@@ -673,7 +673,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2105 — BGMODE (BG mode, tile sizes)
+    // $2105 - BGMODE (BG mode, tile sizes)
     case 0x2105: {
         uint8_t oldMode = io_.bgMode;
         bool oldPri = io_.bgPriority;
@@ -694,7 +694,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2106 — MOSAIC
+    // $2106 - MOSAIC
     case 0x2106: {
         const IO before = io_;
         bool wasMosaicEnabled = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable ||
@@ -720,7 +720,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2107 — BG1SC (BG1 tilemap address + size)
+    // $2107 - BG1SC (BG1 tilemap address + size)
     case 0x2107: {
         io_.bg1.screenSize    = data & 3;
         io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
@@ -731,7 +731,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2108 — BG2SC
+    // $2108 - BG2SC
     case 0x2108: {
         io_.bg2.screenSize    = data & 3;
         io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
@@ -742,7 +742,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2109 — BG3SC
+    // $2109 - BG3SC
     case 0x2109: {
         io_.bg3.screenSize    = data & 3;
         io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
@@ -753,7 +753,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210A — BG4SC
+    // $210A - BG4SC
     case 0x210A: {
         io_.bg4.screenSize    = data & 3;
         io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
@@ -764,7 +764,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210B — BG12NBA (BG1/BG2 character data address)
+    // $210B - BG12NBA (BG1/BG2 character data address)
     case 0x210B: {
         io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
         io_.bg2.tiledataAddress = static_cast<uint16_t>((data <<  8) & 0x7000);
@@ -775,7 +775,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210C — BG34NBA (BG3/BG4 character data address)
+    // $210C - BG34NBA (BG3/BG4 character data address)
     case 0x210C: {
         io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
         io_.bg4.tiledataAddress = static_cast<uint16_t>((data <<  8) & 0x7000);
@@ -786,7 +786,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210D — BG1HOFS (BG1 horizontal scroll)
+    // $210D - BG1HOFS (BG1 horizontal scroll)
     // Also writes Mode 7 horizontal offset
     case 0x210D: {
         const IO before = io_;
@@ -804,7 +804,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210E — BG1VOFS (BG1 vertical scroll)
+    // $210E - BG1VOFS (BG1 vertical scroll)
     // Also writes Mode 7 vertical offset
     case 0x210E: {
         const IO before = io_;
@@ -821,7 +821,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $210F — BG2HOFS
+    // $210F - BG2HOFS
     case 0x210F: {
         const IO before = io_;
         io_.bg2.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -836,7 +836,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2110 — BG2VOFS
+    // $2110 - BG2VOFS
     case 0x2110: {
         const IO before = io_;
         io_.bg2.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -850,7 +850,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2111 — BG3HOFS
+    // $2111 - BG3HOFS
     case 0x2111: {
         const IO before = io_;
         io_.bg3.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -865,7 +865,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2112 — BG3VOFS
+    // $2112 - BG3VOFS
     case 0x2112: {
         const IO before = io_;
         io_.bg3.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -879,7 +879,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2113 — BG4HOFS
+    // $2113 - BG4HOFS
     case 0x2113: {
         const IO before = io_;
         io_.bg4.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -894,7 +894,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2114 — BG4VOFS
+    // $2114 - BG4VOFS
     case 0x2114: {
         const IO before = io_;
         io_.bg4.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
@@ -908,7 +908,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2115 — VMAIN (VRAM address increment mode)
+    // $2115 - VMAIN (VRAM address increment mode)
     case 0x2115: {
         static constexpr uint16_t kIncrementSizes[4] = {1, 32, 128, 128};
         io_.vramIncrementSize = kIncrementSizes[data & 3];
@@ -917,35 +917,35 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2116 — VMADDL (VRAM address low)
+    // $2116 - VMADDL (VRAM address low)
     case 0x2116: {
         io_.vramAddress = (io_.vramAddress & 0xFF00) | data;
         latch_.vram = ReadVram();
         return;
     }
 
-    // $2117 — VMADDH (VRAM address high)
+    // $2117 - VMADDH (VRAM address high)
     case 0x2117: {
         io_.vramAddress = (io_.vramAddress & 0x00FF) | (static_cast<uint16_t>(data) << 8);
         latch_.vram = ReadVram();
         return;
     }
 
-    // $2118 — VMDATAL (VRAM data write low)
+    // $2118 - VMDATAL (VRAM data write low)
     case 0x2118: {
         WriteVram(false, data);
         if (!io_.vramIncrementMode) io_.vramAddress += io_.vramIncrementSize;
         return;
     }
 
-    // $2119 — VMDATAH (VRAM data write high)
+    // $2119 - VMDATAH (VRAM data write high)
     case 0x2119: {
         WriteVram(true, data);
         if (io_.vramIncrementMode) io_.vramAddress += io_.vramIncrementSize;
         return;
     }
 
-    // $211A — M7SEL (Mode 7 settings)
+    // $211A - M7SEL (Mode 7 settings)
     case 0x211A: {
         io_.mode7.hflip  = (data >> 0) & 1;
         io_.mode7.vflip  = (data >> 1) & 1;
@@ -953,49 +953,49 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $211B — M7A
+    // $211B - M7A
     case 0x211B: {
         io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $211C — M7B
+    // $211C - M7B
     case 0x211C: {
         io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $211D — M7C
+    // $211D - M7C
     case 0x211D: {
         io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $211E — M7D
+    // $211E - M7D
     case 0x211E: {
         io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $211F — M7X
+    // $211F - M7X
     case 0x211F: {
         io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $2120 — M7Y
+    // $2120 - M7Y
     case 0x2120: {
         io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
         latch_.mode7 = data;
         return;
     }
 
-    // $2121 — CGADD (CGRAM address)
+    // $2121 - CGADD (CGRAM address)
     case 0x2121: {
         io_.cgramAddress = data;
         io_.cgramReadLatch = false;
@@ -1003,7 +1003,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2122 — CGDATA (CGRAM data write)
+    // $2122 - CGDATA (CGRAM data write)
     case 0x2122: {
         if (!io_.cgramWriteLatch) {
             io_.cgramWriteLatch = true;
@@ -1017,7 +1017,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2123 — W12SEL (window mask settings for BG1/BG2)
+    // $2123 - W12SEL (window mask settings for BG1/BG2)
     case 0x2123: {
         const IO before = io_;
         io_.bg1.window.oneInvert = (data >> 0) & 1;
@@ -1032,7 +1032,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2124 — W34SEL (window mask settings for BG3/BG4)
+    // $2124 - W34SEL (window mask settings for BG3/BG4)
     case 0x2124: {
         const IO before = io_;
         io_.bg3.window.oneInvert = (data >> 0) & 1;
@@ -1047,7 +1047,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2125 — WOBJSEL (window mask settings for OBJ/color)
+    // $2125 - WOBJSEL (window mask settings for OBJ/color)
     case 0x2125: {
         const IO before = io_;
         io_.obj.window.oneInvert = (data >> 0) & 1;
@@ -1062,7 +1062,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2126 — WH0 (window 1 left position)
+    // $2126 - WH0 (window 1 left position)
     case 0x2126: {
         const IO before = io_;
         io_.window.oneLeft = data;
@@ -1070,7 +1070,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2127 — WH1 (window 1 right position)
+    // $2127 - WH1 (window 1 right position)
     case 0x2127: {
         const IO before = io_;
         io_.window.oneRight = data;
@@ -1078,7 +1078,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2128 — WH2 (window 2 left position)
+    // $2128 - WH2 (window 2 left position)
     case 0x2128: {
         const IO before = io_;
         io_.window.twoLeft = data;
@@ -1086,7 +1086,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2129 — WH3 (window 2 right position)
+    // $2129 - WH3 (window 2 right position)
     case 0x2129: {
         const IO before = io_;
         io_.window.twoRight = data;
@@ -1094,7 +1094,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212A — WBGLOG (window mask logic for BG layers)
+    // $212A - WBGLOG (window mask logic for BG layers)
     case 0x212A: {
         const IO before = io_;
         io_.bg1.window.mask = (data >> 0) & 3;
@@ -1105,7 +1105,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212B — WOBJLOG (window mask logic for OBJ/color)
+    // $212B - WOBJLOG (window mask logic for OBJ/color)
     case 0x212B: {
         const IO before = io_;
         io_.obj.window.mask = (data >> 0) & 3;
@@ -1114,7 +1114,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212C — TM (main screen designation)
+    // $212C - TM (main screen designation)
     case 0x212C: {
         const IO before = io_;
         io_.bg1.aboveEnable = (data >> 0) & 1;
@@ -1135,7 +1135,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212D — TS (sub screen designation)
+    // $212D - TS (sub screen designation)
     case 0x212D: {
         const IO before = io_;
         io_.bg1.belowEnable = (data >> 0) & 1;
@@ -1156,7 +1156,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212E — TMW (window mask for main screen)
+    // $212E - TMW (window mask for main screen)
     case 0x212E: {
         const IO before = io_;
         io_.bg1.window.aboveEnable = (data >> 0) & 1;
@@ -1168,7 +1168,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $212F — TSW (window mask for sub screen)
+    // $212F - TSW (window mask for sub screen)
     case 0x212F: {
         const IO before = io_;
         io_.bg1.window.belowEnable = (data >> 0) & 1;
@@ -1180,7 +1180,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2130 — CGWSEL (color addition select)
+    // $2130 - CGWSEL (color addition select)
     case 0x2130: {
         const IO before = io_;
         io_.col.directColor      = (data >> 0) & 1;
@@ -1191,7 +1191,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2131 — CGADDSUB (color math designation)
+    // $2131 - CGADDSUB (color math designation)
     case 0x2131: {
         const IO before = io_;
         io_.col.enable[Source::BG1 ] = (data >> 0) & 1;
@@ -1207,7 +1207,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2132 — COLDATA (fixed color data)
+    // $2132 - COLDATA (fixed color data)
     case 0x2132: {
         const IO before = io_;
         uint16_t intensity = data & 0x1F;
@@ -1218,7 +1218,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $2133 — SETINI (screen mode / scroll settings)
+    // $2133 - SETINI (screen mode / scroll settings)
     case 0x2133: {
         bool oldInterlace = io_.interlace;
         bool oldObjInterlace = io_.obj.interlace;
@@ -1249,9 +1249,9 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
     } // switch
 }
 
-// UpdateVideoMode — set tile modes + priority per BG mode
+// UpdateVideoMode - set tile modes + priority per BG mode
 //
-// Reference: bsnes ppu-fast/io.cpp updateVideoMode()
+// Recompute background modes after display configuration changes.
 void Ppu::UpdateVideoMode() {
     auto assign2 = [](uint8_t (&arr)[2], uint8_t a, uint8_t b) { arr[0] = a; arr[1] = b; };
     auto assign4 = [](uint8_t (&arr)[4], uint8_t a, uint8_t b, uint8_t c, uint8_t d) {

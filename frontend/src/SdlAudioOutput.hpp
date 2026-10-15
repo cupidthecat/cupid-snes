@@ -3,7 +3,7 @@
 // SDL audio output interface.
 
 #pragma once
-// SdlAudioOutput.hpp — SDL3-based audio output for the SNES emulator
+// SdlAudioOutput.hpp - SDL3-based audio output for the SNES emulator
 //
 // Opens an SDL3 audio stream at the native sample rate in stereo float and implements
 // IAudioOutput::Submit() by pushing interleaved samples into SDL's

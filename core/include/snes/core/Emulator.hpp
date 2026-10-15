@@ -3,7 +3,7 @@
 // Top-level emulator lifecycle and subsystem interface.
 
 #pragma once
-// Emulator.hpp — Top-level SNES system integration
+// Emulator.hpp - Top-level SNES system integration
 //
 // Owns every hardware subsystem and wires them together:
 //   CPU (65816)  ↔  MemoryBus  ↔  PPU / APU / DMA / Cartridge
@@ -43,7 +43,7 @@
 
 namespace snes::core {
 
-class SnesCpu;  // forward — constructed after MemoryBus
+class SnesCpu; // forward - constructed after MemoryBus
 namespace detail {
 class ExecutionContext;
 }
@@ -159,7 +159,7 @@ private:
     CartridgeDatabase cartridgeDatabase_{};
     std::optional<Cartridge> cartridge_{};
 
-    // Hardware subsystems (construction order matters — bus_ before cpu_)
+    // Hardware subsystems (construction order matters - bus_ before cpu_)
     Dsp             dsp_;
     Smp             smp_;
     Ppu             ppu_;

@@ -2,7 +2,7 @@
 // core/src/cpu/SnesCpu.cpp
 // The SNES CPU wrapper and interrupt integration.
 
-// SnesCpu.cpp — SNES-specific CPU wrapper implementation
+// SnesCpu.cpp - SNES-specific CPU wrapper implementation
 //
 // Implements the Processor65816 virtual bus interface with SNES timing,
 // NMI/IRQ state machine, and cycle counting.
@@ -39,7 +39,7 @@ void SnesCpu::Reset() {
   bus_.SetOpenBus(0);
 }
 
-// Step — execute one instruction
+// Step - execute one instruction
 
 uint32_t SnesCpu::Step() {
   if (stepSuspended_ && resumeStep_)
@@ -180,15 +180,15 @@ void SnesCpu::pollInterrupts() {
     irqPending_ = irqLine_ && !flagI();
 }
 
-// DRAM Refresh — 40-master-clock penalty per scanline
+// DRAM Refresh - 40-master-clock penalty per scanline
 //
 // Refresh consists of five (6 halt + 2 interleave) substeps, totaling 40 clocks.
 // Between each sub-step, the ALU pipeline (multiply/divide) is advanced.
 //
 // The refresh state identifies the current bus phase:
 //   0 = not refreshing
-//   1 = bus halted (6 clocks)  — coprocessors see the bus as unavailable
-//   2 = interleave  (2 clocks) — brief gap between halt phases
+//   1 = bus halted (6 clocks)  - coprocessors see the bus as unavailable
+//   2 = interleave  (2 clocks) - brief gap between halt phases
 
 void SnesCpu::ApplyDramRefreshPenalty() {
     for (int i = 0; i < 5; i++) {

@@ -2,7 +2,7 @@
 // core/src/io/AutoJoypad.cpp
 // Automatic controller polling and serial latch state.
 
-// AutoJoypad.cpp — SNES auto-joypad polling implementation
+// AutoJoypad.cpp - SNES auto-joypad polling implementation
 //
 // Implements the 34-step automatic polling sequence.
 // Called every 128 master clocks by the timing system.
@@ -41,7 +41,7 @@ void AutoJoypad::Reset() {
     joy1_ = joy2_ = joy3_ = joy4_ = 0;
 }
 
-// FrameBegin — reset for new frame
+// FrameBegin - reset for new frame
 
 void AutoJoypad::FrameBegin() {
   // Scanline zero ends the previous polling sequence.
@@ -50,7 +50,7 @@ void AutoJoypad::FrameBegin() {
   ports_.SetLatch(manualLatch_);
 }
 
-// SetAutoJoypadPoll — $4200 NMITIMEN bit 0
+// SetAutoJoypadPoll - $4200 NMITIMEN bit 0
 
 void AutoJoypad::SetAutoJoypadPoll(bool enabled) {
     autoJoypadPoll_ = enabled;
@@ -66,7 +66,7 @@ void AutoJoypad::SetAutoJoypadPoll(bool enabled) {
     }
 }
 
-// InputStateToSnesFormat — button → 16-bit register conversion
+// InputStateToSnesFormat - button → 16-bit register conversion
 
 uint16_t AutoJoypad::InputStateToSnesFormat(const InputState& input) {
     uint16_t v = 0;
@@ -87,7 +87,7 @@ uint16_t AutoJoypad::InputStateToSnesFormat(const InputState& input) {
     return v;
 }
 
-// Tick128 — 128-clock state machine step
+// Tick128 - 128-clock state machine step
 
 void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256) {
   // Start condition: V = vdisp, 256-clock aligned, H ∈ [130, 384]

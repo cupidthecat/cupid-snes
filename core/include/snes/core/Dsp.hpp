@@ -2,7 +2,7 @@
 // core/include/snes/core/Dsp.hpp
 // S-DSP audio state and processing interface.
 
-// Dsp.hpp — SNES S-DSP audio processor
+// Dsp.hpp - SNES S-DSP audio processor
 //
 // The DSP is responsible for all SNES audio output:
 //   - 8 voices, each playing BRR-compressed samples

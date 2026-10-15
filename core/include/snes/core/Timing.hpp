@@ -3,15 +3,15 @@
 // Master clock and video-region timing interface.
 
 #pragma once
-// Timing.hpp — SNES dot / scanline / frame timing subsystem
+// Timing.hpp - SNES dot / scanline / frame timing subsystem
 //
 // Tracks horizontal master clocks and vertical scanlines in two-clock steps.
 // Provides the dot-position, scanline, and field state that every other
 // subsystem depends on:
 //
-//   PPU   — FrameBegin / ScanlineBegin / VBlankBegin / SetCurrentLine/Dot
-//   CPU   — NMI edge at V=vblank, H≈2;  DRAM refresh once per line
-//   DMA   — HDMA setup at V=0 / HDMA run per visible scanline
+//   PPU   - FrameBegin / ScanlineBegin / VBlankBegin / SetCurrentLine/Dot
+//   CPU   - NMI edge at V=vblank, H≈2;  DRAM refresh once per line
+//   DMA   - HDMA setup at V=0 / HDMA run per visible scanline
 //
 // Video timing parameters:
 //
@@ -38,13 +38,13 @@
 
 namespace snes::core {
 
-// Region — NTSC vs PAL
+// Region - NTSC vs PAL
 enum class Region : uint8_t {
     NTSC = 0,
     PAL  = 1,
 };
 
-// Timing — master-clock-accurate H/V counter
+// Timing - master-clock-accurate H/V counter
 class Timing {
 public:
     // Constants
@@ -105,7 +105,7 @@ public:
       interlaceInput_ = v;
     }
 
-    /// VDisp — number of active (visible) scanlines.
+    /// VDisp - number of active (visible) scanlines.
     /// 225 in normal mode, 240 with overscan.
     uint16_t VDisp() const noexcept { return vdisp_; }
     void SetVDisp(uint16_t v) noexcept {
@@ -163,7 +163,7 @@ public:
     /// Reset all counters to power-on state.
     void Reset();
 
-    // Callbacks — set by the integration layer (Emulator / StepFrame)
+    // Callbacks - set by the integration layer (Emulator / StepFrame)
 
     /// Called at V=0, H=0 (start of a new frame).
     std::function<void()> onFrameBegin;

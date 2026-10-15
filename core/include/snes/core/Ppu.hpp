@@ -3,7 +3,7 @@
 // PPU registers, memory ports, and rendering interface.
 
 #pragma once
-// Ppu.hpp — SNES PPU register model + scanline renderer
+// Ppu.hpp - SNES PPU register model + scanline renderer
 //
 // Covers all PPU I/O registers $2100–$213F and a scanline-based rendering
 // pipeline for backgrounds, sprites, windows, and color math.
@@ -12,9 +12,9 @@
 // Read  registers: $2134–$213F
 //
 // Internal memory:
-//   VRAM  — 64 KB (32K × 16-bit words)
-//   OAM   — 544 bytes (128 objects × 4 bytes + 32 bytes high table)
-//   CGRAM — 512 bytes (256 × 15-bit colors stored as uint16_t)
+//   VRAM  - 64 KB (32K × 16-bit words)
+//   OAM   - 544 bytes (128 objects × 4 bytes + 32 bytes high table)
+//   CGRAM - 512 bytes (256 × 15-bit colors stored as uint16_t)
 //
 // Rendering:
 //   Per-scanline pipeline: snapshot IO → render BG/OBJ → window → composite
@@ -31,7 +31,7 @@
 
 namespace snes::core {
 
-// Ppu — PPU register model
+// Ppu - PPU register model
 class Ppu {
 public:
     Ppu();
@@ -41,10 +41,10 @@ public:
     Ppu(const Ppu&) = delete;
     Ppu& operator=(const Ppu&) = delete;
 
-    // Reset — power-on defaults (clear VRAM/OAM/CGRAM, reset latches)
+    // Reset - power-on defaults (clear VRAM/OAM/CGRAM, reset latches)
     void Reset();
 
-    // Bus interface — called from MemoryBus via handler callbacks
+    // Bus interface - called from MemoryBus via handler callbacks
     //   addr is the full 24-bit address (only $2100-$213F are dispatched here)
     //   openBus is the current bus MDR (for reads of write-only registers)
     uint8_t ReadIO(uint32_t addr, uint8_t openBus);
@@ -76,7 +76,7 @@ public:
 
     // Counters (for H/V counter latching by CPU I/O $2137, $213C-$213F)
 
-    /// Latch current H/V counters — called when SLHV ($2137) read or via
+    /// Latch current H/V counters - called when SLHV ($2137) read or via
     /// programmable I/O pin.  The timing layer provides the actual values.
     void LatchCounters(uint16_t hcounter, uint16_t vcounter);
 
@@ -90,11 +90,11 @@ public:
     /// knows whether the access is in active rendering or HBlank.
     void SetCurrentHClock(uint16_t hcounter) noexcept { currentHClock_ = hcounter; }
 
-    /// Set the CPU PIO register ($4201) value — needed for STAT78 counter
+    /// Set the CPU PIO register ($4201) value - needed for STAT78 counter
     /// latch bit behavior. The CPU I/O layer updates this on WRIO writes.
     void SetCpuPio(uint8_t pio) noexcept { cpuPio_ = pio; }
 
-    /// Set callback for $2137 SLHV reads — the emulator provides
+    /// Set callback for $2137 SLHV reads - the emulator provides
     /// LatchCounters(hcounter, vcounter) through this.
     using LatchCallback = std::function<void()>;
     void SetCounterLatchCallback(LatchCallback cb) { onCounterLatch_ = std::move(cb); }
@@ -103,7 +103,7 @@ public:
     using VDispCallback = std::function<void(uint16_t vdisp)>;
     void SetVDispCallback(VDispCallback cb) { onVDisp_ = std::move(cb); }
 
-    // Direct memory access — for DMA, testing, rendering
+    // Direct memory access - for DMA, testing, rendering
     uint16_t* VramData() noexcept {
         vramExternallyMutable_ = true;
         return vram_.get();
@@ -119,11 +119,11 @@ public:
     const uint16_t* CgramData() const noexcept { return cgram_.data(); }
     static constexpr size_t CgramColors = 256;
 
-    // UpdateVideoMode — recalculate tile modes and priority per BG mode.
+    // UpdateVideoMode - recalculate tile modes and priority per BG mode.
     // Called after writing BGMODE ($2105) or SETINI ($2133).
     void UpdateVideoMode();
 
-    // PPU I/O register state — public for rendering / test inspection
+    // PPU I/O register state - public for rendering / test inspection
 
     /// Tile depth mode per BG layer (set by UpdateVideoMode)
     enum class TileMode : uint8_t { BPP2, BPP4, BPP8, Mode7, Inactive };
@@ -270,7 +270,7 @@ public:
     IO&       GetIO() noexcept { return io_; }
     const IO& GetIO() const noexcept { return io_; }
 
-    // Latch state — internal buffers for write-twice behavior, etc.
+    // Latch state - internal buffers for write-twice behavior, etc.
     struct Latch {
         uint16_t vram        = 0;   // VRAM prefetch latch (16-bit)
         uint8_t  oam         = 0;   // OAM write latch (low byte)
@@ -291,7 +291,7 @@ public:
     Latch&       GetLatch() noexcept { return latch_; }
     const Latch& GetLatch() const noexcept { return latch_; }
 
-    // Rendering — pixel format and line buffers
+    // Rendering - pixel format and line buffers
 
     /// A single rendered pixel in the above/below line buffers.
     struct Pixel {
@@ -313,7 +313,7 @@ public:
         bool     size      = false; // 0=small, 1=large
     };
 
-    /// Sprite evaluation result — which OAM entries are on this line.
+    /// Sprite evaluation result - which OAM entries are on this line.
     struct ObjectItem {
         bool    valid  = false;
         uint8_t index  = 0;
@@ -331,7 +331,7 @@ public:
         uint32_t data     = 0; // packed 4bpp tile row (32 bits = 2 VRAM words)
     };
 
-    /// Per-scanline rendering state — snapshotted at cache time.
+    /// Per-scanline rendering state - snapshotted at cache time.
     struct Line {
         uint16_t y       = 0; // Hardware vcounter; first visible line is 1.
         bool     fieldID = false;
@@ -402,7 +402,7 @@ private:
     /// VRAM address with translation mapping applied
     uint16_t TranslatedVramAddress() const;
 
-    /// Read VRAM word — returns 0 during active rendering if display enabled
+    /// Read VRAM word - returns 0 during active rendering if display enabled
     uint16_t ReadVram();
 
     /// Write VRAM byte (lowByte=false → low, true → high)
@@ -479,7 +479,7 @@ private:
     void RenderWindowColor(const Line& line, const WindowColor& wc,
                            uint8_t mask, bool output[256]);
 
-    /// Tilemap lookup — returns 16-bit tilemap word.
+    /// Tilemap lookup - returns 16-bit tilemap word.
     uint16_t GetTile(const Line& line, const Background& bg,
                      uint32_t hoffset, uint32_t voffset);
 
@@ -510,13 +510,13 @@ private:
     IO    io_;
     Latch latch_;
 
-    // VRAM — 64 KB = 32K × 16-bit words (heap-allocated to avoid stack overflow)
+    // VRAM - 64 KB = 32K × 16-bit words (heap-allocated to avoid stack overflow)
     std::unique_ptr<uint16_t[]> vram_;
 
-    // OAM — 544 bytes raw (128 objects × 4 bytes + 32 bytes high table)
+    // OAM - 544 bytes raw (128 objects × 4 bytes + 32 bytes high table)
     std::array<uint8_t, OamSize> oam_{};
 
-    // CGRAM — 256 × 15-bit colors
+    // CGRAM - 256 × 15-bit colors
     std::array<uint16_t, CgramColors> cgram_{};
 
     // Parsed OAM objects (128 entries, built from raw OAM before rendering)
@@ -541,7 +541,7 @@ private:
     // update when both hooks are used.
     uint16_t mosaicCounterLine_ = 0xffff;
 
-    // Output framebuffer — 512×480 RGBA8888
+    // Output framebuffer - 512×480 RGBA8888
     std::unique_ptr<uint32_t[]> output_;
 
     // Brightness lookup table: lightTable_[brightness][bgr555] → bgr555 dimmed
@@ -555,7 +555,7 @@ private:
     // Horizontal master clocks (set by timing for CGRAM access gating).
     uint16_t currentHClock_ = 0;
 
-    // CPU PIO register ($4201) — needed for STAT78 counter latch behavior
+    // CPU PIO register ($4201) - needed for STAT78 counter latch behavior
     uint8_t cpuPio_ = 0xFF;
 
     // Callback for $2137 SLHV reads (triggers counter latch via Emulator)

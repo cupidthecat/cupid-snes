@@ -514,7 +514,7 @@ int main() {
         bus.MapWram();
 
         // Put a small program into WRAM at $7E:8000 (which doesn't exist
-        // as a mapping for CPU fetch — use a custom handler instead).
+        // as a mapping for CPU fetch - use a custom handler instead).
         // For a proper CPU test, map a program region.
 
         // Map a small code region at $00:8000-$80FF
@@ -645,7 +645,7 @@ int main() {
 
     // CpuIoRegisters tests
 
-    // Test 8: CPU I/O — standalone register read/write
+    // Test 8: CPU I/O - standalone register read/write
     {
         snes::core::CpuIoRegisters cpuIo;
         cpuIo.Reset();
@@ -709,7 +709,7 @@ int main() {
         cpuIo.Write(0x420A, 0x00);  // VTIMEH bit 0 = 0  → vtime = 0xC0
         assert(cpuIo.vtime() == 0xC0);
 
-        // 8f: $4210 RDNMI — read-and-clear, open bus bits, CPU version
+        // 8f: $4210 RDNMI - read-and-clear, open bus bits, CPU version
         cpuIo.setNmiFlag(true);
         uint8_t rdnmi = cpuIo.Read(0x4210, 0x70);  // open bus = 0x70
         assert((rdnmi & 0x80) == 0x80);  // NMI flag set
@@ -719,7 +719,7 @@ int main() {
         rdnmi = cpuIo.Read(0x4210, 0x70);
         assert((rdnmi & 0x80) == 0x00);  // NMI flag now clear
 
-        // 8g: $4211 TIMEUP — read-and-clear IRQ flag
+        // 8g: $4211 TIMEUP - read-and-clear IRQ flag
         cpuIo.setIrqFlag(true);
         uint8_t timeup = cpuIo.Read(0x4211, 0x3F);
         assert((timeup & 0x80) == 0x80);  // IRQ set
@@ -727,7 +727,7 @@ int main() {
         timeup = cpuIo.Read(0x4211, 0x00);
         assert((timeup & 0x80) == 0x00);  // IRQ cleared
 
-        // 8h: $4212 HVBJOY — hblank/vblank/auto-joypad flags
+        // 8h: $4212 HVBJOY - hblank/vblank/auto-joypad flags
         cpuIo.SetTimingQueryCallback([]() -> snes::core::TimingQuery {
             return {1100, 230, 225}; // H=1100 (in hblank), V=230 (in vblank)
         });
@@ -851,7 +851,7 @@ int main() {
         std::printf("[CpuIoRegisters] Bus-mapped register test passed\n");
     }
 
-    // Test 10: DMA controller — standalone register read/write
+    // Test 10: DMA controller - standalone register read/write
     {
         snes::core::DmaController dma;
 
@@ -913,7 +913,7 @@ int main() {
         assert(ch3.fixedTransfer   == false);  // bit 3 of 0xA5
         assert(ch3.transferMode    == 5);      // bits 2-0 of 0xA5
 
-        // Verify channel isolation — channel 0 should still be 0xFF
+        // Verify channel isolation - channel 0 should still be 0xFF
         assert(dma.Read(0x4300, 0x00) == 0xFF);
         assert(dma.Read(0x4301, 0x00) == 0xFF);
 
@@ -957,7 +957,7 @@ int main() {
         std::printf("[DmaController] Standalone register test passed\n");
     }
 
-    // Test 11: DMA controller — mapped on MemoryBus
+    // Test 11: DMA controller - mapped on MemoryBus
     {
         auto busPtr = std::make_unique<snes::core::MemoryBus>();
         auto& bus = *busPtr;
@@ -1005,7 +1005,7 @@ int main() {
         std::printf("[DmaController] Bus-mapped register test passed\n");
     }
 
-    // Test 12: GP-DMA transfer engine — modes 0-7, validation, cycle counts
+    // Test 12: GP-DMA transfer engine - modes 0-7, validation, cycle counts
     {
         using namespace snes::core;
 
@@ -1036,7 +1036,7 @@ int main() {
             {uint8_t(0x80), uint8_t(0xBF), uint16_t(0x2100), uint16_t(0x21FF)},
         }, ppuRegSlot);
 
-        // Sub-test 12a: Mode 0 — 1 byte -> 1 register (A→B)
+        // Sub-test 12a: Mode 0 - 1 byte -> 1 register (A→B)
         {
             // Fill WRAM source: $7E:1000-$7E:1003 = {0xAA, 0xBB, 0xCC, 0xDD}
             bus.Write(0x7E1000, 0xAA);
@@ -1074,7 +1074,7 @@ int main() {
             std::printf("  [12a] Mode 0 A→B passed\n");
         }
 
-        // Sub-test 12b: Mode 1 — 2 consecutive registers (A→B)
+        // Sub-test 12b: Mode 1 - 2 consecutive registers (A→B)
         {
             // Source: $7E:2000-$7E:2003 = {0x11, 0x22, 0x33, 0x44}
             bus.Write(0x7E2000, 0x11);
@@ -1105,7 +1105,7 @@ int main() {
             std::printf("  [12b] Mode 1 (2 consecutive) passed\n");
         }
 
-        // Sub-test 12c: Mode 2 — same register twice
+        // Sub-test 12c: Mode 2 - same register twice
         {
             bus.Write(0x7E3000, 0xAA);
             bus.Write(0x7E3001, 0xBB);
@@ -1131,7 +1131,7 @@ int main() {
             std::printf("  [12c] Mode 2 (same register x2) passed\n");
         }
 
-        // Sub-test 12d: Mode 3 — 2 regs, 2 each (p,p,p+1,p+1)
+        // Sub-test 12d: Mode 3 - 2 regs, 2 each (p,p,p+1,p+1)
         {
             bus.Write(0x7E4000, 0x10);
             bus.Write(0x7E4001, 0x20);
@@ -1159,7 +1159,7 @@ int main() {
             std::printf("  [12d] Mode 3 (2 regs x2 each) passed\n");
         }
 
-        // Sub-test 12e: Mode 4 — 4 consecutive registers
+        // Sub-test 12e: Mode 4 - 4 consecutive registers
         {
             bus.Write(0x7E5000, 0xA1);
             bus.Write(0x7E5001, 0xB2);
@@ -1189,7 +1189,7 @@ int main() {
             std::printf("  [12e] Mode 4 (4 consecutive) passed\n");
         }
 
-        // Sub-test 12f: Mode 5 — same as mode 1
+        // Sub-test 12f: Mode 5 - same as mode 1
         {
             bus.Write(0x7E6000, 0x55);
             bus.Write(0x7E6001, 0x66);
@@ -1212,7 +1212,7 @@ int main() {
             std::printf("  [12f] Mode 5 (=mode 1) passed\n");
         }
 
-        // Sub-test 12g: Direction 1 — B→A (PPU→CPU)
+        // Sub-test 12g: Direction 1 - B→A (PPU→CPU)
         {
             // Set up fake PPU reg $2139 to return a known value
             ppuRegs[0x39] = 0xEE;
@@ -1402,7 +1402,7 @@ int main() {
         std::printf("[DmaController] GP-DMA transfer engine tests passed\n");
     }
 
-    // Test 13: HDMA — direct mode, indirect mode, multi-scanline lifecycle
+    // Test 13: HDMA - direct mode, indirect mode, multi-scanline lifecycle
     {
         using namespace snes::core;
 
@@ -1433,8 +1433,8 @@ int main() {
         // Sub-test 13a: Direct mode, mode 0, single entry
         //
         // HDMA table at $7E:C000:
-        //   [count=3] [data]      — 3 scanlines, transfer on first only (no repeat)
-        //   [count=0]             — terminator
+        //   [count=3] [data]      - 3 scanlines, transfer on first only (no repeat)
+        //   [count=0]             - terminator
         //
         // In non-repeat mode, only the first scanline of each entry transfers
         // data.  The data bytes in the table follow the count byte (1 byte for
@@ -1506,8 +1506,8 @@ int main() {
         // Sub-test 13b: Direct mode with repeat flag
         //
         // HDMA table at $7E:D000:
-        //   [0x83] [data0] [data1] [data2]  — repeat=1, count=3
-        //   [0x00]                           — terminator
+        //   [0x83] [data0] [data1] [data2]  - repeat=1, count=3
+        //   [0x00]                           - terminator
         //
         // With repeat flag (bit 7), transfer happens EVERY scanline
         // for 3 lines, not just the first.
@@ -1568,8 +1568,8 @@ int main() {
         // Sub-test 13c: Direct mode, mode 1 (2 consecutive regs)
         //
         // Table at $7E:E000:
-        //   [0x01] [lo] [hi]  — 1 scanline, mode 1 = 2 bytes per entry
-        //   [0x00]             — terminator
+        //   [0x01] [lo] [hi]  - 1 scanline, mode 1 = 2 bytes per entry
+        //   [0x00]             - terminator
         {
             bus.Write(0x7EE000, 0x01);  // count=1
             bus.Write(0x7EE001, 0x34);  // byte 0 → $2118
@@ -1603,11 +1603,11 @@ int main() {
         // Sub-test 13d: Indirect mode
         //
         // HDMA table at $7E:F000 (in sourceBank):
-        //   [0x02] [indLo] [indHi]   — count=2, indirect addr
-        //   [0x00]                     — terminator
+        //   [0x02] [indLo] [indHi]   - count=2, indirect addr
+        //   [0x00]                     - terminator
         //
         // Indirect data at $7E:A000:
-        //   [0xDE] [0xAD]  — 2 scanlines worth of mode 0 data
+        //   [0xDE] [0xAD]  - 2 scanlines worth of mode 0 data
         {
             // HDMA table
             bus.Write(0x7EF000, 0x02);       // count=2
@@ -1658,9 +1658,9 @@ int main() {
         // Sub-test 13e: Multiple HDMA entries (sequential)
         //
         // Table at $7E:B000:
-        //   [0x01] [0xAA]     — 1 scanline, data 0xAA
-        //   [0x01] [0xBB]     — 1 scanline, data 0xBB
-        //   [0x00]             — terminator
+        //   [0x01] [0xAA]     - 1 scanline, data 0xAA
+        //   [0x01] [0xBB]     - 1 scanline, data 0xBB
+        //   [0x00]             - terminator
         {
             bus.Write(0x7EB000, 0x01);
             bus.Write(0x7EB001, 0xAA);
@@ -2058,7 +2058,7 @@ int main() {
             Ppu ppu;
             auto& io = ppu.GetIO();
 
-            // BG1HOFS ($210D) — write twice
+            // BG1HOFS ($210D) - write twice
             ppu.WriteIO(0x210D, 0x20);  // low part
             ppu.WriteIO(0x210D, 0x01);  // high part → BG1 hoffset = 0x0120
             // The value depends on the latch behavior:
@@ -2067,7 +2067,7 @@ int main() {
             // Second write: hoffset = 0x01<<8 | (0x20 & ~7) | (0x20 & 7) = 0x100 | 0x20 | 0x00 = 0x120
             assert(io.bg1.hoffset == 0x0120);
 
-            // BG1VOFS ($210E) — write twice
+            // BG1VOFS ($210E) - write twice
             ppu.WriteIO(0x210E, 0x30);
             ppu.WriteIO(0x210E, 0x00);  // voffset = 0x00<<8 | ppu1.bgofs(=0x30) = 0x0030
             assert(io.bg1.voffset == 0x0030);
@@ -2187,13 +2187,13 @@ int main() {
 
             ppu.LatchCounters(0x01FF, 0x00E0);
 
-            // OPHCT ($213C) — toggle low/high
+            // OPHCT ($213C) - toggle low/high
             uint8_t hlo = ppu.ReadIO(0x213C, 0x00);  // low byte
             uint8_t hhi = ppu.ReadIO(0x213C, 0x00);  // high byte (bit 0 only)
             assert(hlo == 0xFF);
             assert((hhi & 0x01) == 0x01);  // 0x01FF >> 8 = 1
 
-            // OPVCT ($213D) — toggle low/high
+            // OPVCT ($213D) - toggle low/high
             uint8_t vlo = ppu.ReadIO(0x213D, 0x00);
             uint8_t vhi = ppu.ReadIO(0x213D, 0x00);
             assert(vlo == 0xE0);
@@ -2327,7 +2327,7 @@ int main() {
             // OAM write always masks with 0x03FF, but if address >= OamSize (544),
             // WriteOam returns without writing.
             uint8_t saved = ppu.OamData()[0x20];
-            // Manually try to write past 544 — verify bounds
+            // Manually try to write past 544 - verify bounds
             // The write via $2104 always uses io_.oamAddress which wraps at 0x3FF,
             // so let's verify the OAM size bounds check directly
             assert(Ppu::OamSize == 544);
@@ -2359,7 +2359,8 @@ int main() {
             ppu.SetCurrentHClock(500);
             // Set read address to color 1
             ppu.WriteIO(0x2121, 0x01);
-            // But latched address is whatever was last latched (0 after reset? — actually latch_.cgramAddress = 0)
+            // But latched address is whatever was last latched (0 after reset? - actually
+            // latch_.cgramAddress = 0)
             // So reading $213B during active display reads from latched address (0), not the set address
             uint8_t lo = ppu.ReadIO(0x213B, 0x00);
             uint8_t hi = ppu.ReadIO(0x213B, 0x00);
@@ -2381,7 +2382,7 @@ int main() {
         {
             Ppu ppu;
 
-            // Default PIO = 0xFF (bit 7 set) — bit 6 reflects counters latch
+            // Default PIO = 0xFF (bit 7 set) - bit 6 reflects counters latch
             ppu.LatchCounters(100, 50);
             uint8_t stat = ppu.ReadIO(0x213F, 0x00);
             assert((stat & 0x40) != 0);   // latch flag set
@@ -2397,7 +2398,7 @@ int main() {
             stat = ppu.ReadIO(0x213F, 0x00);
             assert((stat & 0x40) != 0);   // still forced high
 
-            // Restore PIO bit 7 set — now it should track actual latch state
+            // Restore PIO bit 7 set - now it should track actual latch state
             ppu.SetCpuPio(0xFF);
             stat = ppu.ReadIO(0x213F, 0x00);
             assert((stat & 0x40) == 0);   // no latch pending
@@ -2938,7 +2939,7 @@ int main() {
             std::printf("  [15h] Window masking test passed\n");
         }
 
-        // Sub-test 15i: Color math — add fixed color
+        // Sub-test 15i: Color math - add fixed color
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F); // display on, max brightness
@@ -3078,7 +3079,7 @@ int main() {
 
             // We can't call the private static method directly, but we can test
             // through rendering: set mode 3 or 4, directColor=1, BG1 above
-            // This is more of an integration test — skip the direct call test
+            // This is more of an integration test - skip the direct call test
             // and verify through the rendering pipeline instead.
 
             Ppu ppu;
@@ -3144,7 +3145,7 @@ int main() {
         std::printf("[PPU] Scanline rendering pipeline tests passed\n");
     }
 
-    // Test 16: BG Modes 0-3 — Tile fetching for 2bpp/4bpp/8bpp (Step 19)
+    // Test 16: BG Modes 0-3 - Tile fetching for 2bpp/4bpp/8bpp (Step 19)
     {
         using namespace snes::core;
 
@@ -3189,7 +3190,7 @@ int main() {
             ppu.VramData()[addr + 8] = static_cast<uint16_t>(plane2) | (static_cast<uint16_t>(plane3) << 8);
         };
 
-        // 16a: Mode 0 — all 4 BGs visible with correct palette bases
+        // 16a: Mode 0 - all 4 BGs visible with correct palette bases
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F); // display on, brightness 15
@@ -3264,7 +3265,7 @@ int main() {
             std::printf("  [16a] Mode 0: 4 BGs with palette bases test passed\n");
         }
 
-        // 16b: Mode 1 — BG1 4bpp, BG2 4bpp, BG3 2bpp
+        // 16b: Mode 1 - BG1 4bpp, BG2 4bpp, BG3 2bpp
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F);
@@ -3306,7 +3307,7 @@ int main() {
             std::printf("  [16b] Mode 1: 4bpp BG1 tile rendering test passed\n");
         }
 
-        // 16c: Mode 3 — BG1 8bpp
+        // 16c: Mode 3 - BG1 8bpp
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F);
@@ -3722,7 +3723,7 @@ int main() {
             ppu.CgramData()[0] = 0x0000;
             ppu.CgramData()[1] = 0x001F; // red
 
-            // Use tile number 1023 (0x3FF) — maximum 10-bit value
+            // Use tile number 1023 (0x3FF) - maximum 10-bit value
             // With 16×16, top-right sub-tile = 1023+1 = 1024 → wraps to 0 (& 0x3FF)
             ppu.VramData()[0x0000] = 0x03FF; // tile# = 1023, palette=0, priority=0
 
@@ -3810,7 +3811,7 @@ int main() {
             ppu.VramData()[addr + 8] = static_cast<uint16_t>(p2) | (static_cast<uint16_t>(p3) << 8);
         };
 
-        // Helper: common sprite setup — display on, OBJ enabled on main screen
+        // Helper: common sprite setup - display on, OBJ enabled on main screen
         auto spriteSetup = [](Ppu& ppu) {
             // Move all sprites off-screen.
             uint8_t* oam = ppu.OamData();
@@ -3841,7 +3842,7 @@ int main() {
             uint8_t allOne[8] = {1,1,1,1,1,1,1,1};
             writeSprTileRow(ppu, 0x0000, allOne);
 
-            // Render scanline 5 — sprite should be visible at pixels 10-17
+            // Render scanline 5 - sprite should be visible at pixels 10-17
             const uint32_t* row = renderOneScanline(ppu, 5);
 
             // Pixel 9: should be backdrop (black)
@@ -3910,7 +3911,7 @@ int main() {
                 ppu.VramData()[0x1000] = static_cast<uint16_t>(p0) | (static_cast<uint16_t>(p1) << 8);
             }
 
-            // Sprite at (0, 0), priority 3 — in Mode 0, OBJ priority 3 has
+            // Sprite at (0, 0), priority 3 - in Mode 0, OBJ priority 3 has
             // value 12, which beats all BG layers
             writeOamEntry(ppu, 0, 0, 0, 0, 0, 0, 3, false, false, false);
             uint8_t sprAll[8] = {1,1,1,1,1,1,1,1};
@@ -4197,7 +4198,7 @@ int main() {
             const uint32_t* row = renderOneScanline(ppu, 0);
 
             // After rendering, rangeOver should be set (33 > 32)
-            // Read STAT77 ($213E) — bit 6 = rangeOver, bit 7 = timeOver
+            // Read STAT77 ($213E) - bit 6 = rangeOver, bit 7 = timeOver
             uint8_t stat77 = ppu.ReadIO(0x213E, 0x00);
             assert((stat77 & 0x40) != 0); // rangeOver set
 
@@ -4356,7 +4357,7 @@ int main() {
             }
         };
 
-        // 18a: Add blending — BG1 + fixed color
+        // 18a: Add blending - BG1 + fixed color
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F); // display on, brightness 15
@@ -4753,7 +4754,7 @@ int main() {
             std::printf("  [18k] Color math on backdrop test passed\n");
         }
 
-        // 18l: Halve guard — sub screen is backdrop (COL) → no halve
+        // 18l: Halve guard - sub screen is backdrop (COL) → no halve
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x0F);
@@ -5164,14 +5165,14 @@ int main() {
             ppu.WriteIO(0x212C, 0x00);
             ppu.CgramData()[0] = 0x7FFF;
 
-            // Various brightness levels — alpha is always 0xFF
+            // Various brightness levels - alpha is always 0xFF
             for (int b = 0; b <= 15; b++) {
                 ppu.WriteIO(0x2100, static_cast<uint8_t>(b));
                 const uint32_t* row = renderOneScanline(ppu, 0);
                 assert(((row[0] >> 24) & 0xFF) == 0xFF);
             }
 
-            // Display disabled — alpha is 0x00
+            // Display disabled - alpha is 0x00
             ppu.WriteIO(0x2100, 0x80);
             const uint32_t* row = renderOneScanline(ppu, 0);
             assert(((row[0] >> 24) & 0xFF) == 0x00);
@@ -5265,7 +5266,7 @@ int main() {
             std::printf("  [20c] Power-on state passed\n");
         }
 
-        // 20d: ALU — ADC (basic + flags)
+        // 20d: ALU - ADC (basic + flags)
         {
             TestSpc700 spc;
             spc.reset();
@@ -5291,7 +5292,7 @@ int main() {
             std::printf("  [20d] ALU ADC passed\n");
         }
 
-        // 20e: ALU — SBC
+        // 20e: ALU - SBC
         {
             TestSpc700 spc;
             spc.reset();
@@ -5310,7 +5311,7 @@ int main() {
             std::printf("  [20e] ALU SBC passed\n");
         }
 
-        // 20f: ALU — AND, OR, EOR
+        // 20f: ALU - AND, OR, EOR
         {
             TestSpc700 spc;
             spc.reset();
@@ -5337,7 +5338,7 @@ int main() {
             std::printf("  [20f] ALU AND/OR/EOR passed\n");
         }
 
-        // 20g: ALU — CMP
+        // 20g: ALU - CMP
         {
             TestSpc700 spc;
             spc.reset();
@@ -5359,7 +5360,7 @@ int main() {
             std::printf("  [20g] ALU CMP passed\n");
         }
 
-        // 20h: ALU — shift/rotate
+        // 20h: ALU - shift/rotate
         {
             TestSpc700 spc;
             spc.reset();
@@ -5453,13 +5454,13 @@ int main() {
             spc.reset();
             spc.r.s = 0xFF;
 
-            // PUSH A (0x2D) — A=$42
+            // PUSH A (0x2D) - A=$42
             spc.r.a = 0x42;
             spc.emit({0x2D}); spc.Step();
             assert(spc.ram[0x01FF] == 0x42);
             assert(spc.r.s == 0xFE);
 
-            // PUSH X (0x4D) — X=$33
+            // PUSH X (0x4D) - X=$33
             spc.r.x = 0x33;
             spc.emit({0x4D}); spc.Step();
             assert(spc.ram[0x01FE] == 0x33);
@@ -5483,20 +5484,20 @@ int main() {
             TestSpc700 spc;
             spc.reset();
 
-            // BRA (0x2F, offset) — always branch forward by 4
+            // BRA (0x2F, offset) - always branch forward by 4
             uint16_t start = spc.r.pc;
             spc.emit({0x2F, 0x04});
             spc.Step();
             assert(spc.r.pc == start + 2 + 4);  // opcode(1)+offset(1) + 4
 
-            // BEQ (0xF0) — Z=0, should NOT branch
+            // BEQ (0xF0) - Z=0, should NOT branch
             spc.r.p.z = false;
             spc.emit({0xF0, 0x10});
             start = spc.r.pc;
             spc.Step();
             assert(spc.r.pc == start + 2);  // fell through
 
-            // BEQ (0xF0) — Z=1, SHOULD branch
+            // BEQ (0xF0) - Z=1, SHOULD branch
             spc.r.p.z = true;
             spc.emit({0xF0, 0x10});
             start = spc.r.pc;
@@ -5917,7 +5918,7 @@ int main() {
             assert(spc.ram[0x0011] == 0xBB);
             assert(spc.r.x == 0x12);
 
-            // MOV A,(X++) — read back
+            // MOV A,(X++) - read back
             spc.r.x = 0x10;
             spc.r.a = 0x00;
             spc.emit({0xBF}); spc.Step();  // MOV A,(X++)
@@ -6196,7 +6197,7 @@ int main() {
             smp.Write(0x0200, 0xFF);
             assert(smp.Ram()[0x0200] == 0x00); // write blocked
 
-            // TEST is write-only — reads return 0
+            // TEST is write-only - reads return 0
             assert(smp.Read(0x00F0) == 0x00);
 
             // P flag set → TEST writes ignored
@@ -6295,7 +6296,7 @@ int main() {
 
             // IPL ROM at $FFC0:
             //   MOV SP, #$EF    (CD EF)
-            //   MOV SP, X       (BD)     — actually TXS
+            //   MOV SP, X       (BD)     - actually TXS
             //   MOV A, #$00     (E8 00)
             //   DEC A           (9C)  wait, that's actually C6 1D D0 FC...
             //
@@ -6796,7 +6797,7 @@ int main() {
             std::printf("  [23d] KON buffering passed\n");
         }
 
-        // 23e: BRR decode — filter 0 (direct)
+        // 23e: BRR decode - filter 0 (direct)
         {
             Dsp dsp;
             uint8_t ram[65536] = {};
@@ -6853,10 +6854,10 @@ int main() {
             // Check that bufPos advanced
             assert(v.bufPos == 4 || v.bufPos == 0);  // 4 samples decoded
 
-            std::printf("  [23e] BRR decode — filter 0 passed\n");
+            std::printf("  [23e] BRR decode - filter 0 passed\n");
         }
 
-        // 23f: BRR decode — filter 1
+        // 23f: BRR decode - filter 1
         {
             Dsp dsp;
             uint8_t ram[65536] = {};
@@ -6902,7 +6903,7 @@ int main() {
             assert(v.buf[Dsp::BrrBufSize + 0] == 28);
             assert(v.buf[Dsp::BrrBufSize + 1] == 54);
 
-            std::printf("  [23f] BRR decode — filter 1 passed\n");
+            std::printf("  [23f] BRR decode - filter 1 passed\n");
         }
 
         // 23g: Gaussian interpolation
@@ -6950,7 +6951,7 @@ int main() {
             std::printf("  [23g] Gaussian interpolation (structure) passed\n");
         }
 
-        // 23h: ADSR envelope — Attack
+        // 23h: ADSR envelope - Attack
         {
             Dsp dsp;
             uint8_t ram[65536] = {};
@@ -6993,10 +6994,10 @@ int main() {
             }
             assert(increased);
 
-            std::printf("  [23h] ADSR envelope — Attack passed\n");
+            std::printf("  [23h] ADSR envelope - Attack passed\n");
         }
 
-        // 23i: ADSR envelope — Release (KOFF)
+        // 23i: ADSR envelope - Release (KOFF)
         {
             Dsp dsp;
             uint8_t ram[65536] = {};
@@ -7033,10 +7034,10 @@ int main() {
             // Release always decrements by 8, no counter gating
             assert(v.env == env_after_koff - 8);
 
-            std::printf("  [23i] ADSR envelope — Release (KOFF) passed\n");
+            std::printf("  [23i] ADSR envelope - Release (KOFF) passed\n");
         }
 
-        // 23j: GAIN — direct mode
+        // 23j: GAIN - direct mode
         {
             Dsp dsp;
             uint8_t ram[65536] = {};
@@ -7070,7 +7071,7 @@ int main() {
             // In direct GAIN mode, env should be set to value * 0x10
             assert(v.env == 0x400);
 
-            std::printf("  [23j] GAIN — direct mode passed\n");
+            std::printf("  [23j] GAIN - direct mode passed\n");
         }
 
         // 23k: Noise LFSR
@@ -7087,7 +7088,7 @@ int main() {
             int16_t out[4096];
             dsp.SetOutput(out, 2048);
 
-            // Run a few samples — noise should change
+            // Run a few samples - noise should change
             bool changed = false;
             for (int i = 0; i < 10; i++) {
                 dsp.RunSample();
@@ -7164,7 +7165,7 @@ int main() {
 
             dsp.RunSample();
 
-            // Echo write disabled — echo buffer should not be modified
+            // Echo write disabled - echo buffer should not be modified
             assert(ram[0x1000] == 0x42);
             assert(ram[0x1002] == 0x42);
 
@@ -7209,7 +7210,7 @@ int main() {
             uint8_t val = smp.Read(0x00F3);
             assert(val == 0x7F);
 
-            // Write to address with bit 7 set — should be read-only, no write
+            // Write to address with bit 7 set - should be read-only, no write
             smp.Write(0x00F2, 0x80);  // addr 0x80 → masked to 0x00 on read
             smp.Write(0x00F3, 0x42);  // Should be blocked (addr & 0x80)
             assert(dsp.Read(0x00) == 0x7F);  // Unchanged
@@ -7452,7 +7453,7 @@ int main() {
             std::printf("  [24a] Clock constants passed\n");
         }
 
-        // 24b: ApuScheduler ratio math — one frame
+        // 24b: ApuScheduler ratio math - one frame
         {
           // One NTSC frame = 357368 master clocks
           // Expected SMP clocks: floor(357368 * 1025280 / 21477272) = 17060.
@@ -7460,15 +7461,15 @@ int main() {
           uint64_t target = sched.Advance(357368);
           assert(target == 17060); // Floor of fractional result
 
-          // Accumulate another frame — fractional remainder carries over
+          // Accumulate another frame - fractional remainder carries over
           uint64_t target2 = sched.Advance(357368);
           // Total: floor(2 * 357368 * 1025280 / 21477272) = 34120.
           assert(target2 == 34120);
 
-          std::printf("  [24b] Ratio math — one frame passed\n");
+          std::printf("  [24b] Ratio math - one frame passed\n");
         }
 
-        // 24c: ApuScheduler ratio math — small increments
+        // 24c: ApuScheduler ratio math - small increments
         {
             ApuScheduler sched;
             // Many small increments should accumulate to the same total
@@ -7486,10 +7487,10 @@ int main() {
                            static_cast<int64_t>(bigTarget);
             assert(diff >= -1 && diff <= 1);
 
-            std::printf("  [24c] Ratio math — small increments passed\n");
+            std::printf("  [24c] Ratio math - small increments passed\n");
         }
 
-        // 24d: ApuScheduler ratio — long-term accuracy
+        // 24d: ApuScheduler ratio - long-term accuracy
         {
             // Run 60 frames and check total SMP cycles
             ApuScheduler sched;
@@ -7512,10 +7513,10 @@ int main() {
                           static_cast<int64_t>(expected);
             assert(err >= -2 && err <= 2);
 
-            std::printf("  [24d] Ratio — long-term accuracy passed\n");
+            std::printf("  [24d] Ratio - long-term accuracy passed\n");
         }
 
-        // 24e: SMP RunUntil — basic execution
+        // 24e: SMP RunUntil - basic execution
         {
             Smp smp;
             Dsp dsp;
@@ -7542,10 +7543,10 @@ int main() {
             // BRA takes 4 cycles, so overshoot <= 3
             assert(smp.CycleCount() <= startCycles + 103);
 
-            std::printf("  [24e] SMP RunUntil — basic execution passed\n");
+            std::printf("  [24e] SMP RunUntil - basic execution passed\n");
         }
 
-        // 24f: SMP RunUntil — halted (STOP)
+        // 24f: SMP RunUntil - halted (STOP)
         {
             Smp smp;
 
@@ -7558,11 +7559,11 @@ int main() {
             uint64_t start = smp.CycleCount();
             smp.RunUntil(start + 1000);
 
-            // CPU halted by STOP — cycles should be advanced to target
+            // CPU halted by STOP - cycles should be advanced to target
             assert(smp.CycleCount() >= start + 1000);
             assert(smp.r.stop == true);
 
-            std::printf("  [24f] SMP RunUntil — halted (STOP) passed\n");
+            std::printf("  [24f] SMP RunUntil - halted (STOP) passed\n");
         }
 
         // 24g: DSP sample generation via bus cycles
@@ -7593,7 +7594,7 @@ int main() {
             std::printf("  [24g] DSP sample generation via bus cycles passed\n");
         }
 
-        // 24h: ApuScheduler Run — integrated CPU + SMP
+        // 24h: ApuScheduler Run - integrated CPU + SMP
         {
             Smp smp;
             Dsp dsp;
@@ -7626,10 +7627,10 @@ int main() {
             int samples = dsp.SamplesWritten();
             assert(samples >= 500 && samples <= 600);
 
-            std::printf("  [24h] ApuScheduler Run — integrated passed\n");
+            std::printf("  [24h] ApuScheduler Run - integrated passed\n");
         }
 
-        // 24i: DSP sample rate — approximately 32 kHz
+        // 24i: DSP sample rate - approximately 32 kHz
         {
             Smp smp;
             Dsp dsp;
@@ -7658,7 +7659,7 @@ int main() {
             // Allow 31000-33000
             assert(totalSamples >= 31000 && totalSamples <= 33000);
 
-            std::printf("  [24i] DSP sample rate — ~32 kHz passed\n");
+            std::printf("  [24i] DSP sample rate - ~32 kHz passed\n");
         }
 
         // 24j: Scheduler Reset
@@ -7684,7 +7685,7 @@ int main() {
         // 24k: No DSP ticking without SetDsp
         {
             Smp smp;
-            // No DSP attached — tickDsp should be safe (no crash)
+            // No DSP attached - tickDsp should be safe (no crash)
             smp.Ram()[0x0200] = 0x2F;
             smp.Ram()[0x0201] = 0xFE;
             smp.r.pc = 0x0200;
@@ -7922,11 +7923,11 @@ int main() {
             t.SetVDisp(240);
             assert(t.VDisp() == 240);
 
-            // Advance to scanline 225 — should NOT be in vblank with overscan
+            // Advance to scanline 225 - should NOT be in vblank with overscan
             t.Tick(225u * 1364u);
             assert(!t.InVBlank());
 
-            // Advance to scanline 240 — now in vblank
+            // Advance to scanline 240 - now in vblank
             t.Tick(15u * 1364u);
             assert(t.VCounter() == 240);
             assert(t.InVBlank());
@@ -8037,7 +8038,7 @@ int main() {
             t.Tick(540);
             assert(refreshCount == 1);
 
-            // Finish scanline, enter next — should fire again
+            // Finish scanline, enter next - should fire again
             t.Tick(1364 - 540 + 540);
             assert(refreshCount == 2);
             std::printf("  [25q] onDramRefresh callback passed\n");
@@ -8078,7 +8079,7 @@ int main() {
             int visibleFires = hdmaCount;
             assert(visibleFires == 225);
 
-            // Run through 37 VBlank scanlines — HDMA shouldn't fire
+            // Run through 37 VBlank scanlines - HDMA shouldn't fire
             t.Tick(37u * 1364u);
             assert(hdmaCount == visibleFires);
             std::printf("  [25s] HDMA silent in VBlank passed\n");
@@ -8094,7 +8095,7 @@ int main() {
             t.Tick(225u * 1364u);
             assert(hblankCount == 225);
 
-            // Run through VBlank — HBlank shouldn't fire
+            // Run through VBlank - HBlank shouldn't fire
             int beforeVblank = hblankCount;
             t.Tick(37u * 1364u);
             assert(hblankCount == beforeVblank);
@@ -8247,7 +8248,7 @@ int main() {
             std::printf("  [26b] H/V timer configuration passed\n");
         }
 
-        // 26c: NMI detection — basic edge at V=vdisp
+        // 26c: NMI detection - basic edge at V=vdisp
         {
             IrqController irq;
             // Enable NMI
@@ -8257,17 +8258,17 @@ int main() {
             uint16_t vdisp = 225;
             uint16_t hperiod = 1364;
 
-            // Poll at V=224, H=100 — before vblank, no NMI
+            // Poll at V=224, H=100 - before vblank, no NMI
             irq.Poll(100, 224, vdisp, hperiod);
             assert(!irq.NmiLine());
             assert(!irq.NmiTransition());
 
-            // Poll at V=225, H=6 — vblank start! NMI condition just became true.
+            // Poll at V=225, H=6 - vblank start! NMI condition just became true.
             // First poll: nmiValid changes, nmiLine set, nmiHold = true
             irq.Poll(6, 225, vdisp, hperiod);
             assert(irq.NmiLine());
             assert(irq.NmiHold());
-            // Transition not set yet — hold hasn't expired
+            // Transition not set yet - hold hasn't expired
             assert(!irq.NmiTransition());
 
             // Second poll (4 clocks later): hold expires → transition fires
@@ -8282,7 +8283,7 @@ int main() {
             std::printf("  [26c] NMI detection at V=vdisp passed\n");
         }
 
-        // 26d: NMI edge detection — no re-trigger in same VBlank
+        // 26d: NMI edge detection - no re-trigger in same VBlank
         {
             IrqController irq;
             irq.NmitimenUpdate(0x80);
@@ -8295,7 +8296,7 @@ int main() {
             irq.Poll(10, 225, vdisp, hperiod);  // hold expires → transition
             assert(irq.NmiTest());  // consume transition
 
-            // Continue polling in VBlank — no new transition
+            // Continue polling in VBlank - no new transition
             irq.Poll(14, 225, vdisp, hperiod);
             irq.Poll(18, 225, vdisp, hperiod);
             irq.Poll(6, 226, vdisp, hperiod);
@@ -8317,11 +8318,11 @@ int main() {
             irq.Poll(10, 225, vdisp, hperiod);
             assert(irq.NmiTest());
 
-            // Leave VBlank — NMI condition goes false (V < vdisp)
+            // Leave VBlank - NMI condition goes false (V < vdisp)
             irq.Poll(6, 0, vdisp, hperiod);
             assert(!irq.NmiLine());
 
-            // Enter VBlank again — should re-trigger
+            // Enter VBlank again - should re-trigger
             irq.Poll(6, 225, vdisp, hperiod);     // edge detected
             irq.Poll(10, 225, vdisp, hperiod);     // hold expires
             assert(irq.NmiTransition());
@@ -8329,7 +8330,7 @@ int main() {
             std::printf("  [26e] NMI re-triggers on next frame passed\n");
         }
 
-        // 26f: NMI disabled — no transition
+        // 26f: NMI disabled - no transition
         {
             IrqController irq;
             // NMI NOT enabled (data = 0)
@@ -8346,7 +8347,7 @@ int main() {
             assert(irq.NmiLine());
             assert(!irq.NmiTransition());
             assert(!irq.NmiTest());
-            std::printf("  [26f] NMI disabled — no transition passed\n");
+            std::printf("  [26f] NMI disabled - no transition passed\n");
         }
 
         // 26g: NMI enable rising edge during VBlank
@@ -8360,7 +8361,7 @@ int main() {
             assert(irq.NmiLine());
             assert(!irq.NmiTransition());
 
-            // Now enable NMI — should immediately transition
+            // Now enable NMI - should immediately transition
             irq.NmitimenUpdate(0x80);
             assert(irq.NmiTransition());
             assert(irq.IrqLocked());  // lock set by NmitimenUpdate
@@ -8375,21 +8376,21 @@ int main() {
 
             uint16_t vdisp = 225, hperiod = 1364;
 
-            // Enter VBlank — sets nmiLine + nmiHold
+            // Enter VBlank - sets nmiLine + nmiHold
             irq.Poll(6, 225, vdisp, hperiod);
             assert(irq.NmiLine());
             assert(irq.NmiHold());
 
-            // RDNMI during hold — returns true but does NOT clear
+            // RDNMI during hold - returns true but does NOT clear
             bool flag1 = irq.Rdnmi();
             assert(flag1);
-            assert(irq.NmiLine());  // Still set — hold protection
+            assert(irq.NmiLine()); // Still set - hold protection
 
             // Expire hold
             irq.Poll(10, 225, vdisp, hperiod);
             assert(!irq.NmiHold());
 
-            // RDNMI after hold — returns true and clears
+            // RDNMI after hold - returns true and clears
             bool flag2 = irq.Rdnmi();
             assert(flag2);
             assert(!irq.NmiLine());  // Cleared
@@ -8407,12 +8408,12 @@ int main() {
 
             uint16_t vdisp = 225, hperiod = 1364;
 
-            // Poll at V=225, H=0 — "2 clocks ago" is still V=224 (prev scanline)
+            // Poll at V=225, H=0 - "2 clocks ago" is still V=224 (prev scanline)
             // So vDelayed = 224 < 225, NMI condition false
             irq.Poll(0, 225, vdisp, hperiod);
             assert(!irq.NmiLine());
 
-            // Poll at V=225, H=2 — "2 clocks ago" is V=225 (h >= 2 → use current V)
+            // Poll at V=225, H=2 - "2 clocks ago" is V=225 (h >= 2 → use current V)
             // NMI condition true
             irq.Poll(2, 225, vdisp, hperiod);
             assert(irq.NmiLine());
@@ -8462,11 +8463,11 @@ int main() {
             irq.SetVTime(100);
             uint16_t vdisp = 225, hperiod = 1364;
 
-            // Poll at V=99 — no match
+            // Poll at V=99 - no match
             irq.Poll(50, 99, vdisp, hperiod);
             assert(!irq.IrqLine());
 
-            // Poll at V=100, H=14 (H >= 10 so vd = 100) — V matches
+            // Poll at V=100, H=14 (H >= 10 so vd = 100) - V matches
             // H condition always true when hirq not enabled
             irq.Poll(14, 100, vdisp, hperiod);
             assert(irq.IrqLine());
@@ -8477,7 +8478,7 @@ int main() {
             std::printf("  [26k] V-IRQ basic passed\n");
         }
 
-        // 26l: HV-IRQ — both must match
+        // 26l: HV-IRQ - both must match
         {
             IrqController irq;
             // Enable both H and V IRQ (bits 4+5): data = 0x30
@@ -8502,7 +8503,7 @@ int main() {
             std::printf("  [26l] HV-IRQ both match passed\n");
         }
 
-        // 26m: IRQ with I flag set — IrqTest returns false
+        // 26m: IRQ with I flag set - IrqTest returns false
         {
             IrqController irq;
             irq.NmitimenUpdate(0x20);
@@ -8535,7 +8536,7 @@ int main() {
             assert(irq.IrqLine());
             assert(irq.IrqHold());
 
-            // TIMEUP during hold — returns true but does NOT clear
+            // TIMEUP during hold - returns true but does NOT clear
             bool flag1 = irq.Timeup();
             assert(flag1);
             assert(irq.IrqLine());  // Still set
@@ -8544,7 +8545,7 @@ int main() {
             irq.Poll(18, 100, vdisp, hperiod);
             assert(!irq.IrqHold());
 
-            // TIMEUP after hold — clears irqLine and irqTransition
+            // TIMEUP after hold - clears irqLine and irqTransition
             bool flag2 = irq.Timeup();
             assert(flag2);
             assert(!irq.IrqLine());
@@ -8575,12 +8576,12 @@ int main() {
         {
             IrqController irq;
 
-            // Enable NMI — sets irqLock
+            // Enable NMI - sets irqLock
             irq.NmitimenUpdate(0x80);
             assert(irq.IrqLocked());
 
             // NmiTest should return false when locked
-            // (even if transition were set — but it's not in this case)
+            // (even if transition were set - but it's not in this case)
             assert(!irq.NmiTest());
 
             // Clear lock
@@ -8604,7 +8605,7 @@ int main() {
             irq.Poll(218, 10, vdisp, hperiod);  // transition set
             assert(irq.IrqTest(true));           // consume
 
-            // H moves past target — condition goes away
+            // H moves past target - condition goes away
             irq.Poll(500, 10, vdisp, hperiod);
             assert(!irq.IrqHold());
 
@@ -8661,7 +8662,7 @@ int main() {
             std::printf("  [26s] Reset clears everything passed\n");
         }
 
-        // 26t: Last-dot guard — IRQ cannot fire at V=0 H=0
+        // 26t: Last-dot guard - IRQ cannot fire at V=0 H=0
         {
             IrqController irq;
             irq.NmitimenUpdate(0x30);  // HV-IRQ
@@ -8686,7 +8687,7 @@ int main() {
             std::printf("  [26t] Last-dot guard passed\n");
         }
 
-        // 26u: Integration with Timing — onIrqPoll wired
+        // 26u: Integration with Timing - onIrqPoll wired
         {
             Timing t(Region::NTSC);
             IrqController irq;
@@ -8771,7 +8772,7 @@ int main() {
             irq.Poll(10, 225, 225, 1364);   // hold expires
             assert(irq.NmiLine());
 
-            // Read $4210 via CpuIoRegisters — should return NMI flag set
+            // Read $4210 via CpuIoRegisters - should return NMI flag set
             uint8_t val = cpuIo.Read(0x4210, 0x00);
             assert((val & 0x80) != 0);    // NMI flag set
 
@@ -8799,7 +8800,7 @@ int main() {
             irq.Poll(18, 100, 225, 1364);   // hold clears, transition set
             assert(irq.IrqLine());
 
-            // Read $4211 — should return IRQ flag set and clear it
+            // Read $4211 - should return IRQ flag set and clear it
             uint8_t val = cpuIo.Read(0x4211, 0x00);
             assert((val & 0x80) != 0);
             assert(!irq.IrqLine());
@@ -8869,7 +8870,7 @@ int main() {
             std::printf("  [27a] Power-on state passed\n");
         }
 
-        // 27b: InputStateToSnesFormat — individual buttons
+        // 27b: InputStateToSnesFormat - individual buttons
         {
             // Each button maps to a specific bit in the 16-bit register:
             //   B Y Sel Sta Up Dn Le Ri A X L R 0 0 0 0
@@ -8890,7 +8891,7 @@ int main() {
             std::printf("  [27b] InputStateToSnesFormat individual buttons passed\n");
         }
 
-        // 27c: InputStateToSnesFormat — D-pad opposition
+        // 27c: InputStateToSnesFormat - D-pad opposition
         {
             InputState s{};
             // Up + Down = neither
@@ -8909,7 +8910,7 @@ int main() {
             std::printf("  [27c] InputStateToSnesFormat D-pad opposition passed\n");
         }
 
-        // 27d: InputStateToSnesFormat — combined buttons
+        // 27d: InputStateToSnesFormat - combined buttons
         {
             InputState s{};
             s.a = true; s.b = true; s.start = true; s.r = true;
@@ -8932,7 +8933,7 @@ int main() {
             std::printf("  [27e] FrameBegin resets counter passed\n");
         }
 
-        // 27f: Polling disabled — no activation
+        // 27f: Polling disabled - no activation
         {
             AutoJoypad aj;
             // autoJoypadPoll is false by default
@@ -8940,10 +8941,10 @@ int main() {
             // Counter is set to 0 (trigger condition met) but...
             // The abort check fires: counter!=1 && !autoJoypadPoll → counter=33
             assert(aj.Counter() == 33);
-            std::printf("  [27f] Polling disabled — no activation passed\n");
+            std::printf("  [27f] Polling disabled - no activation passed\n");
         }
 
-        // 27g: Trigger condition — correct V/H
+        // 27g: Trigger condition - correct V/H
         {
             AutoJoypad aj;
             aj.SetAutoJoypadPoll(true);
@@ -8970,7 +8971,7 @@ int main() {
             std::printf("  [27g] Trigger condition passed\n");
         }
 
-        // 27h: Complete polling — A button only
+        // 27h: Complete polling - A button only
         {
             AutoJoypad aj;
             aj.SetAutoJoypadPoll(true);
@@ -9000,10 +9001,10 @@ int main() {
             // Standard pad: joy3/4 always 0 (bit 1 of serial data is 0)
             assert(aj.Joy3() == 0);
             assert(aj.Joy4() == 0);
-            std::printf("  [27h] Complete polling — A button passed\n");
+            std::printf("  [27h] Complete polling - A button passed\n");
         }
 
-        // 27i: Complete polling — multiple buttons (B+Start+R)
+        // 27i: Complete polling - multiple buttons (B+Start+R)
         {
             AutoJoypad aj;
             aj.SetAutoJoypadPoll(true);
@@ -9021,10 +9022,10 @@ int main() {
 
             uint16_t expected = 0x8000 | 0x1000 | 0x0010;  // B + Start + R
             assert(aj.Joy1() == expected);
-            std::printf("  [27i] Complete polling — multiple buttons passed\n");
+            std::printf("  [27i] Complete polling - multiple buttons passed\n");
         }
 
-        // 27j: Complete polling — port 2
+        // 27j: Complete polling - port 2
         {
             AutoJoypad aj;
             aj.SetAutoJoypadPoll(true);
@@ -9043,7 +9044,7 @@ int main() {
             assert(aj.Joy1() == 0);  // Port 1 empty
             uint16_t expected = 0x0040 | 0x0020;  // X + L
             assert(aj.Joy2() == expected);
-            std::printf("  [27j] Complete polling — port 2 passed\n");
+            std::printf("  [27j] Complete polling - port 2 passed\n");
         }
 
         // 27k: Disable mid-poll aborts
@@ -9142,7 +9143,7 @@ int main() {
             std::printf("  [27n] Timing onJoypadPoll frequency passed\n");
         }
 
-        // 27o: Full pipeline — Timing drives AutoJoypad
+        // 27o: Full pipeline - Timing drives AutoJoypad
         {
             Timing t;
             AutoJoypad aj;
@@ -9183,7 +9184,7 @@ int main() {
             assert(aj.Joy2() == joy2Expected);
             assert(aj.Joy3() == 0);
             assert(aj.Joy4() == 0);
-            std::printf("  [27o] Full pipeline — Timing + AutoJoypad passed\n");
+            std::printf("  [27o] Full pipeline - Timing + AutoJoypad passed\n");
         }
 
         // 27p: CpuIoRegisters HVBJOY integration
@@ -9297,7 +9298,7 @@ int main() {
             std::printf("  [28c] ALU step callback invoked 5 times passed\n");
         }
 
-        // 28d: Sub-step structure — state sequence verification
+        // 28d: Sub-step structure - state sequence verification
         {
             RamBus bus;
             bus.data_[0xFFFC] = 0x00;
@@ -9347,7 +9348,7 @@ int main() {
 
             assert(afterNop == afterReset + nopClocks);
 
-            // Now apply DRAM refresh — should add exactly 40 to total
+            // Now apply DRAM refresh - should add exactly 40 to total
             cpu.ApplyDramRefreshPenalty();
             uint64_t afterRefresh = cpu.Cycles();
             assert(afterRefresh == afterNop + 40);
@@ -9411,7 +9412,7 @@ int main() {
             std::printf("  [28h] Timing fires at correct H position passed\n");
         }
 
-        // 28i: Full pipeline — Timing drives SnesCpu
+        // 28i: Full pipeline - Timing drives SnesCpu
         {
             RamBus bus;
             bus.data_[0xFFFC] = 0x00;
@@ -9437,7 +9438,7 @@ int main() {
             t.Tick(1364);
             assert(refreshCount == 1);
             assert(aluCount == 5);  // 5 ALU steps per refresh
-            std::printf("  [28i] Full pipeline — Timing drives SnesCpu passed\n");
+            std::printf("  [28i] Full pipeline - Timing drives SnesCpu passed\n");
         }
 
         // 28j: Full frame = 262 refreshes (NTSC)
@@ -9477,7 +9478,7 @@ int main() {
         std::printf("[DRAM Refresh] All DRAM refresh tests passed\n");
     }
 
-    // Test 29: Wire StepFrame() — full system integration
+    // Test 29: Wire StepFrame() - full system integration
     {
         using namespace snes::core;
         std::printf("[StepFrame Integration] Running integration tests...\n");
@@ -9485,17 +9486,17 @@ int main() {
         // Helper: build a LoROM image with executable code at the reset vector.
         //
         // Program (at CPU $8000 → ROM offset $0000):
-        //   CLC            ; 18        — clear carry (also proves CPU executed)
-        //   XCE            ; FB        — switch to native mode
-        //   SEP #$30       ; E2 30     — M=1, X=1 (8-bit A, 8-bit index)
+        //   CLC            ; 18        - clear carry (also proves CPU executed)
+        //   XCE            ; FB        - switch to native mode
+        //   SEP #$30       ; E2 30     - M=1, X=1 (8-bit A, 8-bit index)
         //   LDA #$42       ; A9 42
-        //   STA $00        ; 85 00     — WRAM[$7E0000] = 0x42
+        //   STA $00        ; 85 00     - WRAM[$7E0000] = 0x42
         //   LDA #$FF       ; A9 FF
-        //   STA $01        ; 85 01     — WRAM[$7E0001] = 0xFF
-        //   LDA #$81       ; A9 81     — NMI enable + auto joypad
-        //   STA $4200      ; 8D 00 42  — write NMITIMEN
+        //   STA $01        ; 85 01     - WRAM[$7E0001] = 0xFF
+        //   LDA #$81       ; A9 81     - NMI enable + auto joypad
+        //   STA $4200      ; 8D 00 42  - write NMITIMEN
         //   loop:
-        //   WAI            ; CB        — wait for interrupt (NMI)
+        //   WAI            ; CB        - wait for interrupt (NMI)
         //   JMP loop       ; 4C 11 80
         //
         auto BuildTestRom = []() -> std::vector<uint8_t> {
@@ -9580,7 +9581,7 @@ int main() {
             std::printf("  [29b] StepFrame completes with valid result passed\n");
         }
 
-        // 29c: Frame timing — masterCycles ≈ 357,368 per frame
+        // 29c: Frame timing - masterCycles ≈ 357,368 per frame
         {
             auto emu = std::make_unique<Emulator>();
             auto rom = BuildTestRom();
@@ -9611,7 +9612,7 @@ int main() {
             std::printf("  [29d] Multiple frames increment correctly passed\n");
         }
 
-        // 29e: CPU executes — WRAM is modified
+        // 29e: CPU executes - WRAM is modified
         {
             auto emu = std::make_unique<Emulator>();
             auto rom = BuildTestRom();
@@ -9626,7 +9627,7 @@ int main() {
             // After one frame, the CPU should have written 0x42, 0xFF
             assert(emu->GetBus().WramData()[0] == 0x42);
             assert(emu->GetBus().WramData()[1] == 0xFF);
-            std::printf("  [29e] CPU executes — WRAM modified passed\n");
+            std::printf("  [29e] CPU executes - WRAM modified passed\n");
         }
 
         // 29f: Timing frame count advances
@@ -9657,7 +9658,7 @@ int main() {
                         static_cast<unsigned long long>(emu->GetSmp().CycleCount()));
         }
 
-        // 29h: DRAM refresh occurred — CPU cycles include penalty
+        // 29h: DRAM refresh occurred - CPU cycles include penalty
         {
             auto emu = std::make_unique<Emulator>();
             auto rom = BuildTestRom();
@@ -9671,7 +9672,7 @@ int main() {
             // At 262 scanlines × 40 clocks = 10,480 clocks of DRAM penalty
             // Total CPU cycles should be well over the DRAM penalty alone
             assert(cpuAfter - cpuBefore > 10000);
-            std::printf("  [29h] DRAM refresh — CPU cycles=%llu passed\n",
+            std::printf("  [29h] DRAM refresh - CPU cycles=%llu passed\n",
                         static_cast<unsigned long long>(cpuAfter - cpuBefore));
         }
 
@@ -9785,7 +9786,7 @@ int main() {
             std::printf("  [29m] Input provider polled passed\n");
         }
 
-        // 29n: CpuIoRegisters wired — MEMSEL changes bus speed
+        // 29n: CpuIoRegisters wired - MEMSEL changes bus speed
         {
             auto emu = std::make_unique<Emulator>();
             auto rom = BuildTestRom();

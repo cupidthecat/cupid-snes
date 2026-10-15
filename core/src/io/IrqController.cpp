@@ -2,7 +2,7 @@
 // core/src/io/IrqController.cpp
 // NMI and IRQ timing, latches, and CPU line state.
 
-// IrqController.cpp — SNES NMI / IRQ dispatch implementation
+// IrqController.cpp - SNES NMI / IRQ dispatch implementation
 //
 // Interrupt evaluation, register holds, and instruction-boundary dispatch.
 
@@ -49,7 +49,7 @@ void IrqController::SetVTime(uint16_t raw9bit) noexcept {
     vtime_ = raw9bit & 0x1FF;
 }
 
-// Poll — called every 4 master clocks by the timing system
+// Poll - called every 4 master clocks by the timing system
 
 void IrqController::Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod,
                          uint16_t vperiod) {
@@ -82,7 +82,7 @@ void IrqController::nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vpe
       (h >= 2) ? v : (v > 0 ? static_cast<uint16_t>(v - 1) : static_cast<uint16_t>(vperiod - 1));
   bool newValid = (vDelayed >= vdisp);
 
-  // Edge detection — fire on change
+  // Edge detection - fire on change
   if (newValid != nmiValid_) {
     nmiValid_ = newValid;
     nmiLine_ = nmiValid_;
@@ -130,13 +130,13 @@ void IrqController::PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t
     irqLine_ = true;
     irqHold_ = true;
   }
-  // Falling edge — clear valid (but don't clear irqLine; that's done by Timeup)
+  // Falling edge - clear valid (but don't clear irqLine; that's done by Timeup)
   if (!active && irqValid_) {
     irqValid_ = false;
   }
 }
 
-// NmitimenUpdate — called when $4200 is written
+// NmitimenUpdate - called when $4200 is written
 //
 
 void IrqController::NmitimenUpdate(uint8_t data) {
@@ -165,7 +165,7 @@ void IrqController::NmitimenUpdate(uint8_t data) {
     irqLock_ = true;
 }
 
-// RDNMI ($4210) — read NMI flag with hold-aware clear
+// RDNMI ($4210) - read NMI flag with hold-aware clear
 //
 // Returns current nmiLine value.  If hold is not active, also clears
 // nmiLine (the "read-and-clear" behavior).  The hold prevents the flag
@@ -179,7 +179,7 @@ bool IrqController::Rdnmi() {
     return result;
 }
 
-// TIMEUP ($4211) — read IRQ flag with hold-aware clear
+// TIMEUP ($4211) - read IRQ flag with hold-aware clear
 //
 // Returns current irqLine value.  If hold is not active, also clears
 // irqLine and irqTransition.
@@ -193,7 +193,7 @@ bool IrqController::Timeup() {
     return result;
 }
 
-// NmiTest — called from CPU lastCycle() equivalent
+// NmiTest - called from CPU lastCycle() equivalent
 //
 // Returns true if NMI should be dispatched (transition was pending).
 // Clears the transition flag.
@@ -204,7 +204,7 @@ bool IrqController::NmiTest() {
     return true;
 }
 
-// IrqTest — called from CPU lastCycle() equivalent
+// IrqTest - called from CPU lastCycle() equivalent
 //
 // Returns true if IRQ should be dispatched (transition pending AND I=0).
 // Clears the transition flag regardless.

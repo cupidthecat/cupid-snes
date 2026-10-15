@@ -2,7 +2,7 @@
 // frontend/src/SdlVideoOutput.cpp
 // SDL texture upload, scaling, and window presentation.
 
-// SdlVideoOutput.cpp — SDL3-based video output implementation
+// SdlVideoOutput.cpp - SDL3-based video output implementation
 
 #include "SdlVideoOutput.hpp"
 
@@ -155,7 +155,7 @@ VideoViewport SdlVideoOutput::InputViewport() const {
     return MakeVideoViewport(width, height, texH_ ? texH_ : 224);
 }
 
-// EnsureTexture — (re)create texture when frame dimensions change
+// EnsureTexture - (re)create texture when frame dimensions change
 
 void SdlVideoOutput::EnsureTexture(uint32_t w, uint32_t h) {
     if (texture_ && texW_ == w && texH_ == h) return;
