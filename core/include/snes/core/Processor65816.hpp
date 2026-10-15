@@ -4,13 +4,13 @@
 
 #pragma once
 
-// Processor65816 — Pure WDC 65C816 CPU core
+// Processor65816 - Pure WDC 65C816 CPU core
 //
 // This is a platform-independent 65816 instruction-set implementation.
-// It knows nothing about the SNES; subclasses (SnesCpu, and later SA-1)
-// implement the virtual bus interface with system-specific timing.
+// System and cartridge processors derive from this core and
+// implement the virtual bus interface with their own timing.
 //
-// Design mirrors bsnes processor/wdc65816/wdc65816.hpp:
+// The core provides:
 //   * Virtual read()/write()/idle() for bus access
 //   * Virtual lastCycle() for interrupt edge detection
 //   * Register set with MDR, MAR, temporaries
@@ -23,7 +23,7 @@
 
 namespace snes::core {
 
-// Processor65816  — reusable 65C816 CPU core
+// Processor65816  - reusable 65C816 CPU core
 class Processor65816 {
 public:
     // Register file
@@ -86,17 +86,21 @@ public:
     Processor65816(Processor65816&&) = default;
     Processor65816& operator=(Processor65816&&) = default;
 
-    // Virtual bus interface — subclasses implement these
+    // Virtual bus interface - subclasses implement these
     virtual void idle() = 0;                                   // Internal operation cycle
     virtual uint8_t read(uint32_t address) = 0;                // Bus read
     virtual void write(uint32_t address, uint8_t data) = 0;    // Bus write
     virtual void lastCycle() = 0;                              // Called on final cycle of instruction (IRQ/NMI edge)
     virtual bool interruptPending() const = 0;                 // Is NMI or IRQ about to fire?
 
+    // A cartridge processor can add prefetch clocks after a control transfer.
+    virtual void idleBranch() {}
+    virtual void idleJump() {}
+
     // Power / reset
     void power();
 
-    // Instruction execution — runs one full instruction
+    // Instruction execution - runs one full instruction
     void instruction();
 
     // Register accessors
@@ -126,7 +130,7 @@ protected:
     void setNZ16(uint16_t value);
     void setE(bool enabled);
 
-    // Memory access helpers (following bsnes memory.cpp)
+    // Memory access helpers
     uint8_t fetch();                                     // [PB:PC++]
     void idleIRQ();                                      // idle, but reads bus if IRQ pending
     void idle2();                                        // extra cycle when D.l != 0
@@ -149,7 +153,7 @@ protected:
     uint8_t readStack(uint32_t address);                 // [S+offset]
     void    writeStack(uint32_t address, uint8_t data);
 
-    // ALU algorithms — 8-bit and 16-bit variants
+    // ALU algorithms - 8-bit and 16-bit variants
     using Alu8  = uint8_t  (Processor65816::*)(uint8_t);
     using Alu16 = uint16_t (Processor65816::*)(uint16_t);
 
@@ -194,7 +198,7 @@ protected:
     uint8_t  algorithmTSB8(uint8_t data);
     uint16_t algorithmTSB16(uint16_t data);
 
-    // Instruction implementations — read operations
+    // Instruction implementations - read operations
     void instructionImmediateRead8(Alu8 op);
     void instructionImmediateRead16(Alu16 op);
     void instructionBankRead8(Alu8 op);
@@ -220,7 +224,7 @@ protected:
     void instructionIndirectStackRead8(Alu8 op);
     void instructionIndirectStackRead16(Alu16 op);
 
-    // Instruction implementations — write operations
+    // Instruction implementations - write operations
     void instructionBankWrite8(uint16_t reg);
     void instructionBankWrite16(uint16_t reg);
     void instructionBankWrite8(uint16_t reg, uint16_t index);
@@ -244,7 +248,7 @@ protected:
     void instructionIndirectStackWrite8();
     void instructionIndirectStackWrite16();
 
-    // Instruction implementations — read-modify-write
+    // Instruction implementations - read-modify-write
     void instructionImpliedModify8(Alu8 op, uint16_t& reg);
     void instructionImpliedModify16(Alu16 op, uint16_t& reg);
     void instructionBankModify8(Alu8 op);
@@ -256,7 +260,7 @@ protected:
     void instructionDirectIndexedModify8(Alu8 op);
     void instructionDirectIndexedModify16(Alu16 op);
 
-    // Instruction implementations — program counter control
+    // Instruction implementations - program counter control
     void instructionBranch(bool take = true);
     void instructionBranchLong();
     void instructionJumpShort();
@@ -271,7 +275,7 @@ protected:
     void instructionReturnShort();
     void instructionReturnLong();
 
-    // Instruction implementations — miscellaneous
+    // Instruction implementations - miscellaneous
     void instructionBitImmediate8();
     void instructionBitImmediate16();
     void instructionNoOperation();

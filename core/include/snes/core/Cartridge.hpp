@@ -133,7 +133,8 @@ public:
     void EndDma(unsigned channel);
 
     uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
-    void AdvanceHardware(uint32_t masterClocks);
+    void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0,
+                         bool cpuRefreshing = false);
     void SetPal(bool pal);
     bool CpuIrqPending() const noexcept;
 

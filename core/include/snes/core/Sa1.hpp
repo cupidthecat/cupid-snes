@@ -20,7 +20,8 @@ public:
 
     uint8_t ReadCpu(uint32_t address, uint8_t openBus = 0);
     void WriteCpu(uint32_t address, uint8_t value);
-    void Advance(uint32_t masterClocks);
+    // The console address latch determines contention with cartridge memory.
+    void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
     bool CpuIrqPending() const noexcept;
     void SetPal(bool enabled) noexcept;
     // BS-slot boards route ROM pages 4-7 to a separate read-only expansion.
@@ -59,12 +60,11 @@ private:
     uint8_t sa1Flags_ = 0;
     bool nmiServiced_ = false;
     bool sampledIrq_ = false;
-    bool hardwareVector_ = false;
-    uint16_t hardwareVectorAddress_ = 0;
-    uint16_t hardwareVectorValue_ = 0;
 
     uint64_t requestedClocks_ = 0;
     uint64_t executedClocks_ = 0;
+    uint32_t cpuAddress_ = 0;
+    bool cpuRefreshing_ = false;
     uint16_t hClocks_ = 0;
     uint16_t vCounter_ = 0;
     uint16_t latchedH_ = 0;
@@ -87,6 +87,8 @@ private:
     uint8_t conversionBuffer_ = 0;
 
     void idle() override;
+    void idleBranch() override;
+    void idleJump() override;
     uint8_t read(uint32_t address) override;
     void write(uint32_t address, uint8_t value) override;
     void lastCycle() override;

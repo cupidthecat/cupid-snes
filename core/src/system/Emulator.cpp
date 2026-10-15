@@ -2,7 +2,7 @@
 // core/src/system/Emulator.cpp
 // Top-level subsystem wiring, cartridge loading, and frame execution.
 
-// Emulator.cpp — SNES system integration and frame loop
+// Emulator.cpp - SNES system integration and frame loop
 
 #include "snes/core/Emulator.hpp"
 #include "snes/core/Logging.hpp"
@@ -196,7 +196,7 @@ const Cartridge* Emulator::LoadedCartridge() const noexcept {
     return cartridge_ ? &*cartridge_ : nullptr;
 }
 
-// InitSubsystems — wire callbacks, map bus, reset everything
+// InitSubsystems - wire callbacks, map bus, reset everything
 
 void Emulator::InitSubsystems() {
     msu1_.reset();
@@ -366,7 +366,7 @@ void Emulator::InitSubsystems() {
 
     // 5. Wire Timing → subsystem callbacks
 
-    // V=0, H=0 — start of frame
+    // V=0, H=0 - start of frame
     timing_.onFrameBegin = [this]() {
         ppu_.SetCurrentLine(0);
         ppu_.SetCurrentHClock(0);
@@ -398,10 +398,10 @@ void Emulator::InitSubsystems() {
           SuspendFrame();
     };
 
-    // NMI assertion point — handled indirectly by IrqController::Poll
+    // NMI assertion point - handled indirectly by IrqController::Poll
     timing_.onNmiPoint = nullptr;
 
-    // DRAM refresh — steal 40 master clocks from the CPU
+    // DRAM refresh - steal 40 master clocks from the CPU
     timing_.onDramRefresh = [this]() {
         cpu_->ApplyDramRefreshPenalty();
         pendingExtraClocks_ += Timing::kDramRefreshClocks;
@@ -505,63 +505,63 @@ void Emulator::InitSubsystems() {
     Logger::Instance().Write(LogLevel::Info, "Subsystems initialized");
 }
 
-// StepFrame — run one complete video frame
+// StepFrame - run one complete video frame
 
 FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
-    // Stub path — no cartridge loaded yet
-    if (!initialized_) {
-        const auto input = inputProvider_ ? inputProvider_->PollController(0, frameIndex_) : InputState{};
+  // Stub path - no cartridge loaded yet
+  if (!initialized_) {
+    const auto input =
+        inputProvider_ ? inputProvider_->PollController(0, frameIndex_) : InputState{};
 
-        if (options.emitCpuBusTrace) {
-            EmitTrace(CpuBusTraceEvent{
-                .cycle = masterCycles_,
-                .address = 0x00FFFC,
-                .value = 0,
-                .isWrite = false,
-            });
-        }
-        if (options.emitPpuTrace) {
-            EmitTrace(PpuTraceEvent{
-                .cycle = masterCycles_,
-                .registerAddress = 0x2100,
-                .value = 0,
-                .isWrite = false,
-            });
-        }
-        if (options.emitDmaTrace) {
-            EmitTrace(DmaTraceEvent{
-                .cycle = masterCycles_,
-                .channel = 0,
-                .sourceAddress = 0x7E0000,
-                .destinationAddress = 0x2118,
-                .length = 0,
-            });
-        }
-
-        if (videoOutput_) {
-            auto& frame = videoOutputFrame_;
-            frame.width = config_.visibleWidth;
-            frame.height = config_.visibleHeight;
-            frame.pixels.assign(
-                static_cast<size_t>(frame.width) * frame.height, 0xFF000000);
-            videoOutput_->Present(frame);
-        }
-        if (audioOutput_) {
-            auto& audio = audioOutputBuffer_;
-            audio.sampleRate = AudioTiming::SampleRate;
-            audio.interleavedStereo.clear();
-            audioOutput_->Submit(audio);
-        }
-
-        masterCycles_ += config_.masterCyclesPerFrame;
-        ++frameIndex_;
-
-        return FrameStepResult{
-            .frameIndex = frameIndex_,
-            .masterCycles = masterCycles_,
-            .latchedInput = input,
-        };
+    if (options.emitCpuBusTrace) {
+      EmitTrace(CpuBusTraceEvent{
+          .cycle = masterCycles_,
+          .address = 0x00FFFC,
+          .value = 0,
+          .isWrite = false,
+      });
     }
+    if (options.emitPpuTrace) {
+      EmitTrace(PpuTraceEvent{
+          .cycle = masterCycles_,
+          .registerAddress = 0x2100,
+          .value = 0,
+          .isWrite = false,
+      });
+    }
+    if (options.emitDmaTrace) {
+      EmitTrace(DmaTraceEvent{
+          .cycle = masterCycles_,
+          .channel = 0,
+          .sourceAddress = 0x7E0000,
+          .destinationAddress = 0x2118,
+          .length = 0,
+      });
+    }
+
+    if (videoOutput_) {
+      auto &frame = videoOutputFrame_;
+      frame.width = config_.visibleWidth;
+      frame.height = config_.visibleHeight;
+      frame.pixels.assign(static_cast<size_t>(frame.width) * frame.height, 0xFF000000);
+      videoOutput_->Present(frame);
+    }
+    if (audioOutput_) {
+      auto &audio = audioOutputBuffer_;
+      audio.sampleRate = AudioTiming::SampleRate;
+      audio.interleavedStereo.clear();
+      audioOutput_->Submit(audio);
+    }
+
+    masterCycles_ += config_.masterCyclesPerFrame;
+    ++frameIndex_;
+
+    return FrameStepResult{
+        .frameIndex = frameIndex_,
+        .masterCycles = masterCycles_,
+        .latchedInput = input,
+    };
+  }
 
     // Real frame loop
     autoJoypad_.Ports().PollLightGuns();
@@ -592,7 +592,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
     collectingAudio_ = false;
     // End-of-frame processing
 
-    // RenderFrame is now called from VBlankBegin() — no separate call here.
+    // RenderFrame is now called from VBlankBegin() - no separate call here.
     // The previous duplicate call consumed V=1 from the next frame, causing
     // alternating 1-line / 223-line renders and incorrect scroll values.
 
@@ -610,7 +610,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
         audioOutput_->Submit(audio);
     }
 
-    // Present video — extract only the visible region from the PPU's
+    // Present video - extract only the visible region from the PPU's
     // internal buffer. Visible rows are written starting at output row 0,
     // so the frontend can copy them directly without preserving the hidden
     // 240-line border area.
@@ -661,10 +661,12 @@ void Emulator::SynchronizeCoprocessors() {
   auto delta = elapsed - coprocessorsSyncedClock_;
   coprocessorsSyncedClock_ = elapsed;
   while (delta > std::numeric_limits<uint32_t>::max()) {
-    cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max());
+    cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max(), cpu_->regs().mar,
+                                cpu_->DramRefreshActive());
     delta -= std::numeric_limits<uint32_t>::max();
   }
-  cartridge_->AdvanceHardware(static_cast<uint32_t>(delta));
+  cartridge_->AdvanceHardware(static_cast<uint32_t>(delta), cpu_->regs().mar,
+                              cpu_->DramRefreshActive());
 }
 
 void Emulator::SynchronizeDevices() {

@@ -49,6 +49,120 @@ struct Fixture {
     }
 };
 
+void TransferTiming() {
+  struct Case {
+    std::array<uint8_t, 4> code;
+    uint32_t target;
+    std::array<unsigned, 3> clocks;
+  };
+  const Case cases[] = {
+      {{0x80, 2}, 0x8004, {6, 10, 6}},
+      {{0x80, 3}, 0x8005, {8, 14, 8}},
+      {{0x82, 5, 0}, 0x8008, {8, 14, 8}},
+      {{0x82, 6, 0}, 0x8009, {10, 18, 10}},
+      {{0x4c, 0, 0x81}, 0x8100, {8, 16, 8}},
+      {{0x4c, 0, 1}, 0x100, {6, 12, 6}},
+      {{0x5c, 0, 0x81, 0xc0}, 0xc08100, {10, 20, 10}},
+      {{0x5c, 0, 1, 0}, 0x100, {8, 16, 8}},
+      {{0x20, 0, 0x81}, 0x8100, {14, 22, 22}},
+      {{0x22, 0, 0x81, 0xc0}, 0xc08100, {18, 28, 30}},
+      {{0x6c, 0, 2}, 0x8100, {12, 20, 20}},
+      {{0x7c, 0, 2}, 0x8100, {14, 22, 22}},
+      {{0xdc, 0, 2}, 0xc08100, {14, 22, 26}},
+  };
+  const std::array<uint32_t, 3> consoles{0, 0xc00000, 0x3000};
+  for (unsigned index = 0; index < consoles.size(); ++index)
+    for (const auto &test : cases) {
+      Fixture f;
+      std::copy(test.code.begin(), test.code.end(), f.rom.begin());
+      f.chip.WriteCpu(0x2229, 4);
+      f.chip.WriteCpu(0x3200, 0);
+      f.chip.WriteCpu(0x3201, 0x81);
+      f.chip.WriteCpu(0x3202, 0xc0);
+      f.Start();
+      f.chip.Advance(test.clocks[index], consoles[index]);
+      const auto &r = f.chip.CpuRegisters();
+      Check(((uint32_t(r.pb) << 16) | r.pc) == test.target,
+            "SA-1 control transfers retain the ROM target penalty before the next opcode");
+      f.chip.Advance(1, consoles[index]);
+      Check(((uint32_t(r.pb) << 16) | r.pc) != test.target,
+            "A completed SA-1 control transfer leaves no extra prefetch clock debt");
+    }
+}
+
+void MemoryTiming() {
+  struct Console {
+    uint32_t address;
+    bool refresh;
+    unsigned fetch;
+  };
+  const Console consoles[] = {{0, false, 8},     {0xc00000, false, 16}, {0x3000, false, 8},
+                              {0x3000, true, 8}, {0x6000, false, 8},    {0x500000, false, 8}};
+  struct Access {
+    uint32_t address;
+    std::array<unsigned, 6> clocks;
+  };
+  const Access accesses[] = {
+      {0x000000, {2, 2, 6, 2, 2, 2}}, {0x8007ff, {2, 2, 6, 2, 2, 2}},
+      {0x003000, {2, 2, 6, 2, 2, 2}}, {0xbf37ff, {2, 2, 6, 2, 2, 2}},
+      {0x000800, {2, 2, 2, 2, 2, 2}}, {0x003800, {2, 2, 2, 2, 2, 2}},
+      {0x002300, {2, 2, 2, 2, 2, 2}}, {0x7e3000, {2, 2, 2, 2, 2, 2}},
+      {0x006000, {4, 4, 4, 4, 8, 4}}, {0xbf7fff, {4, 4, 4, 4, 8, 4}},
+      {0x400000, {4, 4, 4, 4, 8, 4}}, {0x5fffff, {4, 4, 4, 4, 8, 4}},
+      {0x600000, {4, 4, 4, 4, 8, 4}}, {0x6fffff, {4, 4, 4, 4, 8, 4}},
+      {0x700000, {2, 2, 2, 2, 2, 2}}, {0x008000, {2, 4, 2, 2, 2, 2}},
+      {0xbf8000, {2, 4, 2, 2, 2, 2}}, {0xc00000, {2, 4, 2, 2, 2, 2}},
+  };
+  for (bool pal : {false, true})
+    for (uint8_t opcode : {0xafu, 0x8fu})
+      for (unsigned index = 0; index < std::size(consoles); ++index)
+        for (const auto &access : accesses) {
+          Fixture f;
+          f.Code(0x8000, {opcode, uint8_t(access.address), uint8_t(access.address >> 8),
+                          uint8_t(access.address >> 16)});
+          f.chip.SetPal(pal);
+          f.Start();
+          const auto &console = consoles[index];
+          f.chip.Advance(console.fetch + access.clocks[index], console.address, console.refresh);
+          Check(f.chip.CpuRegisters().pc == 0x8004,
+                "SA-1 memory cycles retain bus conflicts and release IRAM during console refresh");
+          f.chip.Advance(1, console.address, console.refresh);
+          Check(f.chip.CpuRegisters().pc == 0x8005,
+                "SA-1 memory contention consumes only the required bus cycles");
+        }
+}
+
+void HardwareInterruptTiming() {
+  const std::array<uint32_t, 3> consoles{0, 0xc00000, 0x3000};
+  const std::array<unsigned, 3> emulationClocks{10, 12, 22};
+  const std::array<unsigned, 3> nativeClocks{12, 14, 28};
+  for (bool native : {false, true})
+    for (unsigned index = 0; index < consoles.size(); ++index) {
+      Fixture f;
+      if (native)
+        f.Code(0x8000, {0x18, 0xfb, 0x58, 0xea, 0xea});
+      else
+        f.Code(0x8000, {0x58, 0xea, 0xea});
+      f.chip.WriteSa1(0x222a, 0xff);
+      f.chip.WriteSa1(0x220a, 0x80);
+      SetCpu(f.chip, 0x2207, 0x8100);
+      f.Start();
+      if (native)
+        f.chip.Advance(8);
+      f.chip.Advance(4);
+      f.chip.WriteCpu(0x2200, 0x80);
+      f.chip.Advance(4);
+      f.chip.Advance(native ? nativeClocks[index] : emulationClocks[index], consoles[index]);
+      const auto &r = f.chip.CpuRegisters();
+      Check(r.pc == 0x8100 && !r.pb && r.s == 0x1ff - (native ? 4 : 3) && (r.p & 0x0c) == 4,
+            "SA-1 interrupt entry uses the programmed vector and preserves its stack and status "
+            "rules");
+      f.chip.Advance(1, consoles[index]);
+      Check(r.pc == 0x8101,
+            "The handler starts after SA-1 hardware entry without vector-table read cycles");
+    }
+}
+
 void RegistersAndProtection() {
     Fixture f;
     auto& c = f.chip;
@@ -167,6 +281,12 @@ void Mapping() {
     Check(odd.ram[0x1fff] == 0x8a, "Small physical BW-RAM mirrors safely");
     Sa1 empty({}, {});
     Check(empty.ReadCpu(0xc00000, 0x91) == 0x91 && empty.ReadSa1(0x600000, 0x82) == 0x82, "Absent memory stays open bus");
+
+    f.ram[0] = 0xa6;
+    Check(c.ReadSa1(0x500000) == 0xa6 && c.ReadCpu(0x500000, 0x59) == 0x59,
+          "The upper linear BW-RAM bank range is available only to the cartridge processor");
+    c.WriteSa1(0x53ffff, 0x7b);
+    Check(f.ram[0x3ffff] == 0x7b, "Upper SA-1 linear banks share physical BW-RAM and protection");
 }
 
 void Arithmetic() {
@@ -642,8 +762,20 @@ void ExecutableDmaAndTimer() {
 
 int main() {
     try {
-        RegistersAndProtection(); Mapping(); Arithmetic(); VariableBits();
-        Timers(); Dma(); CharacterConversion(); ExecutableProgram(); Interrupts(); Synchronization(); ExecutableDmaAndTimer();
+      TransferTiming();
+      MemoryTiming();
+      HardwareInterruptTiming();
+      RegistersAndProtection();
+      Mapping();
+      Arithmetic();
+      VariableBits();
+      Timers();
+      Dma();
+      CharacterConversion();
+      ExecutableProgram();
+      Interrupts();
+      Synchronization();
+      ExecutableDmaAndTimer();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "SA-1 regression failed: %s\n", error.what());
         return 1;

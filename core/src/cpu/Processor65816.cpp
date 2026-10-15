@@ -2,10 +2,10 @@
 // core/src/cpu/Processor65816.cpp
 // The reusable 65816 processor core.
 
-// Processor65816.cpp — Pure WDC 65C816 CPU core implementation
+// Processor65816.cpp - Pure WDC 65C816 CPU core implementation
 //
 // Contains:
-//   - power() — initialization
+//   - power() - initialization
 //   - Memory access helpers (fetch, push/pull, readDirect, readBank, etc.)
 //   - ALU algorithms (ADC, SBC, AND, ORA, EOR, ASL, LSR, ROL, ROR, etc.)
 //   - Instruction implementations for all addressing modes
@@ -515,17 +515,17 @@ uint16_t Processor65816::algorithmTSB16(uint16_t data) {
     return data | r.a;
 }
 
-//  Instruction implementations — Read operations
+//  Instruction implementations - Read operations
 //
 
-// Immediate — 8-bit
+// Immediate - 8-bit
 void Processor65816::instructionImmediateRead8(Alu8 op) {
     lastCycle();
     uint8_t data = fetch();
     (this->*op)(data);
 }
 
-// Immediate — 16-bit
+// Immediate - 16-bit
 void Processor65816::instructionImmediateRead16(Alu16 op) {
     uint8_t dl = fetch();
     lastCycle();
@@ -533,7 +533,7 @@ void Processor65816::instructionImmediateRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Absolute — 8-bit   addr = [DB:abs]
+// Absolute - 8-bit   addr = [DB:abs]
 void Processor65816::instructionBankRead8(Alu8 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -542,7 +542,7 @@ void Processor65816::instructionBankRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// Absolute — 16-bit
+// Absolute - 16-bit
 void Processor65816::instructionBankRead16(Alu16 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -553,7 +553,7 @@ void Processor65816::instructionBankRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Absolute,X/Y — 8-bit   addr = [DB:abs+index]
+// Absolute,X/Y - 8-bit   addr = [DB:abs+index]
 void Processor65816::instructionBankRead8(Alu8 op, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -564,7 +564,7 @@ void Processor65816::instructionBankRead8(Alu8 op, uint16_t index) {
     (this->*op)(data);
 }
 
-// Absolute,X/Y — 16-bit
+// Absolute,X/Y - 16-bit
 void Processor65816::instructionBankRead16(Alu16 op, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -576,7 +576,7 @@ void Processor65816::instructionBankRead16(Alu16 op, uint16_t index) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Absolute Long — 8-bit   addr = [long]  or  [long+index]
+// Absolute Long - 8-bit   addr = [long]  or  [long+index]
 void Processor65816::instructionLongRead8(Alu8 op, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -587,7 +587,7 @@ void Processor65816::instructionLongRead8(Alu8 op, uint16_t index) {
     (this->*op)(data);
 }
 
-// Absolute Long — 16-bit
+// Absolute Long - 16-bit
 void Processor65816::instructionLongRead16(Alu16 op, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -599,7 +599,7 @@ void Processor65816::instructionLongRead16(Alu16 op, uint16_t index) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Direct Page — 8-bit   addr = [D+dp]
+// Direct Page - 8-bit   addr = [D+dp]
 void Processor65816::instructionDirectRead8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -608,7 +608,7 @@ void Processor65816::instructionDirectRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// Direct Page — 16-bit
+// Direct Page - 16-bit
 void Processor65816::instructionDirectRead16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -618,7 +618,7 @@ void Processor65816::instructionDirectRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Direct Page,X/Y — 8-bit   addr = [D+dp+index]
+// Direct Page,X/Y - 8-bit   addr = [D+dp+index]
 void Processor65816::instructionDirectRead8(Alu8 op, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -628,7 +628,7 @@ void Processor65816::instructionDirectRead8(Alu8 op, uint16_t index) {
     (this->*op)(data);
 }
 
-// Direct Page,X/Y — 16-bit
+// Direct Page,X/Y - 16-bit
 void Processor65816::instructionDirectRead16(Alu16 op, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -639,7 +639,7 @@ void Processor65816::instructionDirectRead16(Alu16 op, uint16_t index) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// (Direct) — 8-bit   addr = [DB:[D+dp]]
+// (Direct) - 8-bit   addr = [DB:[D+dp]]
 void Processor65816::instructionIndirectRead8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -650,7 +650,7 @@ void Processor65816::instructionIndirectRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// (Direct) — 16-bit
+// (Direct) - 16-bit
 void Processor65816::instructionIndirectRead16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -663,7 +663,7 @@ void Processor65816::instructionIndirectRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// (Direct,X) — 8-bit   addr = [DB:[D+dp+X]]
+// (Direct,X) - 8-bit   addr = [DB:[D+dp+X]]
 void Processor65816::instructionIndexedIndirectRead8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -675,7 +675,7 @@ void Processor65816::instructionIndexedIndirectRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// (Direct,X) — 16-bit
+// (Direct,X) - 16-bit
 void Processor65816::instructionIndexedIndirectRead16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -689,7 +689,7 @@ void Processor65816::instructionIndexedIndirectRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// (Direct),Y — 8-bit   addr = [DB:[D+dp]+Y]
+// (Direct),Y - 8-bit   addr = [DB:[D+dp]+Y]
 void Processor65816::instructionIndirectIndexedRead8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -702,7 +702,7 @@ void Processor65816::instructionIndirectIndexedRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// (Direct),Y — 16-bit
+// (Direct),Y - 16-bit
 void Processor65816::instructionIndirectIndexedRead16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -716,7 +716,7 @@ void Processor65816::instructionIndirectIndexedRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// [Direct] — 8-bit   addr = [[D+dp]] (long indirect)
+// [Direct] - 8-bit   addr = [[D+dp]] (long indirect)
 void Processor65816::instructionIndirectLongRead8(Alu8 op, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -729,7 +729,7 @@ void Processor65816::instructionIndirectLongRead8(Alu8 op, uint16_t index) {
     (this->*op)(data);
 }
 
-// [Direct] — 16-bit
+// [Direct] - 16-bit
 void Processor65816::instructionIndirectLongRead16(Alu16 op, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -743,7 +743,7 @@ void Processor65816::instructionIndirectLongRead16(Alu16 op, uint16_t index) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// Stack Relative — 8-bit   addr = [S+offset]
+// Stack Relative - 8-bit   addr = [S+offset]
 void Processor65816::instructionStackRead8(Alu8 op) {
     uint8_t offset = fetch();
     idle();
@@ -752,7 +752,7 @@ void Processor65816::instructionStackRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// Stack Relative — 16-bit
+// Stack Relative - 16-bit
 void Processor65816::instructionStackRead16(Alu16 op) {
     uint8_t offset = fetch();
     idle();
@@ -762,7 +762,7 @@ void Processor65816::instructionStackRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-// (Stack Relative),Y — 8-bit   addr = [DB:[[S+offset]]+Y]
+// (Stack Relative),Y - 8-bit   addr = [DB:[[S+offset]]+Y]
 void Processor65816::instructionIndirectStackRead8(Alu8 op) {
     uint8_t offset = fetch();
     idle();
@@ -774,7 +774,7 @@ void Processor65816::instructionIndirectStackRead8(Alu8 op) {
     (this->*op)(data);
 }
 
-// (Stack Relative),Y — 16-bit
+// (Stack Relative),Y - 16-bit
 void Processor65816::instructionIndirectStackRead16(Alu16 op) {
     uint8_t offset = fetch();
     idle();
@@ -787,10 +787,10 @@ void Processor65816::instructionIndirectStackRead16(Alu16 op) {
     (this->*op)(makeWord(dl, dh));
 }
 
-//  Instruction implementations — Write operations
+//  Instruction implementations - Write operations
 //
 
-// STA/STX/STY/STZ Absolute — 8-bit
+// STA/STX/STY/STZ Absolute - 8-bit
 void Processor65816::instructionBankWrite8(uint16_t reg) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -798,7 +798,7 @@ void Processor65816::instructionBankWrite8(uint16_t reg) {
     writeBank(makeWord(al, ah), static_cast<uint8_t>(reg));
 }
 
-// Absolute — 16-bit
+// Absolute - 16-bit
 void Processor65816::instructionBankWrite16(uint16_t reg) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -808,7 +808,7 @@ void Processor65816::instructionBankWrite16(uint16_t reg) {
     writeBank(addr + 1, hi(reg));
 }
 
-// Absolute,X/Y — 8-bit
+// Absolute,X/Y - 8-bit
 void Processor65816::instructionBankWrite8(uint16_t reg, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -817,7 +817,7 @@ void Processor65816::instructionBankWrite8(uint16_t reg, uint16_t index) {
     writeBank(makeWord(al, ah) + index, static_cast<uint8_t>(reg));
 }
 
-// Absolute,X/Y — 16-bit
+// Absolute,X/Y - 16-bit
 void Processor65816::instructionBankWrite16(uint16_t reg, uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -828,7 +828,7 @@ void Processor65816::instructionBankWrite16(uint16_t reg, uint16_t index) {
     writeBank(addr + index + 1, hi(reg));
 }
 
-// Absolute Long — 8-bit
+// Absolute Long - 8-bit
 void Processor65816::instructionLongWrite8(uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -838,7 +838,7 @@ void Processor65816::instructionLongWrite8(uint16_t index) {
     writeLong(addr + index, static_cast<uint8_t>(r.a));
 }
 
-// Absolute Long — 16-bit
+// Absolute Long - 16-bit
 void Processor65816::instructionLongWrite16(uint16_t index) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -849,7 +849,7 @@ void Processor65816::instructionLongWrite16(uint16_t index) {
     writeLong(addr + index + 1, hi(r.a));
 }
 
-// Direct Page — 8-bit
+// Direct Page - 8-bit
 void Processor65816::instructionDirectWrite8(uint16_t reg) {
     uint8_t dp = fetch();
     idle2();
@@ -857,7 +857,7 @@ void Processor65816::instructionDirectWrite8(uint16_t reg) {
     writeDirect(dp, static_cast<uint8_t>(reg));
 }
 
-// Direct Page — 16-bit
+// Direct Page - 16-bit
 void Processor65816::instructionDirectWrite16(uint16_t reg) {
     uint8_t dp = fetch();
     idle2();
@@ -866,7 +866,7 @@ void Processor65816::instructionDirectWrite16(uint16_t reg) {
     writeDirect(dp + 1, hi(reg));
 }
 
-// Direct Page,X/Y — 8-bit
+// Direct Page,X/Y - 8-bit
 void Processor65816::instructionDirectWrite8(uint16_t reg, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -875,7 +875,7 @@ void Processor65816::instructionDirectWrite8(uint16_t reg, uint16_t index) {
     writeDirect(dp + index, static_cast<uint8_t>(reg));
 }
 
-// Direct Page,X/Y — 16-bit
+// Direct Page,X/Y - 16-bit
 void Processor65816::instructionDirectWrite16(uint16_t reg, uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -885,7 +885,7 @@ void Processor65816::instructionDirectWrite16(uint16_t reg, uint16_t index) {
     writeDirect(dp + index + 1, hi(reg));
 }
 
-// (Direct) — 8-bit
+// (Direct) - 8-bit
 void Processor65816::instructionIndirectWrite8() {
     uint8_t dp = fetch();
     idle2();
@@ -895,7 +895,7 @@ void Processor65816::instructionIndirectWrite8() {
     writeBank(makeWord(al, ah), static_cast<uint8_t>(r.a));
 }
 
-// (Direct) — 16-bit
+// (Direct) - 16-bit
 void Processor65816::instructionIndirectWrite16() {
     uint8_t dp = fetch();
     idle2();
@@ -907,7 +907,7 @@ void Processor65816::instructionIndirectWrite16() {
     writeBank(addr + 1, hi(r.a));
 }
 
-// (Direct,X) — 8-bit
+// (Direct,X) - 8-bit
 void Processor65816::instructionIndexedIndirectWrite8() {
     uint8_t dp = fetch();
     idle2();
@@ -918,7 +918,7 @@ void Processor65816::instructionIndexedIndirectWrite8() {
     writeBank(makeWord(al, ah), static_cast<uint8_t>(r.a));
 }
 
-// (Direct,X) — 16-bit
+// (Direct,X) - 16-bit
 void Processor65816::instructionIndexedIndirectWrite16() {
     uint8_t dp = fetch();
     idle2();
@@ -931,7 +931,7 @@ void Processor65816::instructionIndexedIndirectWrite16() {
     writeBank(addr + 1, hi(r.a));
 }
 
-// (Direct),Y — 8-bit
+// (Direct),Y - 8-bit
 void Processor65816::instructionIndirectIndexedWrite8() {
     uint8_t dp = fetch();
     idle2();
@@ -942,7 +942,7 @@ void Processor65816::instructionIndirectIndexedWrite8() {
     writeBank(makeWord(al, ah) + r.y, static_cast<uint8_t>(r.a));
 }
 
-// (Direct),Y — 16-bit
+// (Direct),Y - 16-bit
 void Processor65816::instructionIndirectIndexedWrite16() {
     uint8_t dp = fetch();
     idle2();
@@ -955,7 +955,7 @@ void Processor65816::instructionIndirectIndexedWrite16() {
     writeBank(addr + r.y + 1, hi(r.a));
 }
 
-// [Direct] — 8-bit
+// [Direct] - 8-bit
 void Processor65816::instructionIndirectLongWrite8(uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -967,7 +967,7 @@ void Processor65816::instructionIndirectLongWrite8(uint16_t index) {
     writeLong(addr + index, static_cast<uint8_t>(r.a));
 }
 
-// [Direct] — 16-bit
+// [Direct] - 16-bit
 void Processor65816::instructionIndirectLongWrite16(uint16_t index) {
     uint8_t dp = fetch();
     idle2();
@@ -980,7 +980,7 @@ void Processor65816::instructionIndirectLongWrite16(uint16_t index) {
     writeLong(addr + index + 1, hi(r.a));
 }
 
-// Stack Relative — 8-bit
+// Stack Relative - 8-bit
 void Processor65816::instructionStackWrite8() {
     uint8_t offset = fetch();
     idle();
@@ -988,7 +988,7 @@ void Processor65816::instructionStackWrite8() {
     writeStack(offset, static_cast<uint8_t>(r.a));
 }
 
-// Stack Relative — 16-bit
+// Stack Relative - 16-bit
 void Processor65816::instructionStackWrite16() {
     uint8_t offset = fetch();
     idle();
@@ -997,7 +997,7 @@ void Processor65816::instructionStackWrite16() {
     writeStack(offset + 1, hi(r.a));
 }
 
-// (Stack Relative),Y — 8-bit
+// (Stack Relative),Y - 8-bit
 void Processor65816::instructionIndirectStackWrite8() {
     uint8_t offset = fetch();
     idle();
@@ -1008,7 +1008,7 @@ void Processor65816::instructionIndirectStackWrite8() {
     writeBank(makeWord(al, ah) + r.y, static_cast<uint8_t>(r.a));
 }
 
-// (Stack Relative),Y — 16-bit
+// (Stack Relative),Y - 16-bit
 void Processor65816::instructionIndirectStackWrite16() {
     uint8_t offset = fetch();
     idle();
@@ -1020,10 +1020,10 @@ void Processor65816::instructionIndirectStackWrite16() {
     writeBank(makeWord(al, ah) + r.y + 1, hi(r.a));
 }
 
-//  Instruction implementations — Read-Modify-Write
+//  Instruction implementations - Read-Modify-Write
 //
 
-// Implied (accumulator or register) — 8-bit
+// Implied (accumulator or register) - 8-bit
 void Processor65816::instructionImpliedModify8(Alu8 op, uint16_t& reg) {
     lastCycle();
     idleIRQ();
@@ -1032,14 +1032,14 @@ void Processor65816::instructionImpliedModify8(Alu8 op, uint16_t& reg) {
     reg = (reg & 0xFF00) | val;
 }
 
-// Implied — 16-bit
+// Implied - 16-bit
 void Processor65816::instructionImpliedModify16(Alu16 op, uint16_t& reg) {
     lastCycle();
     idleIRQ();
     reg = (this->*op)(reg);
 }
 
-// Absolute — 8-bit
+// Absolute - 8-bit
 void Processor65816::instructionBankModify8(Alu8 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1051,7 +1051,7 @@ void Processor65816::instructionBankModify8(Alu8 op) {
     writeBank(addr, data);
 }
 
-// Absolute — 16-bit
+// Absolute - 16-bit
 void Processor65816::instructionBankModify16(Alu16 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1065,7 +1065,7 @@ void Processor65816::instructionBankModify16(Alu16 op) {
     writeBank(addr + 0, lo(data));
 }
 
-// Absolute,X — 8-bit
+// Absolute,X - 8-bit
 void Processor65816::instructionBankIndexedModify8(Alu8 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1078,7 +1078,7 @@ void Processor65816::instructionBankIndexedModify8(Alu8 op) {
     writeBank(addr + r.x, data);
 }
 
-// Absolute,X — 16-bit
+// Absolute,X - 16-bit
 void Processor65816::instructionBankIndexedModify16(Alu16 op) {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1093,7 +1093,7 @@ void Processor65816::instructionBankIndexedModify16(Alu16 op) {
     writeBank(addr + r.x + 0, lo(data));
 }
 
-// Direct Page — 8-bit
+// Direct Page - 8-bit
 void Processor65816::instructionDirectModify8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -1104,7 +1104,7 @@ void Processor65816::instructionDirectModify8(Alu8 op) {
     writeDirect(dp, data);
 }
 
-// Direct Page — 16-bit
+// Direct Page - 16-bit
 void Processor65816::instructionDirectModify16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -1117,7 +1117,7 @@ void Processor65816::instructionDirectModify16(Alu16 op) {
     writeDirect(dp + 0, lo(data));
 }
 
-// Direct Page,X — 8-bit
+// Direct Page,X - 8-bit
 void Processor65816::instructionDirectIndexedModify8(Alu8 op) {
     uint8_t dp = fetch();
     idle2();
@@ -1129,7 +1129,7 @@ void Processor65816::instructionDirectIndexedModify8(Alu8 op) {
     writeDirect(dp + r.x, data);
 }
 
-// Direct Page,X — 16-bit
+// Direct Page,X - 16-bit
 void Processor65816::instructionDirectIndexedModify16(Alu16 op) {
     uint8_t dp = fetch();
     idle2();
@@ -1143,7 +1143,7 @@ void Processor65816::instructionDirectIndexedModify16(Alu16 op) {
     writeDirect(dp + r.x + 0, lo(data));
 }
 
-//  Instruction implementations — Program counter control
+//  Instruction implementations - Program counter control
 //
 
 // Branch (conditional)
@@ -1159,15 +1159,17 @@ void Processor65816::instructionBranch(bool take) {
     lastCycle();
     idle();
     r.pc = target;
+    idleBranch();
 }
 
-// BRL — Branch Long (always, 16-bit offset)
+// BRL - Branch Long (always, 16-bit offset)
 void Processor65816::instructionBranchLong() {
     uint8_t ol = fetch();
     uint8_t oh = fetch();
     lastCycle();
     idle();
     r.pc = static_cast<uint16_t>(r.pc + static_cast<int16_t>(makeWord(ol, oh)));
+    idleBranch();
 }
 
 // JMP Absolute
@@ -1176,9 +1178,10 @@ void Processor65816::instructionJumpShort() {
     lastCycle();
     uint8_t ah = fetch();
     r.pc = makeWord(al, ah);
+    idleJump();
 }
 
-// JMP Long (24-bit — JML)
+// JMP Long (24-bit - JML)
 void Processor65816::instructionJumpLong() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1186,6 +1189,7 @@ void Processor65816::instructionJumpLong() {
     uint8_t ab = fetch();
     r.pb = ab;
     r.pc = makeWord(al, ah);
+    idleJump();
 }
 
 // JMP (Indirect)
@@ -1197,9 +1201,10 @@ void Processor65816::instructionJumpIndirect() {
     lastCycle();
     uint8_t th = read(static_cast<uint16_t>(addr + 1));
     r.pc = makeWord(tl, th);
+    idleJump();
 }
 
-// JMP (Absolute,X) — Indexed Indirect
+// JMP (Absolute,X) - Indexed Indirect
 void Processor65816::instructionJumpIndexedIndirect() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1210,9 +1215,10 @@ void Processor65816::instructionJumpIndexedIndirect() {
     lastCycle();
     uint8_t th = read((static_cast<uint32_t>(r.pb) << 16) | static_cast<uint16_t>(addr + 1));
     r.pc = makeWord(tl, th);
+    idleJump();
 }
 
-// JMP [Indirect Long] — JML
+// JMP [Indirect Long] - JML
 void Processor65816::instructionJumpIndirectLong() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1223,6 +1229,7 @@ void Processor65816::instructionJumpIndirectLong() {
     uint8_t tb = read(static_cast<uint16_t>(addr + 2));
     r.pc = makeWord(tl, th);
     r.pb = tb;
+    idleJump();
 }
 
 // JSR Absolute
@@ -1235,9 +1242,10 @@ void Processor65816::instructionCallShort() {
     lastCycle();
     push(lo(returnAddr));
     r.pc = makeWord(al, ah);
+    idleJump();
 }
 
-// JSL — JSR Long (24-bit)
+// JSL - JSR Long (24-bit)
 void Processor65816::instructionCallLong() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1251,9 +1259,10 @@ void Processor65816::instructionCallLong() {
     r.pb = ab;
     r.pc = makeWord(al, ah);
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
+    idleJump();
 }
 
-// JSR (Absolute,X) — Call Indexed Indirect
+// JSR (Absolute,X) - Call Indexed Indirect
 void Processor65816::instructionCallIndexedIndirect() {
     uint8_t al = fetch();
     uint16_t returnAddr = static_cast<uint16_t>(r.pc);
@@ -1268,9 +1277,10 @@ void Processor65816::instructionCallIndexedIndirect() {
     uint8_t th = read((static_cast<uint32_t>(r.pb) << 16) | static_cast<uint16_t>(addr + 1));
     r.pc = makeWord(tl, th);
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
+    idleJump();
 }
 
-// RTI — Return from Interrupt
+// RTI - Return from Interrupt
 void Processor65816::instructionReturnInterrupt() {
     idle();
     idle();
@@ -1288,9 +1298,10 @@ void Processor65816::instructionReturnInterrupt() {
         r.pb = pull();
         r.pc = makeWord(pcl, pch);
     }
+    idleJump();
 }
 
-// RTS — Return from Subroutine
+// RTS - Return from Subroutine
 void Processor65816::instructionReturnShort() {
     idle();
     idle();
@@ -1299,9 +1310,10 @@ void Processor65816::instructionReturnShort() {
     lastCycle();
     idle();
     r.pc = static_cast<uint16_t>(makeWord(pcl, pch) + 1);
+    idleJump();
 }
 
-// RTL — Return from Subroutine Long
+// RTL - Return from Subroutine Long
 void Processor65816::instructionReturnLong() {
     idle();
     idle();
@@ -1311,19 +1323,20 @@ void Processor65816::instructionReturnLong() {
     r.pb = pullN();
     r.pc = static_cast<uint16_t>(makeWord(pcl, pch) + 1);
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
+    idleJump();
 }
 
-//  Instruction implementations — Miscellaneous
+//  Instruction implementations - Miscellaneous
 //
 
-// BIT #imm — 8-bit (only sets Z, doesn't touch N/V)
+// BIT #imm - 8-bit (only sets Z, doesn't touch N/V)
 void Processor65816::instructionBitImmediate8() {
     lastCycle();
     uint8_t data = fetch();
     setFlag(FlagZ, ((r.a & 0xFF) & data) == 0);
 }
 
-// BIT #imm — 16-bit
+// BIT #imm - 16-bit
 void Processor65816::instructionBitImmediate16() {
     uint8_t dl = fetch();
     lastCycle();
@@ -1337,13 +1350,13 @@ void Processor65816::instructionNoOperation() {
     idleIRQ();
 }
 
-// WDM — 2-byte NOP prefix
+// WDM - 2-byte NOP prefix
 void Processor65816::instructionPrefix() {
     lastCycle();
     fetch();
 }
 
-// XBA — Exchange B and A (high/low bytes of A)
+// XBA - Exchange B and A (high/low bytes of A)
 void Processor65816::instructionExchangeBA() {
     idle();
     lastCycle();
@@ -1352,7 +1365,7 @@ void Processor65816::instructionExchangeBA() {
     setNZ8(lo(r.a));
 }
 
-// MVN/MVP — Block Move (8-bit A: 1-byte transfer count)
+// MVN/MVP - Block Move (8-bit A: 1-byte transfer count)
 void Processor65816::instructionBlockMove8(int adjust) {
     uint8_t dstBank = fetch();
     uint8_t srcBank = fetch();
@@ -1367,7 +1380,7 @@ void Processor65816::instructionBlockMove8(int adjust) {
     if (r.a-- != 0) r.pc -= 3;
 }
 
-// Block Move — 16-bit
+// Block Move - 16-bit
 void Processor65816::instructionBlockMove16(int adjust) {
     uint8_t dstBank = fetch();
     uint8_t srcBank = fetch();
@@ -1382,7 +1395,7 @@ void Processor65816::instructionBlockMove16(int adjust) {
     if (r.a-- != 0) r.pc -= 3;
 }
 
-// BRK / COP — Software Interrupt
+// BRK / COP - Software Interrupt
 void Processor65816::instructionInterrupt(uint16_t vector) {
     fetch();
     if (!r.e) pushN(r.pb);
@@ -1398,7 +1411,7 @@ void Processor65816::instructionInterrupt(uint16_t vector) {
     r.pc = makeWord(pcl, pch);
 }
 
-// STP — Stop Processor
+// STP - Stop Processor
 void Processor65816::instructionStop() {
     r.stp = true;
     // Return to the system scheduler while the CPU remains stopped.
@@ -1406,7 +1419,7 @@ void Processor65816::instructionStop() {
     idle();
 }
 
-// WAI — Wait for Interrupt
+// WAI - Wait for Interrupt
 void Processor65816::instructionWait() {
     r.wai = true;
     while (r.wai) {
@@ -1420,7 +1433,7 @@ void Processor65816::instructionWait() {
     idle();
 }
 
-// XCE — Exchange Carry and Emulation
+// XCE - Exchange Carry and Emulation
 void Processor65816::instructionExchangeCE() {
     lastCycle();
     idleIRQ();
@@ -1430,21 +1443,21 @@ void Processor65816::instructionExchangeCE() {
     setE(oldC);
 }
 
-// SEC/SEI/SED — Set individual flag
+// SEC/SEI/SED - Set individual flag
 void Processor65816::instructionSetFlag(uint8_t flag) {
     lastCycle();
     idleIRQ();
     setFlag(flag, true);
 }
 
-// CLC/CLI/CLD/CLV — Clear individual flag
+// CLC/CLI/CLD/CLV - Clear individual flag
 void Processor65816::instructionClearFlag(uint8_t flag) {
     lastCycle();
     idleIRQ();
     setFlag(flag, false);
 }
 
-// REP — Reset Processor Status Bits
+// REP - Reset Processor Status Bits
 void Processor65816::instructionResetP() {
     uint8_t data = fetch();
     lastCycle();
@@ -1454,7 +1467,7 @@ void Processor65816::instructionResetP() {
     if (xf()) { r.x &= 0xFF; r.y &= 0xFF; }
 }
 
-// SEP — Set Processor Status Bits
+// SEP - Set Processor Status Bits
 void Processor65816::instructionSetP() {
     uint8_t data = fetch();
     lastCycle();
@@ -1464,7 +1477,7 @@ void Processor65816::instructionSetP() {
     if (xf()) { r.x &= 0xFF; r.y &= 0xFF; }
 }
 
-// Transfer — 8-bit (TAX, TXA, TAY, TYA, TXY, TYX)
+// Transfer - 8-bit (TAX, TXA, TAY, TYA, TXY, TYX)
 void Processor65816::instructionTransfer8(uint16_t src, uint16_t& dst) {
     lastCycle();
     idleIRQ();
@@ -1472,7 +1485,7 @@ void Processor65816::instructionTransfer8(uint16_t src, uint16_t& dst) {
     setNZ8(static_cast<uint8_t>(dst));
 }
 
-// Transfer — 16-bit
+// Transfer - 16-bit
 void Processor65816::instructionTransfer16(uint16_t src, uint16_t& dst) {
     lastCycle();
     idleIRQ();
@@ -1480,7 +1493,7 @@ void Processor65816::instructionTransfer16(uint16_t src, uint16_t& dst) {
     setNZ16(dst);
 }
 
-// TCS — Transfer C (accumulator 16-bit) to S
+// TCS - Transfer C (accumulator 16-bit) to S
 void Processor65816::instructionTransferCS() {
     lastCycle();
     idleIRQ();
@@ -1488,7 +1501,7 @@ void Processor65816::instructionTransferCS() {
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | (r.s & 0xFF));
 }
 
-// TSX — Transfer S to X (8-bit index)
+// TSX - Transfer S to X (8-bit index)
 void Processor65816::instructionTransferSX8() {
     lastCycle();
     idleIRQ();
@@ -1496,7 +1509,7 @@ void Processor65816::instructionTransferSX8() {
     setNZ8(static_cast<uint8_t>(r.x));
 }
 
-// TSX — Transfer S to X (16-bit index)
+// TSX - Transfer S to X (16-bit index)
 void Processor65816::instructionTransferSX16() {
     lastCycle();
     idleIRQ();
@@ -1504,7 +1517,7 @@ void Processor65816::instructionTransferSX16() {
     setNZ16(r.x);
 }
 
-// TXS — Transfer X to S
+// TXS - Transfer X to S
 void Processor65816::instructionTransferXS() {
     lastCycle();
     idleIRQ();
@@ -1530,7 +1543,7 @@ void Processor65816::instructionPush16(uint16_t reg) {
     push(lo(reg));
 }
 
-// PHD — Push D (always 16-bit)
+// PHD - Push D (always 16-bit)
 void Processor65816::instructionPushD() {
     idle();
     pushN(hi(r.d));
@@ -1560,7 +1573,7 @@ void Processor65816::instructionPull16(uint16_t& reg) {
     setNZ16(reg);
 }
 
-// PLD — Pull D (always 16-bit)
+// PLD - Pull D (always 16-bit)
 void Processor65816::instructionPullD() {
     idle();
     idle();
@@ -1572,7 +1585,7 @@ void Processor65816::instructionPullD() {
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }
 
-// PLB — Pull Data Bank
+// PLB - Pull Data Bank
 void Processor65816::instructionPullB() {
   idle();
   idle();
@@ -1585,7 +1598,7 @@ void Processor65816::instructionPullB() {
     r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }
 
-// PLP — Pull Processor Status
+// PLP - Pull Processor Status
 void Processor65816::instructionPullP() {
     idle();
     idle();
@@ -1595,7 +1608,7 @@ void Processor65816::instructionPullP() {
     if (xf()) { r.x &= 0xFF; r.y &= 0xFF; }
 }
 
-// PEA — Push Effective Absolute Address
+// PEA - Push Effective Absolute Address
 void Processor65816::instructionPushEffectiveAddress() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
@@ -1605,7 +1618,7 @@ void Processor65816::instructionPushEffectiveAddress() {
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }
 
-// PEI — Push Effective Indirect Address
+// PEI - Push Effective Indirect Address
 void Processor65816::instructionPushEffectiveIndirectAddress() {
     uint8_t dp = fetch();
     idle2();
@@ -1617,7 +1630,7 @@ void Processor65816::instructionPushEffectiveIndirectAddress() {
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }
 
-// PER — Push Effective Relative Address
+// PER - Push Effective Relative Address
 void Processor65816::instructionPushEffectiveRelativeAddress() {
     uint8_t ol = fetch();
     uint8_t oh = fetch();
@@ -2188,10 +2201,10 @@ void Processor65816::instruction() {
     case 0xCB: instructionWait();         break;  // WAI
 
     default:
-        // Unknown opcode — treat as 1-byte NOP (should never happen with correct ROM)
-        lastCycle();
-        idleIRQ();
-        break;
+      // Unknown opcode - treat as 1-byte NOP (should never happen with correct ROM)
+      lastCycle();
+      idleIRQ();
+      break;
     }
 
     #undef M8
