@@ -35,10 +35,10 @@ public:
 
     // System interface
 
-    /// Initialize CPU state and load reset vector.
+    /// Initialize processor state; the next Step executes the reset sequence.
     void Reset();
 
-    /// Execute one instruction and return the number of master clocks consumed.
+    /// Execute an instruction or pending reset and return its CPU master clocks.
     uint32_t Step();
 
     /// External interrupt requests
@@ -66,7 +66,9 @@ public:
 
     // Refresh interrupt inputs at the instruction's sampling point. Returning
     // false suppresses the current sample while interrupt recognition is locked.
-    void SetInterruptPollCallback(std::function<bool()> callback) { onInterruptPoll_ = std::move(callback); }
+    void SetInterruptPollCallback(std::function<bool()> callback) {
+      onInterruptPoll_ = std::move(callback);
+    }
 
     // DRAM refresh
 
@@ -115,6 +117,7 @@ private:
     // IRQ level detection
     bool irqLine_      = false;  // Current IRQ pin state (active = true)
     bool irqPending_   = false;  // IRQ will be serviced after current instruction
+    bool resetPending_ = false;
 
     // DRAM refresh state: 0=idle, 1=bus-halt (6 clocks), 2=interleave (2 clocks)
     uint8_t dramRefreshState_ = 0;

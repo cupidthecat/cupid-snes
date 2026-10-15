@@ -17,7 +17,6 @@
 // The bus also owns the 128 KB WRAM, open-bus MDR, CPU I/O registers
 // ($4200-$421F), WMDATA ($2180-$2183), and bus-speed timing.
 //
-// Following bsnes's Bus architecture in sfc/memory/memory.hpp.
 
 #include "snes/core/Cpu65816.hpp"  // ICpuBus
 #include <array>
@@ -51,6 +50,7 @@ public:
 
     // ICpuBus interface — these are what SnesCpu calls
     uint8_t Read(uint32_t address) override;
+    uint8_t ReadCpu(uint32_t address) override;
     void    Write(uint32_t address, uint8_t value) override;
     uint8_t Speed(uint32_t address) const override;
 
@@ -122,8 +122,12 @@ public:
     // CPU registers ($00-3F,$80-BF:$4000-$43FF) preserve its value; other
     // reads and all writes update it. Partially driven registers combine
     // their own bits with this latch, even after another internal I/O read.
-    uint8_t OpenBus() const noexcept { return mdr_; }
-    void SetOpenBus(uint8_t v) noexcept { mdr_ = v; }
+    uint8_t OpenBus() const noexcept {
+      return mdr_;
+    }
+    void SetOpenBus(uint8_t v) noexcept override {
+      mdr_ = v;
+    }
 
     // WMDATA address register ($2181-$2183 write, $2180 read/write)
     uint32_t WmdataAddress() const noexcept { return wmdataAddr_; }

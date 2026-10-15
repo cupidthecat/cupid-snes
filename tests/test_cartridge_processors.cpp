@@ -31,6 +31,7 @@ std::unique_ptr<Emulator> Machine(const std::vector<uint8_t>& rom) {
     auto machine = std::make_unique<Emulator>();
     std::string error;
     if (!machine->LoadCartridge(rom, &error)) throw std::runtime_error(error);
+    machine->GetCpu()->Step();
     return machine;
 }
 

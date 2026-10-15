@@ -8,7 +8,6 @@
 // Implements ICpuBus for SnesCpu, owns 128 KB WRAM, WMDATA register,
 // bus-speed calculation, and open-bus MDR.
 //
-// Reference: bsnes sfc/memory/memory.cpp, sfc/cpu/memory.cpp
 
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Cartridge.hpp"
@@ -42,39 +41,43 @@ MemoryBus::~MemoryBus() = default;
 
 uint8_t MemoryBus::Read(uint32_t address) {
     address &= 0x00FFFFFF; // mask to 24 bits
-    uint8_t slot = lookup_[address];
 
     // Internal CPU registers use the current memory data latch for undriven
     // bits. Their read results do not replace that latch.
     const bool isCpuIo = (address & 0x40fc00) == 0x4000;
 
-    uint8_t data = readers_[slot](address, mdr_);
+    uint8_t data = MemoryBus::ReadCpu(address);
 
     if (!isCpuIo) {
-        mdr_ = data;
+      mdr_ = data;
     }
     return data;
+}
+
+uint8_t MemoryBus::ReadCpu(uint32_t address) {
+  address &= 0x00FFFFFF;
+  return readers_[lookup_[address]](address, mdr_);
 }
 
 void MemoryBus::Write(uint32_t address, uint8_t value) {
     address &= 0x00FFFFFF;
     uint8_t slot = lookup_[address];
-    writers_[slot](address, value);
     mdr_ = value;
+    writers_[slot](address, value);
 }
 
 // Bus speed calculation
 //
-// Matches bsnes sfc/cpu/memory.cpp speed logic.
+// Bus cycle duration follows the selected address region.
 // Returns master clock cycles: 6 (fast), 8 (slow), 12 (xslow).
 //
 //   Region                                          Cycles
 //   ─────────────────────────────────────────────── ──────
 //   $00-3F,$80-BF : $0000-$1FFF  (WRAM low)         8
-//   $00-3F,$80-BF : $2000-$3FFF  (PPU, etc.)        8
+//   $00-3F,$80-BF : $2000-$3FFF  (PPU, etc.)        6
 //   $00-3F,$80-BF : $4000-$41FF  (joypad/old I/O)  12
 //   $00-3F,$80-BF : $4200-$43FF  (CPU I/O, DMA)     6
-//   $00-3F,$80-BF : $4400-$5FFF  (unmapped)          8
+//   $00-3F,$80-BF : $4400-$5FFF  (unmapped)          6
 //   $00-3F,$80-BF : $6000-$7FFF  (SRAM / expn)      8
 //   $00-3F,$80-BF : $8000-$FFFF  (ROM)              8 (or 6 if fastROM + bank≥$80)
 //   $40-7D         : $0000-$FFFF  (ROM/SRAM)         8
@@ -85,7 +88,7 @@ void MemoryBus::Write(uint32_t address, uint8_t value) {
 uint8_t MemoryBus::Speed(uint32_t address) const {
     address &= 0x00FFFFFF;
 
-    // bsnes bit-trick: addr & 0x40'8000 selects the "ROM area"
+    // Address mask $408000 selects the ROM-speed regions.
     // (banks $40-7D/$C0-FF full, or any bank $8000-$FFFF)
     if (address & 0x408000) {
         // ROM region — 8 slow, or 6 if high banks + fastROM enabled
@@ -97,12 +100,10 @@ uint8_t MemoryBus::Speed(uint32_t address) const {
 
     // Not ROM.  We are in banks $00-3F or $80-BF with offset < $8000,
     // or banks $7E-7F (offset < $8000 — but $7E-7F full is caught above).
-    // bsnes: (addr + 0x6000) & 0x4000 → offsets $2000-$3FFF or $6000-$7FFF
     if ((address + 0x6000) & 0x4000) {
         return 8; // slow: PPU/APU registers, SRAM area
     }
 
-    // bsnes: (addr - 0x4000) & 0x7E00 → offsets $4200-$43FF
     if ((address - 0x4000) & 0x7E00) {
         return 6; // fast: CPU I/O and DMA registers
     }
@@ -166,7 +167,7 @@ void MemoryBus::Reset() {
     nextSlot_ = 1;
 
     // Clear WRAM to 0x55/0xAA pattern (common uninitialized SNES WRAM pattern)
-    // bsnes uses random or 0x55 depending on config; we use a deterministic pattern.
+    // Initialize WRAM deterministically.
     for (size_t i = 0; i < WramSize; ++i) {
         wram_[i] = (i & 1) ? 0xAA : 0x55;
     }
@@ -219,7 +220,7 @@ void MemoryBus::MapWram() {
 
 // CPU I/O register mapping ($4016-$4017, $4200-$421F)
 //
-// These are mapped to banks $00-3F,$80-BF following bsnes cpu.cpp power():
+// CPU I/O is mapped in banks $00-$3F and $80-$BF:
 //   bus.map(readCPU, writeCPU, "00-3f,80-bf:2180-2183,4016-4017,4200-421f")
 //
 // WMDATA ($2180-$2183) is already mapped by MapWram(), so MapCpuIo() only
@@ -251,7 +252,6 @@ void MemoryBus::MapCpuIo(CpuIoRegisters& cpuIo) {
 
 // DMA channel register mapping ($4300-$437F)
 //
-// bsnes maps these in cpu.cpp power():
 //   bus.map(readDMA, writeDMA, "00-3f,80-bf:4300-437f")
 
 void MemoryBus::MapDma(DmaController& dma) {
@@ -273,7 +273,6 @@ void MemoryBus::MapDma(DmaController& dma) {
 
 // PPU register mapping ($2100-$213F)
 //
-// bsnes maps these in ppu power():
 //   bus.map(reader, writer, "00-3f,80-bf:2100-213f")
 
 void MemoryBus::MapPpu(Ppu& ppu) {
@@ -295,7 +294,6 @@ void MemoryBus::MapPpu(Ppu& ppu) {
 
 // APU communication port mapping ($2140-$217F)
 //
-// bsnes maps these in cpu.cpp power():
 //   bus.map(readAPU, writeAPU, "00-3f,80-bf:2140-217f")
 //
 // $2140-$217F are all mirrors of 4 ports (only bits 0-1 matter).
@@ -337,66 +335,70 @@ void MemoryBus::MapCartridge(Cartridge& cart) {
     // internally resolves the actual offset and handles mirroring.
     const auto mapping = cart.Header().mapping;
     if (cart.Header().chip == EnhancementChip::Cx4) {
-        MapRange(0x00, 0x3f, 0x6000, 0x7fff, cartSlot);
-        MapRange(0x80, 0xbf, 0x6000, 0x7fff, cartSlot);
+      MapRange(0x00, 0x3f, 0x6000, 0x7fff, cartSlot);
+      MapRange(0x80, 0xbf, 0x6000, 0x7fff, cartSlot);
     }
     if (cart.Header().chip == EnhancementChip::St018) {
-        MapRange(0x00, 0x3f, 0x3000, 0x3fff, cartSlot);
-        MapRange(0x80, 0xbf, 0x3000, 0x3fff, cartSlot);
+      MapRange(0x00, 0x3f, 0x3000, 0x3fff, cartSlot);
+      MapRange(0x80, 0xbf, 0x3000, 0x3fff, cartSlot);
     }
     switch (mapping) {
     case MappingType::Bsx:
-        MapRange(0x00, 0x3f, 0x2188, 0x219f, cartSlot);
-        MapRange(0x80, 0xbf, 0x2188, 0x219f, cartSlot);
-        MapRange(0x00, 0x3f, 0x5000, 0xffff, cartSlot);
-        MapRange(0x80, 0xbf, 0x5000, 0xffff, cartSlot);
-        MapRange(0x40, 0x7d, 0x0000, 0xffff, cartSlot);
-        MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
-        break;
+      MapRange(0x00, 0x3f, 0x2188, 0x219f, cartSlot);
+      MapRange(0x80, 0xbf, 0x2188, 0x219f, cartSlot);
+      MapRange(0x00, 0x3f, 0x5000, 0xffff, cartSlot);
+      MapRange(0x80, 0xbf, 0x5000, 0xffff, cartSlot);
+      MapRange(0x40, 0x7d, 0x0000, 0xffff, cartSlot);
+      MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
+      break;
     case MappingType::BroadcastSa1:
     case MappingType::Sa1:
-        MapRange(0x00, 0x3f, 0x2200, 0x23ff, cartSlot);
-        MapRange(0x80, 0xbf, 0x2200, 0x23ff, cartSlot);
-        MapRange(0x00, 0x3f, 0x3000, 0x37ff, cartSlot);
-        MapRange(0x80, 0xbf, 0x3000, 0x37ff, cartSlot);
-        MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
-        MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
-        MapRange(0x40, mapping == MappingType::BroadcastSa1 ? 0x7d : 0x4f, 0x0000, 0xffff, cartSlot);
-        MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
-        break;
+      MapRange(0x00, 0x3f, 0x2200, 0x23ff, cartSlot);
+      MapRange(0x80, 0xbf, 0x2200, 0x23ff, cartSlot);
+      MapRange(0x00, 0x3f, 0x3000, 0x37ff, cartSlot);
+      MapRange(0x80, 0xbf, 0x3000, 0x37ff, cartSlot);
+      MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
+      MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
+      MapRange(0x40, mapping == MappingType::BroadcastSa1 ? 0x7d : 0x4f, 0x0000, 0xffff, cartSlot);
+      MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
+      break;
     case MappingType::SuperFx:
-        MapRange(0x00, 0x3f, 0x3000, 0x32ff, cartSlot);
-        MapRange(0x80, 0xbf, 0x3000, 0x32ff, cartSlot);
-        MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
-        MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
-        MapRange(0x40, cart.Header().romSizeShift >= 14 ? 0x6f : 0x5f, 0x0000, 0xffff, cartSlot);
-        MapRange(0xc0, cart.RomData().size() > 0x200000 || cart.Header().romSizeShift >= 14 ? 0xff : 0xdf,
-                 0x0000, 0xffff, cartSlot);
-        MapRange(0x70, uint8_t(0x70 + std::clamp<size_t>((cart.SramData().size() + 0xffff) >> 16, 2, 14) - 1),
-                 0x0000, 0xffff, cartSlot);
-        if (cart.RomData().size() <= 0x200000 && cart.Header().romSizeShift < 14)
-            MapRange(0xf0, 0xf1, 0x0000, 0xffff, cartSlot);
-        break;
+      MapRange(0x00, 0x3f, 0x3000, 0x32ff, cartSlot);
+      MapRange(0x80, 0xbf, 0x3000, 0x32ff, cartSlot);
+      MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
+      MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
+      MapRange(0x40, cart.Header().romSizeShift >= 14 ? 0x6f : 0x5f, 0x0000, 0xffff, cartSlot);
+      MapRange(0xc0,
+               cart.RomData().size() > 0x200000 || cart.Header().romSizeShift >= 14 ? 0xff : 0xdf,
+               0x0000, 0xffff, cartSlot);
+      MapRange(
+          0x70,
+          uint8_t(0x70 + std::clamp<size_t>((cart.SramData().size() + 0xffff) >> 16, 2, 14) - 1),
+          0x0000, 0xffff, cartSlot);
+      if (cart.RomData().size() <= 0x200000 && cart.Header().romSizeShift < 14)
+        MapRange(0xf0, 0xf1, 0x0000, 0xffff, cartSlot);
+      break;
     case MappingType::Spc7110:
-        MapRange(0x00, 0x0f, 0x8000, 0xffff, cartSlot);
-        MapRange(0x80, 0x8f, 0x8000, 0xffff, cartSlot);
-        MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
-        if (cart.Header().romSizeShift >= 13) MapRange(0x40, 0x4f, 0x0000, 0xffff, cartSlot);
-        MapRange(0x50, 0x50, 0x0000, 0xffff, cartSlot);
-        MapRange(0x00, 0x00, 0x6000, 0x7fff, cartSlot);
-        MapRange(0x30, 0x30, 0x6000, 0x7fff, cartSlot);
-        MapRange(0x00, 0x3f, 0x4800, 0x4842, cartSlot);
-        MapRange(0x80, 0xbf, 0x4800, 0x4842, cartSlot);
-        break;
+      MapRange(0x00, 0x0f, 0x8000, 0xffff, cartSlot);
+      MapRange(0x80, 0x8f, 0x8000, 0xffff, cartSlot);
+      MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
+      if (cart.Header().romSizeShift >= 13)
+        MapRange(0x40, 0x4f, 0x0000, 0xffff, cartSlot);
+      MapRange(0x50, 0x50, 0x0000, 0xffff, cartSlot);
+      MapRange(0x00, 0x00, 0x6000, 0x7fff, cartSlot);
+      MapRange(0x30, 0x30, 0x6000, 0x7fff, cartSlot);
+      MapRange(0x00, 0x3f, 0x4800, 0x4842, cartSlot);
+      MapRange(0x80, 0xbf, 0x4800, 0x4842, cartSlot);
+      break;
     case MappingType::St011:
     case MappingType::St010:
-        MapRange(0x00, 0x7d, 0x8000, 0xffff, cartSlot);
-        MapRange(0x80, 0xff, 0x8000, 0xffff, cartSlot);
-        MapRange(0x60, 0x67, 0x0000, 0x3fff, cartSlot);
-        MapRange(0x68, 0x6f, 0x0000, 0x7fff, cartSlot);
-        MapRange(0x70, 0x7d, 0x0000, 0x7fff, cartSlot);
-        MapRange(0xf0, 0xff, 0x0000, 0x7fff, cartSlot);
-        break;
+      MapRange(0x00, 0x7d, 0x8000, 0xffff, cartSlot);
+      MapRange(0x80, 0xff, 0x8000, 0xffff, cartSlot);
+      MapRange(0x60, 0x67, 0x0000, 0x3fff, cartSlot);
+      MapRange(0x68, 0x6f, 0x0000, 0x7fff, cartSlot);
+      MapRange(0x70, 0x7d, 0x0000, 0x7fff, cartSlot);
+      MapRange(0xf0, 0xff, 0x0000, 0x7fff, cartSlot);
+      break;
     case MappingType::BroadcastLoRom:
     case MappingType::BroadcastHiRom:
         MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);

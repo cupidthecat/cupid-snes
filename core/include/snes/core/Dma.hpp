@@ -147,6 +147,11 @@ public:
   void SetCartridge(Cartridge *cartridge) noexcept {
     cartridge_ = cartridge;
   }
+  // The connected CPU owns these latches and must outlive transfers.
+  void SetCpuBusLatches(uint32_t &address, uint8_t &data) noexcept {
+    cpuAddress_ = &address;
+    cpuData_ = &data;
+  }
   // Advance the system during DMA/HDMA bus phases and overhead intervals.
   // Methods still return their own clocks; callers using this callback must
   // not advance those clocks a second time.
@@ -255,6 +260,8 @@ private:
   DmaChannel channels_[8];
   MemoryBus *bus_ = nullptr;
   Cartridge *cartridge_ = nullptr;
+  uint32_t *cpuAddress_ = nullptr;
+  uint8_t *cpuData_ = nullptr;
   std::function<void(uint32_t)> onClock_;
   std::function<uint64_t()> clockQuery_;
   std::function<void()> onBoundary_;

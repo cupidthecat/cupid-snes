@@ -32,20 +32,24 @@ void SnesCpu::Reset() {
     irqLine_    = false;
     irqPending_ = false;
 
-    // Load the reset vector
-    uint8_t pcl = bus_.Read(0xFFFC);
-    uint8_t pch = bus_.Read(0xFFFD);
-    regs().pc = static_cast<uint16_t>(pcl | (pch << 8));
-    regs().pb = 0x00;
-
-    // The reset vector fetch consumes some master clocks
-    addClocks(12);
+    resetPending_ = true;
+    dramRefreshState_ = 0;
+    bus_.SetOpenBus(0);
 }
 
 // Step — execute one instruction
 
 uint32_t SnesCpu::Step() {
     instructionClocks_ = 0;
+
+    if (resetPending_) {
+      resetPending_ = false;
+      // Hold the processor while the rest of the console continues clocking.
+      for (unsigned clocks = 0; clocks < 132; clocks += 6)
+        addClocks(6);
+      enterInterrupt(Interrupt::Reset);
+      return instructionClocks_;
+    }
 
     // Only reset releases STP. Keep the scheduler running without bus access.
     if (regs().stp) {
@@ -113,15 +117,19 @@ uint8_t SnesCpu::read(uint32_t address) {
     const uint8_t speed = bus_.Speed(address);
     if (beforeCycle_)
       beforeCycle_(speed);
+    regs().mar = address & 0x00ffffff;
     addClocks(speed - 4);
     if (onBusPhase_)
       onBusPhase_();
-    uint8_t data = bus_.Read(address);
+    uint8_t data = bus_.ReadCpu(address);
     addClocks(4);
     if (onAluStep_)
       onAluStep_(false);
     // Internal register reads leave the external memory data latch intact.
-    if ((address & 0x40fc00) != 0x4000) regs().mdr = data;
+    if ((address & 0x40fc00) != 0x4000) {
+      regs().mdr = data;
+      bus_.SetOpenBus(data);
+    }
     return data;
 }
 
@@ -129,6 +137,7 @@ void SnesCpu::write(uint32_t address, uint8_t data) {
     if (onAluStep_) onAluStep_(true);
     const uint8_t speed = bus_.Speed(address);
     if (beforeCycle_) beforeCycle_(speed);
+    regs().mar = address & 0x00ffffff;
     addClocks(speed);
     if (onBusPhase_)
       onBusPhase_();

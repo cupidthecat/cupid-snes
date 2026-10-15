@@ -304,9 +304,13 @@ bool DmaController::ValidWramTransfer(uint8_t bBusAddr, uint32_t aBusAddr) noexc
 // Updates the bus MDR (open bus).
 // On real hardware this takes 8 master cycles (two 4-cycle half-accesses).
 uint8_t DmaController::ReadA(uint32_t address) {
+  if (cpuAddress_)
+    *cpuAddress_ = address;
   Clock(4);
   const auto value = ValidA(address) ? bus_->Read(address) : uint8_t(0);
   bus_->SetOpenBus(value);
+  if (cpuData_)
+    *cpuData_ = value;
   Clock(4);
   return value;
 }
@@ -325,6 +329,8 @@ uint8_t DmaController::ReadB(uint8_t address, bool valid) {
   Clock(4);
   const auto value = valid ? bus_->Read(0x2100 | address) : uint8_t(0);
   bus_->SetOpenBus(value);
+  if (cpuData_)
+    *cpuData_ = value;
   Clock(4);
   return value;
 }
@@ -353,6 +359,8 @@ void DmaController::WriteB(uint8_t address, uint8_t data, bool valid) {
 //
 void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
                              const uint8_t *source) {
+  if (cpuAddress_)
+    *cpuAddress_ = addressA;
   uint8_t addressB = ch.targetAddress;
 
   switch (ch.transferMode) {
@@ -386,6 +394,8 @@ void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
       Clock(4);
       data = *source;
       bus_->SetOpenBus(data);
+      if (cpuData_)
+        *cpuData_ = data;
       Clock(4);
     } else {
       data = ReadA(addressA);
