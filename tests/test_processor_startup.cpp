@@ -443,7 +443,8 @@ void HardwareStartupAndReload() {
                 machine->GetTiming().MasterClocksElapsed() == 186,
             "Reset advances the shared hardware clock through its complete bus sequence");
       Check(machine->GetSmp().CycleCount() == 8 && machine->GetDsp().Phase() == 8 &&
-                machine->GetSmp().GetTimer0().stage0 == 16,
+                machine->GetSmp().GetTimer0().stage0 ==
+                    186 * Smp::kHardwareClockFrequency / machine->GetTiming().MasterClockHz(),
             "Sound, DSP, and timers advance during CPU reset in both video regions");
       Check(machine->GetBus().Read(0x700000) == 0x5a && machine->GetBus().WramData()[0x1fd] == 0x24,
             "Saved cartridge data is installed before startup and the reset stack reaches WRAM");

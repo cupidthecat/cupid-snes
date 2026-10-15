@@ -16,7 +16,6 @@
 //   SMP writes $F4-$F7     → sets cpuOutput_[0-3] → CPU reads $2140-$2143
 //   Each direction has its own set of latches — no contention.
 //
-// Reference: bsnes sfc/smp/smp.hpp, sfc/smp/io.cpp, sfc/smp/memory.cpp
 
 #pragma once
 
@@ -30,34 +29,33 @@ class Dsp;  // Forward declaration
 
 class Smp : public Spc700 {
 public:
-    // Timer — 4-stage pipeline (following bsnes's SMP::Timer)
-    //
-    // Template parameter Frequency: number of SMP clocks per stage0 overflow.
-    //   T0, T1: Frequency=128 → ~8 kHz
-    //   T2:     Frequency=16  → ~64 kHz
-    //
-    // Stage 0: clock accumulator — counts up to Frequency
-    // Stage 1: pulse toggle — XOR'd with 1 each overflow → square wave
-    // Line:    edge-detection latch — falling-edge triggers stage 2
-    // Stage 2: 8-bit divider counter — counts to target, then resets
-    // Stage 3: 4-bit output counter — read-and-clear via $FD-$FF
-    template <unsigned Frequency>
-    struct Timer {
-        uint8_t  stage0 = 0;    // Clock accumulator
-        uint8_t  stage1 = 0;    // Pulse toggle (0 or 1)
-        uint8_t  stage2 = 0;    // 8-bit divider counter
-        uint8_t  stage3 = 0;    // 4-bit output counter (masked to 0x0F)
-        bool     line   = false; // Edge-detection latch
-        bool     enable = false; // Timer enabled (CONTROL bits 0-2)
-        uint8_t  target = 0;    // 8-bit divisor ($FA/$FB/$FC)
+  // Timer — 4-stage pipeline.
+  //
+  // Template parameter Frequency: number of SMP clocks per stage0 overflow.
+  //   T0, T1: Frequency=128 → ~8 kHz
+  //   T2:     Frequency=16  → ~64 kHz
+  //
+  // Stage 0: clock accumulator — counts up to Frequency
+  // Stage 1: pulse toggle — XOR'd with 1 each overflow → square wave
+  // Line:    edge-detection latch — falling-edge triggers stage 2
+  // Stage 2: 8-bit divider counter — counts to target, then resets
+  // Stage 3: 4-bit output counter — read-and-clear via $FD-$FF
+  template <unsigned Frequency> struct Timer {
+    uint8_t stage0 = 0;  // Clock accumulator
+    uint8_t stage1 = 0;  // Pulse toggle (0 or 1)
+    uint8_t stage2 = 0;  // 8-bit divider counter
+    uint8_t stage3 = 0;  // 4-bit output counter (masked to 0x0F)
+    bool line = false;   // Edge-detection latch
+    bool enable = false; // Timer enabled (CONTROL bits 0-2)
+    uint8_t target = 0;  // 8-bit divisor ($FA/$FB/$FC)
 
-        // Advance the timer by 'clocks' SMP timer-clock ticks.
-        void Step(unsigned clocks, bool timersEnable, bool timersDisable);
+    // Advance the timer by 'clocks' SMP timer-clock ticks.
+    void Step(unsigned clocks, bool timersEnable, bool timersDisable);
 
-        // Re-evaluate the gated stage1 signal and check for falling edge.
-        // Called when TEST register changes timersEnable/timersDisable.
-        void SynchronizeStage1(bool timersEnable, bool timersDisable);
-    };
+    // Re-evaluate the gated stage1 signal and check for falling edge.
+    // Called when TEST register changes timersEnable/timersDisable.
+    void SynchronizeStage1(bool timersEnable, bool timersDisable);
+  };
 
     Smp();
 
@@ -81,8 +79,9 @@ public:
     // DSP connection
     void SetDsp(Dsp& dsp) { dsp_ = &dsp; }
 
-    // Clock constants
-    static constexpr uint64_t kClockFrequency    = 1024000; // ~1.024 MHz
+    // Complete cycles use 1.024 MHz; bus midpoints use the 2.048 MHz hardware clock.
+    static constexpr uint64_t kClockFrequency = 1024000; // Complete-cycle time base.
+    static constexpr uint64_t kHardwareClockFrequency = 2 * kClockFrequency;
     static constexpr int      kDspSampleInterval = 32;      // SMP clocks per DSP sample
 
     // Batch execution — run SMP through exactly targetCycles.
@@ -90,6 +89,12 @@ public:
     // remains available for callers that intentionally want a full instruction.
     // DSP samples and timers are ticked automatically during bus operations.
     void RunUntil(uint64_t targetCycles);
+
+    // A bus cycle can pause at its midpoint to sample the CPU input ports.
+    void RunUntilHardwareClock(uint64_t targetClocks);
+    uint64_t HardwareClockCount() const noexcept {
+      return hardwareClocks_;
+    }
 
     // Power-on reset
     void Power();
@@ -146,6 +151,8 @@ private:
         uint8_t readData = 0;
         bool sampled = false;
     } busWait_{};
+
+    uint64_t hardwareClocks_ = 0;
 
     bool ExecuteBusCycle(const PendingCycle& cycle) override;
     bool ClockBusCycle(const PendingCycle& cycle, BusWait& wait);
