@@ -514,9 +514,11 @@ void Regions() {
         Check(emu->GetTiming().GetRegion() == (pal ? Region::PAL : Region::NTSC), "Header selects the television region");
         Check((emu->GetBus().Read(0x213f) & 0x10) == (pal ? 0x10 : 0), "PPU reports television region");
         Check(emu->GetTiming().VPeriod() == (pal ? 312 : 262), "Region selects the scanline count");
+        const auto first = emu->StepFrame();
         const auto frame = emu->StepFrame();
         const uint64_t target = pal ? 425568 : 357368;
-        Check(frame.masterCycles >= target && frame.masterCycles < target + 100, "Frame execution uses the selected region");
+        Check(frame.masterCycles - first.masterCycles == target,
+              "Frame execution uses the selected region");
         const uint64_t apuTarget = frame.masterCycles * Smp::kClockFrequency / (pal ? 21281370 : 21477272);
         Check(emu->GetSmp().CycleCount() >= apuTarget && emu->GetSmp().CycleCount() < apuTarget + 20,
               "APU synchronization uses the region clock");

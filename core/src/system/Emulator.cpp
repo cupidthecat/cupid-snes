@@ -5,8 +5,9 @@
 // Emulator.cpp — SNES system integration and frame loop
 
 #include "snes/core/Emulator.hpp"
-#include "snes/core/SnesCpu.hpp"
 #include "snes/core/Logging.hpp"
+#include "snes/core/SnesCpu.hpp"
+#include "snes/core/detail/ExecutionContext.hpp"
 
 #include <fstream>
 #include <iterator>
@@ -66,7 +67,9 @@ Emulator::Emulator(Config config)
     Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
 }
 
-Emulator::~Emulator() = default;
+Emulator::~Emulator() {
+  StopFrameExecution();
+}
 
 // Platform attachment
 
@@ -113,6 +116,7 @@ bool Emulator::LoadCartridge(std::span<const uint8_t> romData, std::string* erro
         return false;
     }
 
+    StopFrameExecution();
     cartridge_ = std::move(*cartridge);
     Logger::Instance().Write(
         LogLevel::Info,
@@ -130,6 +134,7 @@ bool Emulator::LoadSufamiTurbo(std::span<const uint8_t> bios, std::span<const ui
                              std::span<const uint8_t> slotB, std::string* error) {
     auto cartridge = Cartridge::FromSufamiTurbo(bios, slotA, slotB, error);
     if (!cartridge) return false;
+    StopFrameExecution();
     cartridge_ = std::move(*cartridge);
     InitSubsystems();
     return true;
@@ -156,6 +161,7 @@ bool Emulator::LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<c
                                       std::string* error) {
     auto cartridge = Cartridge::FromBroadcastCartridge(base, pack, error);
     if (!cartridge) return false;
+    StopFrameExecution();
     cartridge_ = std::move(*cartridge);
     InitSubsystems();
     return true;
@@ -385,6 +391,9 @@ void Emulator::InitSubsystems() {
     // VBlank start (V = VDisp)
     timing_.onVBlankBegin = [this]() {
         ppu_.VBlankBegin();
+        SynchronizeDevices();
+        if (execution_ && execution_->Running() && !singleInstruction_)
+          SuspendFrame();
     };
 
     // NMI assertion point — handled indirectly by IrqController::Poll
@@ -475,12 +484,15 @@ void Emulator::InitSubsystems() {
     audioOverflow_.clear();
     collectingAudio_ = false;
     nextSmpMasterClock_ = 0;
+    devicesSyncedClock_ = 0;
 
     // Set up DSP audio output buffer
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
 
     // Queue reset after wiring; execution begins only when the console is stepped.
     cpu_->Reset();
+    cpu_->resumeStep_ = [this]() { return ResumeCpuInstruction(); };
+    cpu_->discardStep_ = [this]() { StopFrameExecution(); };
     cpu_->SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
     cpu_->SetBeforeCycleCallback([this](uint32_t clocks) { BeginCpuCycle(clocks); });
     cpu_->SetBusPhaseCallback([this]() { irq_.SetIrqLock(false); });
@@ -558,14 +570,22 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
     dsp_.ResetSamplesWritten();
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
 
-    // Frame timing bookkeeping
-    const uint64_t frameTarget = timing_.FrameCount() + 1;
-
-    // Each CPU bus access and DMA interval advances the connected hardware.
-
-    while (timing_.FrameCount() < frameTarget) {
-        cpu_->Step();
+    if (!execution_) {
+      execution_ = std::make_unique<detail::ExecutionContext>([this]() {
+        try {
+          for (;;) {
+            cpu_->Step();
+            if (singleInstruction_)
+              execution_->Suspend();
+          }
+        } catch (...) {
+          cpu_->stepSuspended_ = false;
+          throw;
+        }
+      });
     }
+    singleInstruction_ = false;
+    execution_->Resume();
     collectingAudio_ = false;
     // End-of-frame processing
 
@@ -620,7 +640,6 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
 }
 
 void Emulator::AdvanceClocks(uint32_t clocks) {
-    const auto before = timing_.MasterClocksElapsed();
     timing_.SetInterlace(ppu_.Interlace());
     timing_.Tick(clocks);
     // A penalty can trigger another refresh or HDMA event. Drain all of them
@@ -631,43 +650,73 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
         timing_.Tick(extra);
     }
     ppu_.SetCurrentHClock(timing_.HCounter());
-    const auto elapsed = timing_.MasterClocksElapsed();
-    cartridge_->AdvanceHardware(static_cast<uint32_t>(elapsed - before));
-    // Several CPU bus phases can end within one sound clock. No audio state
-    // changes until that clock edge, so avoid repeating the conversion there.
-    if (elapsed < nextSmpMasterClock_)
-      return;
-    const uint64_t masterHz = timing_.MasterClockHz();
-    constexpr uint64_t soundHz = Smp::kHardwareClockFrequency;
-    // Split whole seconds from the remainder so long sessions cannot overflow
-    // an elapsed-master-clocks times sound-frequency product.
-    const auto fractionalClocks = (elapsed % masterHz) * soundHz;
-    const auto smpTarget = (elapsed / masterHz) * soundHz + fractionalClocks / masterHz;
-    const auto phase = fractionalClocks % masterHz;
-    nextSmpMasterClock_ = elapsed + (masterHz - phase + soundHz - 1) / soundHz;
-    const int firstSample = dsp_.SamplesWritten();
-    smp_.RunUntilHardwareClock(smpTarget);
-    if (msu1_) {
-        // Mix before this bus phase completes: later volume or track writes
-        // must not change PCM that has already played. Use the DSP's sample
-        // clock so NTSC, PAL and intervals spanning frame boundaries agree.
-        for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
-          const auto pcm = msu1_->NextSample(AudioTiming::SampleRate);
-          for (int channel = 0; channel < 2; ++channel) {
-            const int index = sample * 2 + channel;
-            audioBuf_[index] = static_cast<int16_t>(
-                std::clamp(int{audioBuf_[index]} + pcm[channel], -32768, 32767));
-          }
-        }
+    SynchronizeDevices();
+}
+
+void Emulator::SynchronizeDevices() {
+  const auto elapsed = timing_.MasterClocksElapsed();
+  const auto delta = elapsed - devicesSyncedClock_;
+  devicesSyncedClock_ = elapsed;
+  cartridge_->AdvanceHardware(static_cast<uint32_t>(delta));
+  // Several CPU bus phases can end within one sound clock. No audio state
+  // changes until that clock edge, so avoid repeating the conversion there.
+  if (elapsed < nextSmpMasterClock_)
+    return;
+  const uint64_t masterHz = timing_.MasterClockHz();
+  constexpr uint64_t soundHz = Smp::kHardwareClockFrequency;
+  // Split whole seconds from the remainder so long sessions cannot overflow
+  // an elapsed-master-clocks times sound-frequency product.
+  const auto fractionalClocks = (elapsed % masterHz) * soundHz;
+  const auto smpTarget = (elapsed / masterHz) * soundHz + fractionalClocks / masterHz;
+  const auto phase = fractionalClocks % masterHz;
+  nextSmpMasterClock_ = elapsed + (masterHz - phase + soundHz - 1) / soundHz;
+  const int firstSample = dsp_.SamplesWritten();
+  smp_.RunUntilHardwareClock(smpTarget);
+  if (msu1_) {
+    // Mix before this bus phase completes: later volume or track writes
+    // must not change PCM that has already played. Use the DSP's sample
+    // clock so NTSC, PAL and intervals spanning frame boundaries agree.
+    for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
+      const auto pcm = msu1_->NextSample(AudioTiming::SampleRate);
+      for (int channel = 0; channel < 2; ++channel) {
+        const int index = sample * 2 + channel;
+        audioBuf_[index] =
+            static_cast<int16_t>(std::clamp(int{audioBuf_[index]} + pcm[channel], -32768, 32767));
+      }
     }
-    // A single DMA operation can cross several fields before StepFrame returns.
-    // Drain complete blocks during its bus phases so the DSP never discards the
-    // rest of that operation's audio when the normal frame buffer fills.
-    if (dsp_.SamplesWritten() == kAudioBufSamples) {
-        if (collectingAudio_)
-            audioOverflow_.insert(audioOverflow_.end(), audioBuf_.begin(), audioBuf_.end());
-        dsp_.ResetSamplesWritten();
-    }
+  }
+  // Explicit debugger operations can cross several fields. Drain complete
+  // blocks during their bus phases so a long operation retains all audio.
+  if (dsp_.SamplesWritten() == kAudioBufSamples) {
+    if (collectingAudio_)
+      audioOverflow_.insert(audioOverflow_.end(), audioBuf_.begin(), audioBuf_.end());
+    dsp_.ResetSamplesWritten();
+  }
+}
+
+void Emulator::SuspendFrame() {
+  cpu_->stepSuspended_ = true;
+  execution_->Suspend();
+  cpu_->stepSuspended_ = false;
+}
+
+uint32_t Emulator::ResumeCpuInstruction() {
+  const auto before = cpu_->Cycles();
+  singleInstruction_ = true;
+  cpu_->stepSuspended_ = false;
+  execution_->Resume();
+  singleInstruction_ = false;
+  return static_cast<uint32_t>(cpu_->Cycles() - before);
+}
+
+void Emulator::StopFrameExecution() {
+  execution_.reset();
+  if (cpu_)
+    cpu_->stepSuspended_ = false;
+  singleInstruction_ = false;
+  // Cancellation unwinds any DMA guards before a reset or cartridge reload.
+  servicingHdma_ = false;
+  dmaArmed_ = false;
 }
 
 void Emulator::BeginCpuCycle(uint32_t clocks) {

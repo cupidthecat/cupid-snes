@@ -21,35 +21,39 @@ SnesCpu::SnesCpu(ICpuBus& bus)
 // Reset
 
 void SnesCpu::Reset() {
-    power();
+  if (discardStep_)
+    discardStep_();
+  power();
 
-    cycles_ = 0;
-    instructionClocks_ = 0;
+  cycles_ = 0;
+  instructionClocks_ = 0;
 
-    nmiLine_    = false;
-    nmiEdge_    = false;
-    nmiPending_ = false;
-    irqLine_    = false;
-    irqPending_ = false;
+  nmiLine_ = false;
+  nmiEdge_ = false;
+  nmiPending_ = false;
+  irqLine_ = false;
+  irqPending_ = false;
 
-    resetPending_ = true;
-    dramRefreshState_ = 0;
-    bus_.SetOpenBus(0);
+  resetPending_ = true;
+  dramRefreshState_ = 0;
+  bus_.SetOpenBus(0);
 }
 
 // Step — execute one instruction
 
 uint32_t SnesCpu::Step() {
-    instructionClocks_ = 0;
+  if (stepSuspended_ && resumeStep_)
+    return resumeStep_();
+  instructionClocks_ = 0;
 
-    if (resetPending_) {
-      resetPending_ = false;
-      // Hold the processor while the rest of the console continues clocking.
-      for (unsigned clocks = 0; clocks < 132; clocks += 6)
-        addClocks(6);
-      enterInterrupt(Interrupt::Reset);
-      return instructionClocks_;
-    }
+  if (resetPending_) {
+    resetPending_ = false;
+    // Hold the processor while the rest of the console continues clocking.
+    for (unsigned clocks = 0; clocks < 132; clocks += 6)
+      addClocks(6);
+    enterInterrupt(Interrupt::Reset);
+    return instructionClocks_;
+  }
 
     // Only reset releases STP. Keep the scheduler running without bus access.
     if (regs().stp) {

@@ -9589,12 +9589,9 @@ int main() {
             auto r1 = emu->StepFrame();
             auto r2 = emu->StepFrame();
 
-            // Each frame should advance by approximately one frame's worth
-            // of master clocks.  Allow some tolerance for instruction
-            // boundaries (the loop may overshoot slightly).
+            // Display events are one complete NTSC field apart.
             uint64_t delta = r2.masterCycles - r1.masterCycles;
-            assert(delta >= 357000);
-            assert(delta <= 358000);
+            assert(delta == 262 * 1364);
             std::printf("  [29c] Frame timing delta=%llu passed\n",
                         static_cast<unsigned long long>(delta));
         }
@@ -9610,7 +9607,7 @@ int main() {
                 assert(r.frameIndex == static_cast<uint64_t>(i + 1));
             }
             assert(emu->CurrentFrame() == 5);
-            assert(emu->CurrentMasterCycles() > 357000 * 5);
+            assert(emu->CurrentMasterCycles() == 225 * 1364 + 4 * 262 * 1364 - 8);
             std::printf("  [29d] Multiple frames increment correctly passed\n");
         }
 
@@ -9640,7 +9637,9 @@ int main() {
 
             assert(emu->GetTiming().FrameCount() == 0);
             emu->StepFrame();
-            assert(emu->GetTiming().FrameCount() >= 1);
+            assert(emu->GetTiming().FrameCount() == 0);
+            emu->StepFrame();
+            assert(emu->GetTiming().FrameCount() == 1);
             std::printf("  [29f] Timing frame count advances passed\n");
         }
 
@@ -9800,20 +9799,17 @@ int main() {
 
         // 29o: Timing callbacks fire during frame
         {
-            // Verify that after one frame the Timing elapsed time is
-            // approximately one frame's worth of clocks.
-            auto emu = std::make_unique<Emulator>();
-            auto rom = BuildTestRom();
-            emu->LoadCartridge(rom);
+          // The first display event ends the initial partial field.
+          auto emu = std::make_unique<Emulator>();
+          auto rom = BuildTestRom();
+          emu->LoadCartridge(rom);
 
-            emu->StepFrame();
+          emu->StepFrame();
 
-            uint64_t elapsed = emu->GetTiming().MasterClocksElapsed();
-            // Should be at least one frame (357,368 for NTSC)
-            assert(elapsed >= 357000);
-            assert(elapsed <= 360000);
-            std::printf("  [29o] Timing elapsed=%llu passed\n",
-                        static_cast<unsigned long long>(elapsed));
+          uint64_t elapsed = emu->GetTiming().MasterClocksElapsed();
+          assert(elapsed == 225 * 1364);
+          std::printf("  [29o] Timing elapsed=%llu passed\n",
+                      static_cast<unsigned long long>(elapsed));
         }
 
         // 29p: Second frame also completes

@@ -24,6 +24,14 @@ endif()
 
 add_test(NAME snes_core_tests COMMAND snes_core_tests)
 
+add_executable(snes_frame_execution_tests test_frame_execution.cpp)
+target_link_libraries(snes_frame_execution_tests PRIVATE snes_core)
+add_test(NAME snes_frame_execution_tests COMMAND snes_frame_execution_tests)
+
+add_executable(snes_execution_context_tests test_execution_context.cpp)
+target_link_libraries(snes_execution_context_tests PRIVATE snes_core)
+add_test(NAME snes_execution_context_tests COMMAND snes_execution_context_tests)
+
 add_executable(snes_ppu_regression_tests test_ppu_regressions.cpp)
 target_link_libraries(snes_ppu_regression_tests PRIVATE snes_core)
 add_test(NAME snes_ppu_regression_tests COMMAND snes_ppu_regression_tests)
