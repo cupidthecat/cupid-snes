@@ -71,6 +71,35 @@ void HBlankWithinInstruction() {
     Check((cpu.regs().a & 0x40) != 0, "HVBJOY sees HBlank reached during operand fetches");
 }
 
+void HBlankReadPhase() {
+    auto machine = Machine({0xea});
+    auto& cpu = *machine->GetCpu();
+    while (machine->GetTiming().HCounter() < 1078)
+        cpu.idle();
+    cpu.read(0x7e0000);
+    cpu.read(0x7e0001);
+    Check(machine->GetTiming().HCounter() == 1094,
+          "HBlank fixture starts two clocks before assertion");
+    Check((cpu.read(0x4212) & 0x40) != 0,
+          "HVBJOY samples HBlank after the read's leading clocks cross the assertion edge");
+}
+
+void HBlankPaletteWritePhase() {
+    auto machine = Machine({0xea});
+    auto& cpu = *machine->GetCpu();
+    auto& bus = machine->GetBus();
+    bus.Write(0x2100, 0x0f);
+    while (machine->GetTiming().VCounter() == 0 || machine->GetTiming().HCounter() < 1090)
+        cpu.idle();
+    Check(machine->GetTiming().VCounter() == 1 && machine->GetTiming().HCounter() < 1096,
+          "Palette fixture starts during the final six clocks before HBlank");
+    bus.Write(0x2121, 5);
+    bus.Write(0x2122, 0x1f);
+    cpu.write(0x2122, 0);
+    Check(machine->GetPpu().CgramData()[5] == 0x1f && machine->GetPpu().CgramData()[0] == 0,
+          "CGRAM commits at the write's final phase after HBlank restores the programmed address");
+}
+
 void SoundPortDeadlines() {
     for (Region region : {Region::NTSC, Region::PAL}) {
         for (uint8_t port = 0; port < 4; ++port) {
@@ -280,6 +309,8 @@ void InputBusyAfterEnableChanges() {
 int main() {
     try {
         WordAccessesAdvanceHardware(); HBlankWithinInstruction(); SoundPortDeadlines();
+        HBlankReadPhase();
+        HBlankPaletteWritePhase();
         SlowSoundPortDeadline();
         InterruptMaskSampling(); NmiInsideInstruction(); EnableNmiDuringVblank(); DmaStartupCycle();
         TimerWriteComparison();
