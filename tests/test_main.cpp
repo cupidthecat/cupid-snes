@@ -1488,9 +1488,9 @@ int main() {
             assert(ch.hdmaCompleted == true);
             assert(ch.hdmaDoTransfer == false);
 
-            // Scanline 5: completed → no more transfers or bus reads
-            uint32_t noCycles = dma.HdmaRun();
-            assert(noCycles == 0);  // AnyHdmaActive() = false
+            // A queued operation on a completed channel retains only its global overhead.
+            uint32_t overheadCycles = dma.HdmaRun();
+            assert(overheadCycles == 8);
 
             std::printf("  [13a] Direct mode 0 single entry passed\n");
         }
@@ -1548,11 +1548,11 @@ int main() {
             assert(ppuRegs[0x18] == 0x33);
             assert(ch.lineCounter == 0x00);     // reload read terminator (0x00)
             assert(ch.hdmaCompleted == true);
-            assert(ch.hdmaDoTransfer == false);  // completed → doTransfer cleared
+            assert(ch.hdmaDoTransfer == false); // completed → doTransfer cleared
 
-            // Scanline 4: channel is completed, AnyHdmaActive() = false → no-op
-            uint32_t noCycles = dma.HdmaRun();
-            assert(noCycles == 0);
+            // A queued operation still consumes overhead after the channel completes.
+            uint32_t overheadCycles = dma.HdmaRun();
+            assert(overheadCycles == 8);
 
             std::printf("  [13b] Direct mode with repeat flag passed\n");
         }
