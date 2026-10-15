@@ -44,31 +44,27 @@ void Sa1::StartArithmetic() {
     const int64_t a = bitsA < 0x8000 ? int64_t(bitsA) : int64_t(bitsA) - 0x10000;
     const int64_t b = bitsB < 0x8000 ? int64_t(bitsB) : int64_t(bitsB) - 0x10000;
     const uint8_t mode = registers_[0x50] & 3;
-    arithmeticNextOverflow_ = false;
-    arithmeticClocks_ = (mode & 2) ? 12 : 10;
-
     if (mode & 2) {
-        const int64_t accumulator = (arithmeticResult_ & (uint64_t{1} << 39))
-            ? int64_t(arithmeticResult_) - (int64_t{1} << 40) : int64_t(arithmeticResult_);
-        const int64_t result = accumulator + a * b;
-        arithmeticNextOverflow_ = result < -(int64_t{1} << 39) || result >= (int64_t{1} << 39);
-        arithmeticNext_ = static_cast<uint64_t>(result) & AccumulatorMask;
+      const uint64_t result = arithmeticResult_ + static_cast<uint64_t>(a * b);
+      arithmeticOverflow_ = result > AccumulatorMask;
+      arithmeticResult_ = result & AccumulatorMask;
     } else if (mode == 1) {
-        arithmeticNext_ = 0;
-        if (bitsB) {
-            const int64_t quotient = a / bitsB;
-            int64_t remainder = a % bitsB;
-            if (remainder < 0) remainder = -remainder;
-            arithmeticNext_ = uint16_t(quotient) | (uint64_t(remainder) << 16);
-        } else {
-            const uint16_t quotient = a < 0 ? 1 : 0xffff;
-            const uint16_t remainder = static_cast<uint16_t>(a < 0 ? -a : a);
-            arithmeticNext_ = quotient | (uint64_t(remainder) << 16);
+      arithmeticResult_ = 0;
+      if (bitsB) {
+        int64_t quotient = a / bitsB;
+        int64_t remainder = a % bitsB;
+        if (remainder < 0) {
+          --quotient;
+          remainder += bitsB;
         }
-        if (arithmeticNext_ & 0x80000000) arithmeticNext_ |= uint64_t{0xff} << 32;
+        const uint32_t packed = uint16_t(quotient) | (uint32_t(remainder) << 16);
+        arithmeticResult_ = packed;
+        if (packed & 0x80000000)
+          arithmeticResult_ |= uint64_t{0xff} << 32;
+      }
         registers_[0x51] = registers_[0x52] = 0;
     } else {
-        arithmeticNext_ = static_cast<uint64_t>(a * b) & AccumulatorMask;
+      arithmeticResult_ = static_cast<uint32_t>(a * b);
     }
     registers_[0x53] = registers_[0x54] = 0;
 }

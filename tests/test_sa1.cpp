@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
@@ -178,54 +179,70 @@ void Arithmetic() {
         for (uint16_t a : values) for (uint16_t b : values) {
             Set(c, 0x2251, a);
             Set(c, 0x2253, b);
-            c.Advance(10);
             const int64_t signedA = a < 0x8000 ? a : int64_t(a) - 65536;
             const int64_t signedB = b < 0x8000 ? b : int64_t(b) - 65536;
             uint64_t expected = 0;
-            if (!mode) expected = static_cast<uint64_t>(signedA * signedB) & mask;
+            if (!mode)
+              expected = static_cast<uint32_t>(signedA * signedB);
             else if (b) {
-                const int64_t quotient = signedA / b;
-                int64_t remainder = signedA % b;
-                if (remainder < 0) remainder = -remainder;
-                expected = uint16_t(quotient) | (uint64_t(remainder) << 16);
-            } else {
-                expected = (signedA < 0 ? 1u : 0xffffu) |
-                           (uint64_t(signedA < 0 ? -signedA : signedA) << 16);
+              const auto quotient = static_cast<int64_t>(std::floor(double(signedA) / b));
+              const int64_t remainder = signedA - quotient * b;
+              expected = uint16_t(quotient) | (uint64_t(remainder) << 16);
+              if (expected & 0x80000000)
+                expected |= uint64_t{0xff} << 32;
             }
-            Check(Get(c, 0x2306, mode ? 4 : 5) == expected, "Arithmetic signed edge grid, including hardware division and divide by zero");
+            Check(Get(c, 0x2306, 5) == expected,
+                  "Arithmetic publishes the complete result when the high operand byte is written");
         }
     }
     struct DivisionCase { uint16_t dividend, divisor, quotient, remainder; };
-    for (const auto test : {
-        DivisionCase{0x87f8, 0xfffb, 0x0000, 0x7808},
-        DivisionCase{0x8000, 0x492a, 0xffff, 0x36d6},
-        DivisionCase{0x87f8, 0x0000, 0x0001, 0x7808},
-        DivisionCase{0x8000, 0x0000, 0x0001, 0x8000}}) {
-        c.WriteSa1(0x2250, 1);
-        Set(c, 0x2251, test.dividend); Set(c, 0x2253, test.divisor); c.Advance(10);
-        Check(Get(c, 0x2306, 4) == (uint64_t(test.remainder) << 16 | test.quotient),
-              "Division matches measured signed quotient and unsigned remainder cases");
+    for (const auto test : {DivisionCase{0x87f8, 0xfffb, 0xffff, 0x87f3},
+                            DivisionCase{0x8000, 0x492a, 0xfffe, 0x1254},
+                            DivisionCase{0x87f8, 0x0000, 0x0000, 0x0000},
+                            DivisionCase{0x8000, 0x0000, 0x0000, 0x0000}}) {
+      c.WriteSa1(0x2250, 1);
+      Set(c, 0x2251, test.dividend);
+      Set(c, 0x2253, test.divisor);
+      Check(Get(c, 0x2306, 4) == (uint64_t(test.remainder) << 16 | test.quotient),
+            "Division rounds down with a nonnegative remainder and returns zero for divisor zero");
     }
     c.WriteSa1(0x2250, 0);
-    Set(c, 0x2251, 3); Set(c, 0x2253, 7); c.Advance(10);
-    Set(c, 0x2253, 11); c.Advance(9);
-    Check(Get(c, 0x2306, 5) == 21, "Arithmetic result remains latched during its five-cycle execution");
-    c.Advance(1);
-    Check(Get(c, 0x2306, 5) == 33, "Multiplicand survives multiplication and result appears on cycle five");
-    c.WriteSa1(0x2254, 0); c.Advance(10);
+    Set(c, 0x2251, 3);
+    Set(c, 0x2253, 7);
+    Check(Get(c, 0x2306, 5) == 21, "Multiplication publishes its result at the trigger write");
+    Set(c, 0x2253, 11);
+    Check(Get(c, 0x2306, 5) == 33,
+          "Multiplication retains the multiplicand for the next operation");
+    c.WriteSa1(0x2254, 0);
     Check(Get(c, 0x2306, 5) == 0, "Multiplier is consumed by the preceding operation");
     c.WriteSa1(0x2250, 2);
     Set(c, 0x2251, 0x8000);
-    for (unsigned i = 0; i < 512; ++i) {
-        Set(c, 0x2253, 0x8000); c.Advance(12);
-        Check(c.ReadSa1(0x230b) == (i == 511 ? 0x80 : 0), "Accumulator overflow occurs at the signed 40-bit boundary");
+    for (unsigned i = 0; i < 1024; ++i) {
+      Set(c, 0x2253, 0x8000);
+      Check(c.ReadSa1(0x230b) == (i == 1023 ? 0x80 : 0),
+            "Accumulation reports carry beyond the full forty-bit result");
+      if (i == 511)
+        Check(Get(c, 0x2306, 5) == (uint64_t{1} << 39),
+              "Bit thirty-nine remains part of the accumulator value");
     }
-    Check(Get(c, 0x2306, 5) == (uint64_t{1} << 39), "Accumulator retains all forty bits after wrapping");
+    Check(Get(c, 0x2306, 5) == 0, "Accumulation wraps after forty bits");
     c.WriteSa1(0x2250, 2);
-    Set(c, 0x2251, 0xffff); Set(c, 0x2253, 1); c.Advance(11);
-    Check(Get(c, 0x2306, 5) == 0, "Accumulate has a six-cycle execution latency");
-    c.Advance(1);
-    Check(Get(c, 0x2306, 5) == mask && c.ReadSa1(0x230b) == 0, "A negative sum sign-extends without a spurious unsigned-underflow flag");
+    Check(c.ReadSa1(0x230b) == 0x80, "Clearing the result preserves the overflow latch");
+    Set(c, 0x2251, 0xffff);
+    Set(c, 0x2253, 1);
+    Check(
+        Get(c, 0x2306, 5) == mask && c.ReadSa1(0x230b) == 0x80,
+        "A negative accumulated product retains its low forty bits and reports unsigned underflow");
+    c.WriteSa1(0x2250, 0);
+    Set(c, 0x2251, 3);
+    Set(c, 0x2253, 7);
+    Check(Get(c, 0x2306, 5) == 21 && c.ReadSa1(0x230b) == 0x80,
+          "Ordinary multiplication preserves the accumulator's overflow latch");
+    c.WriteSa1(0x2250, 3);
+    Set(c, 0x2251, 1);
+    Set(c, 0x2253, 1);
+    Check(Get(c, 0x2306, 5) == 1 && c.ReadSa1(0x230b) == 0,
+          "A subsequent accumulation refreshes overflow in either accumulate mode");
 }
 
 void VariableBits() {

@@ -73,10 +73,7 @@ private:
     bool timerMatch_ = false;
 
     uint64_t arithmeticResult_ = 0;
-    uint64_t arithmeticNext_ = 0;
-    uint8_t arithmeticClocks_ = 0;
     bool arithmeticOverflow_ = false;
-    bool arithmeticNextOverflow_ = false;
     uint32_t bitAddress_ = 0;
     uint8_t bitOffset_ = 0;
     uint16_t bitResult_ = 0;

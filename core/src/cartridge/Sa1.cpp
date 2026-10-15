@@ -32,9 +32,8 @@ void Sa1::Reset() {
     requestedClocks_ = executedClocks_ = 0;
     hClocks_ = vCounter_ = latchedH_ = latchedV_ = 0;
     timerMatch_ = false;
-    arithmeticResult_ = arithmeticNext_ = 0;
-    arithmeticClocks_ = 0;
-    arithmeticOverflow_ = arithmeticNextOverflow_ = false;
+    arithmeticResult_ = 0;
+    arithmeticOverflow_ = false;
     bitAddress_ = bitResult_ = bitOffset_ = 0;
     dma_ = {};
     conversionActive_ = false;
@@ -172,15 +171,6 @@ bool Sa1::interruptPending() const {
 void Sa1::Clock(uint32_t masterClocks) {
     executedClocks_ += masterClocks;
     AdvanceTimer(masterClocks);
-    if (arithmeticClocks_) {
-        if (masterClocks >= arithmeticClocks_) {
-            arithmeticClocks_ = 0;
-            arithmeticResult_ = arithmeticNext_;
-            arithmeticOverflow_ = arithmeticNextOverflow_;
-        } else {
-            arithmeticClocks_ -= static_cast<uint8_t>(masterClocks);
-        }
-    }
 }
 
 uint16_t Sa1::RegisterWord(uint8_t offset) const noexcept {
@@ -436,12 +426,9 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
         if ((registers_[0x30] & 0xb0) == 0xa0) PushConversionRows();
         break;
     case 0x50:
-        if (value & 2) {
-            arithmeticResult_ = arithmeticNext_ = 0;
-            arithmeticClocks_ = 0;
-            arithmeticOverflow_ = arithmeticNextOverflow_ = false;
-        }
-        break;
+      if (value & 2)
+        arithmeticResult_ = 0;
+      break;
     case 0x54: StartArithmetic(); break;
     case 0x58: AdvanceBits(); break;
     case 0x5b:
