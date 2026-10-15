@@ -280,7 +280,7 @@ bool DmaController::ValidA(uint32_t address) noexcept {
 // WRAM-to-WRAM transfer validity
 //
 // Transfers where B-bus target is $80 (→ $2180 = WMDATA) and the A-bus
-// address resolves to WRAM are invalid.  On real hardware, the result is
+// address resolves to WRAM are invalid. The destination write is suppressed.
 //
 // WRAM addresses:
 //   $7E0000-$7FFFFF  (banks $7E-$7F full)
@@ -401,8 +401,8 @@ void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
 // RunChannelDma — execute GP-DMA for one channel
 //
 //   - 8 cycle overhead per channel
-//   - Loop: transfer one unit, update source address, decrement transferSize
-//   - Continue while dmaEnable && --transferSize != 0
+//   - Transfer one byte and update the source before checking for HDMA.
+//   - Decrement the remaining count only if the channel is still enabled.
 //   - Clear dmaEnable when done
 //
 // Returns master clock cycles consumed by this channel.

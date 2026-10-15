@@ -196,14 +196,14 @@ public:
   // GP-DMA transfer engine
   //
   // RunDma() executes all enabled DMA channels in priority order (0-7).
-  // Returns the total number of master clock cycles consumed.
+  // Returns its own master clocks, excluding work performed by boundary callbacks.
   //
   // Each byte transferred costs 8 master cycles (two 4-cycle bus accesses).
   // Each channel has an 8-cycle overhead. The entire DMA operation has an
   // 8-cycle initialization overhead.
   //
-  // After completion, dmaEnable is cleared for each channel and
-  // transferSize is 0x0000.
+  // Completed channels clear transferSize; HDMA-cancelled channels retain it.
+  // Every processed channel clears dmaEnable.
   uint32_t RunDma();
 
   // HDMA lifecycle
@@ -212,6 +212,7 @@ public:
   // driven by a table in A-bus memory.  The lifecycle is:
   //
   //   Frame start (V=0):
+  //     1. HdmaReset()  — clear completed/doTransfer flags
   //     2. HdmaSetup()  — initialize table pointers, read first entry
   //
   //   Each visible scanline (~H=1104):
@@ -224,6 +225,7 @@ public:
   /// No bus access; returns 0 cycles.
   void HdmaReset();
 
+  /// Initialize channels after HdmaReset at the frame's setup position.
   /// For each enabled channel: copies sourceAddress → hdmaAddress,
   /// sets lineCounter to 0, reads the first table entry.
   /// Cancels any active GP-DMA on that channel.
@@ -233,6 +235,7 @@ public:
   /// Called at each visible scanline — performs HDMA transfers and advances.
   /// For each active channel: transfers data bytes based on transfer mode,
   /// then decrements line counter, reloads table entry if count expired.
+  /// A queued operation retains global overhead if enabled channels have completed.
   /// Returns master cycles consumed (8 overhead + per-channel reads/writes).
   uint32_t HdmaRun();
 
