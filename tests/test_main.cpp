@@ -193,6 +193,7 @@ int main() {
 
         snes::core::SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
         assert(cpu.regs().pc == 0x8000);
         assert(cpu.regs().e == true);
@@ -248,6 +249,7 @@ int main() {
 
         snes::core::SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
         cpu.Step(); // CLC
         cpu.Step(); // XCE → native mode
@@ -302,6 +304,7 @@ int main() {
 
         snes::core::SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
         cpu.Step(); // JSR $8010
         assert(cpu.regs().pc == 0x8010);
@@ -545,6 +548,7 @@ int main() {
 
         snes::core::SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
         assert(cpu.regs().pc == 0x8000);
 
         cpu.Step(); // SEP #$30
@@ -593,7 +597,7 @@ int main() {
 
         uint8_t io = bus.Read(0x004210);  // $00:4210 → CPU I/O region
         assert(io == 0x77);
-        assert(bus.OpenBus() == 0x55);    // global MDR NOT updated
+        assert(bus.OpenBus() == 0x55); // global MDR NOT updated
 
         // 7d: Mirror banks $80-$BF also covered
         bus.Map(0x80, 0xBF, 0x4200, 0x421F,
@@ -606,7 +610,7 @@ int main() {
 
         uint8_t io2 = bus.Read(0x804210);  // $80:4210 → CPU I/O
         assert(io2 == 0x99);
-        assert(bus.OpenBus() == 0x33);     // global MDR untouched
+        assert(bus.OpenBus() == 0x33); // global MDR untouched
 
         // 7e: CPU I/O handlers receive the same MDR as ordinary memory.
         // Handler that returns the open-bus value it receives.
@@ -672,8 +676,9 @@ int main() {
         cpuIo.Write(0x4203, 13);    // WRMPYB = 13  → triggers multiply
         assert(cpuIo.rdmpy() == 0);
         assert(cpuIo.rddiv() == ((13 << 8) | 12));
-        for (int cycle = 0; cycle < 8; ++cycle) cpuIo.AluStep();
-        assert(cpuIo.rdmpy() == 156);  // 12 × 13 = 156
+        for (int cycle = 0; cycle < 8; ++cycle)
+          cpuIo.AluStep();
+        assert(cpuIo.rdmpy() == 156); // 12 × 13 = 156
         assert(cpuIo.rddiv() == 13);
 
         // 8d: $4204-$4206 divide
@@ -681,7 +686,8 @@ int main() {
         cpuIo.Write(0x4204, 0xE8);  // WRDIVL = 0xE8
         cpuIo.Write(0x4205, 0x03);  // WRDIVH = 0x03  → wrdiva = 0x03E8 = 1000
         cpuIo.Write(0x4206, 7);     // WRDIVB = 7  → triggers divide
-        for (int cycle = 0; cycle < 16; ++cycle) cpuIo.AluStep();
+        for (int cycle = 0; cycle < 16; ++cycle)
+          cpuIo.AluStep();
         assert(cpuIo.rddiv() == 142);  // 1000 / 7 = 142
         assert(cpuIo.rdmpy() == 6);    // 1000 % 7 = 6
 
@@ -689,7 +695,8 @@ int main() {
         cpuIo.Write(0x4204, 0x64);  // WRDIVL
         cpuIo.Write(0x4205, 0x00);  // WRDIVH → wrdiva = 100
         cpuIo.Write(0x4206, 0x00);  // WRDIVB = 0
-        for (int cycle = 0; cycle < 16; ++cycle) cpuIo.AluStep();
+        for (int cycle = 0; cycle < 16; ++cycle)
+          cpuIo.AluStep();
         assert(cpuIo.rddiv() == 0xFFFF);  // div by zero → 0xFFFF
         assert(cpuIo.rdmpy() == 100);     // remainder = dividend
 
@@ -820,14 +827,15 @@ int main() {
         // Write multiply via bus and read result
         bus.Write(0x004202, 25);  // WRMPYA
         bus.Write(0x004203, 10);  // WRMPYB → result = 250
-        for (int cycle = 0; cycle < 8; ++cycle) cpuIo.AluStep();
+        for (int cycle = 0; cycle < 8; ++cycle)
+          cpuIo.AluStep();
         uint8_t rlo = bus.Read(0x004216);  // RDMPYL
         uint8_t rhi = bus.Read(0x004217);  // RDMPYH
         assert((rhi << 8 | rlo) == 250);
 
         // Read RDNMI via bus, retaining the shared open-bus bits.
         cpuIo.setNmiFlag(true);
-        bus.SetOpenBus(0x70);  // bits 6-4 open bus
+        bus.SetOpenBus(0x70); // bits 6-4 open bus
         uint8_t nmi = bus.Read(0x004210);
         assert((nmi & 0x80) == 0x80);  // NMI set
         assert((nmi & 0x0F) == 2);     // CPU version
@@ -9239,6 +9247,7 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
             uint64_t before = cpu.Cycles();
             cpu.ApplyDramRefreshPenalty();
             uint64_t elapsed = cpu.Cycles() - before;
@@ -9255,6 +9264,7 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
             // Before refresh: state = 0
             assert(cpu.DramRefreshState() == 0);
@@ -9277,11 +9287,10 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
             int aluCount = 0;
-            cpu.SetAluStepCallback([&aluCount](bool) {
-                aluCount++;
-            });
+            cpu.SetAluStepCallback([&aluCount](bool) { aluCount++; });
 
             cpu.ApplyDramRefreshPenalty();
             assert(aluCount == 5);
@@ -9297,13 +9306,14 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
             // Track state transitions through the ALU callback
             // At each ALU callback, we know we just finished one (6+2) sub-step
             std::vector<uint8_t> statesAtAlu;
             cpu.SetAluStepCallback([&cpu, &statesAtAlu](bool) {
-                // Right after the 2-clock interleave, state should be 2
-                statesAtAlu.push_back(cpu.DramRefreshState());
+              // Right after the 2-clock interleave, state should be 2
+              statesAtAlu.push_back(cpu.DramRefreshState());
             });
 
             cpu.ApplyDramRefreshPenalty();
@@ -9328,6 +9338,7 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
             uint64_t afterReset = cpu.Cycles();
 
             // Step one instruction to get a baseline cycle count
@@ -9352,6 +9363,7 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
             uint64_t before = cpu.Cycles();
 
             // Apply 3 refreshes (simulating 3 scanlines)
@@ -9408,14 +9420,13 @@ int main() {
 
             SnesCpu cpu(bus);
             cpu.Reset();
+            cpu.Step(); // Complete the scheduled reset before preparing the instruction.
 
             Timing t;
             int refreshCount = 0;
             int aluCount = 0;
 
-            cpu.SetAluStepCallback([&aluCount](bool) {
-                aluCount++;
-            });
+            cpu.SetAluStepCallback([&aluCount](bool) { aluCount++; });
 
             t.onDramRefresh = [&cpu, &refreshCount]() {
                 cpu.ApplyDramRefreshPenalty();

@@ -14,28 +14,40 @@ void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-std::unique_ptr<Emulator> Machine(std::initializer_list<uint8_t> code) {
-    std::vector<uint8_t> rom(0x8000, 0xea);
-    std::copy(code.begin(), code.end(), rom.begin());
-    std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
-    rom[0x7fc0] = 'T';
-    rom[0x7fd5] = 0x20; rom[0x7fd6] = 0; rom[0x7fd7] = 5;
-    rom[0x7fd8] = 0; rom[0x7fd9] = 1;
-    rom[0x7fdc] = 0xff; rom[0x7fdd] = 0xff;
-    rom[0x7fde] = 0; rom[0x7fdf] = 0;
-    rom[0x7ffc] = 0; rom[0x7ffd] = 0x80;
-    rom[0x7ffa] = 0; rom[0x7ffb] = 0x90;
-    rom[0x7fea] = 0; rom[0x7feb] = 0x90;
-    auto machine = std::make_unique<Emulator>();
-    std::string error;
-    if (!machine->LoadCartridge(rom, &error)) throw std::runtime_error(error);
-    return machine;
+std::unique_ptr<Emulator> Machine(std::initializer_list<uint8_t> code, bool start = true) {
+  std::vector<uint8_t> rom(0x8000, 0xea);
+  std::copy(code.begin(), code.end(), rom.begin());
+  std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+  rom[0x7fc0] = 'T';
+  rom[0x7fd5] = 0x20;
+  rom[0x7fd6] = 0;
+  rom[0x7fd7] = 5;
+  rom[0x7fd8] = 0;
+  rom[0x7fd9] = 1;
+  rom[0x7fdc] = 0xff;
+  rom[0x7fdd] = 0xff;
+  rom[0x7fde] = 0;
+  rom[0x7fdf] = 0;
+  rom[0x7ffc] = 0;
+  rom[0x7ffd] = 0x80;
+  rom[0x7ffa] = 0;
+  rom[0x7ffb] = 0x90;
+  rom[0x7fea] = 0;
+  rom[0x7feb] = 0x90;
+  auto machine = std::make_unique<Emulator>();
+  std::string error;
+  if (!machine->LoadCartridge(rom, &error))
+    throw std::runtime_error(error);
+  if (start)
+    machine->GetCpu()->Step();
+  return machine;
 }
 
 void WordAccessesAdvanceHardware() {
     for (bool write : {false, true}) {
         auto machine = Machine({uint8_t(write ? 0x8d : 0xad), 0x10, 0x21});
         auto& cpu = *machine->GetCpu();
+        const auto startedAt = machine->GetTiming().MasterClocksElapsed();
         cpu.regs().e = false;
         cpu.regs().p = 0;
         cpu.regs().a = 0x1234;
@@ -53,8 +65,12 @@ void WordAccessesAdvanceHardware() {
         Check(cpu.Step() == 36, "Word I/O instruction consumes three ROM cycles and two I/O cycles");
         const std::vector<uint64_t> expected =
             write ? std::vector<uint64_t>{30, 36} : std::vector<uint64_t>{26, 32};
-        Check(moments == expected, "Word I/O uses each byte's read or write phase");
-        Check(machine->GetTiming().MasterClocksElapsed() == 36, "CPU clocks reach the scheduler exactly once");
+        auto absoluteExpected = expected;
+        for (auto &moment : absoluteExpected)
+          moment += startedAt;
+        Check(moments == absoluteExpected, "Word I/O uses each byte's read or write phase");
+        Check(machine->GetTiming().MasterClocksElapsed() == startedAt + 36,
+              "CPU clocks reach the scheduler exactly once");
         Check(machine->GetSmp().CycleCount() > 0, "SMP advances during CPU bus cycles");
         if (write) Check(bytes == std::vector<uint8_t>{0x34, 0x12}, "Word writes preserve low then high ordering");
         else Check(cpu.regs().a == 0x1234, "Word reads preserve low and high bytes");
@@ -105,37 +121,45 @@ void SoundPortDeadlines() {
         for (uint8_t port = 0; port < 4; ++port) {
             for (bool mirror : {false, true}) {
                 const uint8_t cpuPort = uint8_t((mirror ? 0x7c : 0x40) + port);
-                auto reader = Machine({0xad, cpuPort, 0x21, 0xad, cpuPort, 0x21,
-                    0xad, cpuPort, 0x21, 0xad, cpuPort, 0x21, 0xad, cpuPort, 0x21});
+                auto reader = Machine({0xad, cpuPort, 0x21, 0xad, cpuPort, 0x21, 0xad, cpuPort,
+                                       0x21, 0xad, cpuPort, 0x21, 0xad, cpuPort, 0x21},
+                                      false);
                 reader->GetTiming().SetRegion(region);
                 auto& sound = reader->GetSmp();
                 sound.Power();
                 sound.IoState().iplRomEnable = false;
                 sound.r.pc = 0x200;
-                sound.Ram()[0x200] = 0x8f; // MOV port,#$A5: store on cycle five.
-                sound.Ram()[0x201] = 0xa5;
-                sound.Ram()[0x202] = uint8_t(0xf4 + port);
+                // Four NOPs occupy the eight sound clocks elapsed during CPU reset.
+                sound.Ram()[0x204] = 0x8f; // MOV port,#$A5: store on absolute sound clock 13.
+                sound.Ram()[0x205] = 0xa5;
+                sound.Ram()[0x206] = uint8_t(0xf4 + port);
+                reader->GetCpu()->Step();
                 for (unsigned instruction = 0; instruction < 5; ++instruction) {
                     reader->GetCpu()->Step();
-                    Check(reader->GetCpu()->regs().a == (instruction < 3 ? 0 : 0xa5),
+                    const auto sampledAt = reader->GetTiming().MasterClocksElapsed() - 4;
+                    const auto soundAtSample =
+                        sampledAt * Smp::kClockFrequency / reader->GetTiming().MasterClockHz();
+                    Check(reader->GetCpu()->regs().a == (soundAtSample < 13 ? 0 : 0xa5),
                           "Console reads cannot observe a sound-port store before its cycle");
                     const auto target = reader->GetTiming().MasterClocksElapsed() * 1024000 /
                                         reader->GetTiming().MasterClockHz();
                     Check(sound.CycleCount() == target, "SMP follows the region clock ratio without overshoot");
                 }
 
-                auto writer = Machine({0x8d, cpuPort, 0x21});
+                auto writer = Machine({0x8d, cpuPort, 0x21}, false);
                 writer->GetTiming().SetRegion(region);
                 auto& receiver = writer->GetSmp();
                 receiver.Power();
                 receiver.IoState().iplRomEnable = false;
                 receiver.r.pc = 0x200;
-                receiver.Ram()[0x200] = 0xe4; // MOV A,port: read on cycle three.
-                receiver.Ram()[0x201] = uint8_t(0xf4 + port);
+                receiver.Ram()[0x204] = 0xe4; // MOV A,port: read on absolute sound clock 11.
+                receiver.Ram()[0x205] = uint8_t(0xf4 + port);
+                writer->GetCpu()->Step();
                 writer->GetCpu()->regs().a = 0x6b;
                 writer->GetCpu()->Step();
                 Check(receiver.r.a == 0, "SMP port read remains pending after the console store");
-                while (receiver.CycleCount() < 3) writer->GetCpu()->idle();
+                while (receiver.CycleCount() < 11)
+                  writer->GetCpu()->idle();
                 Check(receiver.r.a == 0x6b,
                       "Sound read observes a console write arriving between opcode and data cycles");
             }
@@ -157,24 +181,26 @@ struct CpuBus : ICpuBus {
 
 void SlowSoundPortDeadline() {
     for (Region region : {Region::NTSC, Region::PAL}) {
-        auto machine = Machine({0xea});
-        machine->GetTiming().SetRegion(region);
-        auto& sound = machine->GetSmp();
-        sound.Power();
-        sound.IoState().iplRomEnable = false;
-        sound.IoState().internalWaitStates = 2;
-        sound.r.pc = 0x200;
-        sound.Ram()[0x200] = 0x8f;
-        sound.Ram()[0x201] = 0xa5;
-        sound.Ram()[0x202] = 0xf4;
-        while (sound.CycleCount() < 13) {
-            machine->GetCpu()->idle();
-            const auto target = machine->GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
-                                machine->GetTiming().MasterClockHz();
-            Check(sound.CycleCount() == target, "SMP wait states stop exactly at the console clock deadline");
-            Check(sound.PortRead(0) == (target < 13 ? 0 : 0xa5),
-                  "Console synchronization preserves a stretched port-store deadline");
-        }
+      auto machine = Machine({0xea}, false);
+      machine->GetTiming().SetRegion(region);
+      auto &sound = machine->GetSmp();
+      sound.Power();
+      sound.IoState().iplRomEnable = false;
+      sound.r.pc = 0x200;
+      sound.Ram()[0x204] = 0x8f;
+      sound.Ram()[0x205] = 0xa5;
+      sound.Ram()[0x206] = 0xf4;
+      machine->GetCpu()->Step();
+      sound.IoState().internalWaitStates = 2;
+      while (sound.CycleCount() < 21) {
+        machine->GetCpu()->idle();
+        const auto target = machine->GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
+                            machine->GetTiming().MasterClockHz();
+        Check(sound.CycleCount() == target,
+              "SMP wait states stop exactly at the console clock deadline");
+        Check(sound.PortRead(0) == (target < 21 ? 0 : 0xa5),
+              "Console synchronization preserves a stretched port-store deadline");
+      }
     }
 }
 
@@ -183,9 +209,11 @@ void InterruptMaskSampling() {
         CpuBus bus;
         SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
         bus.bytes[0x8000] = opcode; // CLI, REP #I, PLP
         if (opcode == 0xc2) bus.bytes[0x8001] = 4;
-        if (opcode == 0x28) bus.bytes[0x100] = 0x30;
+        if (opcode == 0x28)
+          bus.bytes[uint16_t(cpu.regs().s + 1)] = 0x30;
         cpu.SetIrqLevel(true);
         cpu.Step();
         const auto resumed = cpu.regs().pc;
@@ -199,10 +227,12 @@ void InterruptMaskSampling() {
         CpuBus bus;
         SnesCpu cpu(bus);
         cpu.Reset();
+        cpu.Step(); // Complete the scheduled reset before preparing the instruction.
         cpu.regs().p &= ~Processor65816::FlagI;
         bus.bytes[0x8000] = opcode; // SEI, SEP #I, PLP
         if (opcode == 0xe2) bus.bytes[0x8001] = 4;
-        if (opcode == 0x28) bus.bytes[0x100] = 0x34;
+        if (opcode == 0x28)
+          bus.bytes[uint16_t(cpu.regs().s + 1)] = 0x34;
         cpu.SetIrqLevel(true);
         cpu.Step();
         Check(cpu.flagI(), "Instruction masks IRQ");
@@ -217,6 +247,7 @@ void NmiInsideInstruction() {
     CpuBus bus;
     SnesCpu cpu(bus);
     cpu.Reset();
+    cpu.Step(); // Complete the scheduled reset before preparing the instruction.
     bus.bytes[0x8000] = 0xad; bus.bytes[0x8001] = 0; bus.bytes[0x8002] = 0x20;
     unsigned elapsed = 0;
     cpu.SetClockCallback([&](uint32_t clocks) {
@@ -253,6 +284,7 @@ void DmaStartupCycle() {
     auto& cpu = *machine->GetCpu();
     auto& dma = machine->GetDma();
     auto& channel = dma.Channel(0);
+    const auto startedAt = machine->GetTiming().MasterClocksElapsed();
     channel.writeControl(0); channel.sourceBank = 0x7e; channel.sourceAddress = 0;
     channel.targetAddress = 0x10; channel.transferSize = 1;
     machine->GetBus().Write(0x7e0000, 0x5a);
@@ -270,7 +302,12 @@ void DmaStartupCycle() {
     Check(dma.AnyDmaEnabled() && writtenAt == 0, "MDMAEN queues a transfer without running it inside the write");
     cpu.Step();
     Check(pcAtWrite == 0x8004, "One opcode fetch completes before DMA takes the bus");
-    Check(writtenAt == 64 && machine->GetTiming().MasterClocksElapsed() == 74,
+    const auto arbitrationAt = startedAt + 38;
+    const auto alignment = 8 - (arbitrationAt & 7);
+    const auto expectedWrite = arbitrationAt + alignment + 24;
+    const auto resume = 6 - (alignment + 24) % 6;
+    Check(writtenAt == expectedWrite &&
+              machine->GetTiming().MasterClocksElapsed() == expectedWrite + resume + 6,
           "DMA startup and CPU resumption preserve bus phase");
     Check(!dma.AnyDmaEnabled() && channel.transferSize == 0, "DMA completes before the interrupted CPU cycle resumes");
 }

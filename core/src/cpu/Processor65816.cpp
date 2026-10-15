@@ -11,8 +11,7 @@
 //   - Instruction implementations for all addressing modes
 //   - 256-entry opcode dispatch
 //
-// Logic follows bsnes processor/wdc65816/ as reference but is written clean-
-// room in standard C++20 with no external dependencies.
+// Processor operations use cycle-ordered memory accesses.
 
 #include "snes/core/Processor65816.hpp"
 #include <cstring>
@@ -77,7 +76,7 @@ void Processor65816::setE(bool enabled) {
     }
 }
 
-//  Memory access helpers  (following bsnes processor/wdc65816/memory.cpp)
+//  Memory access helpers
 
 uint8_t Processor65816::fetch() {
     uint32_t addr = (static_cast<uint32_t>(r.pb) << 16) | r.pc;
@@ -193,7 +192,7 @@ void Processor65816::writeStack(uint32_t address, uint8_t data) {
     write(static_cast<uint16_t>(r.s + address), data);
 }
 
-//  ALU algorithms  (following bsnes processor/wdc65816/algorithms.cpp)
+//  ALU algorithms
 
 uint8_t Processor65816::algorithmADC8(uint8_t data) {
     int result;
@@ -517,7 +516,7 @@ uint16_t Processor65816::algorithmTSB16(uint16_t data) {
 }
 
 //  Instruction implementations — Read operations
-//  (following bsnes processor/wdc65816/instructions-read.cpp)
+//
 
 // Immediate — 8-bit
 void Processor65816::instructionImmediateRead8(Alu8 op) {
@@ -789,7 +788,7 @@ void Processor65816::instructionIndirectStackRead16(Alu16 op) {
 }
 
 //  Instruction implementations — Write operations
-//  (following bsnes processor/wdc65816/instructions-write.cpp)
+//
 
 // STA/STX/STY/STZ Absolute — 8-bit
 void Processor65816::instructionBankWrite8(uint16_t reg) {
@@ -1022,7 +1021,7 @@ void Processor65816::instructionIndirectStackWrite16() {
 }
 
 //  Instruction implementations — Read-Modify-Write
-//  (following bsnes processor/wdc65816/instructions-modify.cpp)
+//
 
 // Implied (accumulator or register) — 8-bit
 void Processor65816::instructionImpliedModify8(Alu8 op, uint16_t& reg) {
@@ -1145,7 +1144,7 @@ void Processor65816::instructionDirectIndexedModify16(Alu16 op) {
 }
 
 //  Instruction implementations — Program counter control
-//  (following bsnes processor/wdc65816/instructions-pc.cpp)
+//
 
 // Branch (conditional)
 void Processor65816::instructionBranch(bool take) {
@@ -1315,7 +1314,7 @@ void Processor65816::instructionReturnLong() {
 }
 
 //  Instruction implementations — Miscellaneous
-//  (following bsnes processor/wdc65816/instructions-other.cpp)
+//
 
 // BIT #imm — 8-bit (only sets Z, doesn't touch N/V)
 void Processor65816::instructionBitImmediate8() {
@@ -1575,14 +1574,15 @@ void Processor65816::instructionPullD() {
 
 // PLB — Pull Data Bank
 void Processor65816::instructionPullB() {
-    idle();
-    idle();
-    lastCycle();
-    // PLB can read $0200 when the emulation stack starts at $01FF.
-    // Restore the stack page only after the full-width address increment.
-    r.db = pullN();
-    setNZ8(r.db);
-    if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
+  idle();
+  idle();
+  lastCycle();
+  // PLB can read $0200 when the emulation stack starts at $01FF.
+  // Restore the stack page only after the full-width address increment.
+  r.db = pullN();
+  setNZ8(r.db);
+  if (r.e)
+    r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }
 
 // PLP — Pull Processor Status
@@ -1633,26 +1633,25 @@ void Processor65816::instructionPushEffectiveRelativeAddress() {
 
 void Processor65816::enterInterrupt(Interrupt type) {
     r.wai = false;
-    // Hardware interrupt entry: dummy read + idle cycle, matching bsnes interrupt()
+    r.vector = vectorAddress(type);
+    // Hardware entry begins with a dummy read and idle before the stack frame.
     read(static_cast<uint32_t>(r.pb) << 16 | r.pc);
     idle();
 
-    if (type != Interrupt::Reset) {
-        if (!r.e) pushN(r.pb);
-        push(hi(r.pc));
-        push(lo(r.pc));
-        push(r.e ? (r.p & ~0x10) : r.p);  // Clear B flag in emulation mode
-    }
+    if (!r.e)
+      pushN(r.pb);
+    push(hi(r.pc));
+    push(lo(r.pc));
+    push(r.e ? (r.p & ~0x10) : r.p); // Clear B flag in emulation mode
 
     setFlag(FlagI, true);
     setFlag(FlagD, false);
-    r.pb = 0x00;
-
-    uint16_t vec = vectorAddress(type);
-    uint8_t pcl = read(vec + 0);
+    uint8_t pcl = read(r.vector);
+    r.pc = static_cast<uint16_t>((r.pc & 0xff00) | pcl);
     lastCycle();
-    uint8_t pch = read(vec + 1);
+    uint8_t pch = read(r.vector + 1);
     r.pc = makeWord(pcl, pch);
+    r.pb = 0x00;
 }
 
 uint16_t Processor65816::vectorAddress(Interrupt type) const {
@@ -1679,7 +1678,7 @@ uint16_t Processor65816::vectorAddress(Interrupt type) const {
 }
 
 //  256-opcode dispatch table
-//  (following bsnes processor/wdc65816/instruction.hpp + instruction.cpp)
+//
 //
 //  For each opcode we call the correct instruction function, parameterized
 //  by the current M/X flag state.  Uses function pointer aliases:

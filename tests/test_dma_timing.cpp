@@ -21,11 +21,14 @@ std::unique_ptr<Emulator> Machine() {
     auto emu = std::make_unique<Emulator>();
     std::string error;
     if (!emu->LoadCartridge(rom, &error)) throw std::runtime_error(error);
+    emu->GetCpu()->Step();
     return emu;
 }
 
 void ClockedTransfers() {
     auto emu = Machine();
+    emu->GetCpu()->idle();
+    const auto startedAt = emu->GetTiming().MasterClocksElapsed();
     auto& dma = emu->GetDma();
     auto& bus = emu->GetBus();
     std::vector<uint64_t> clocks;
@@ -38,13 +41,15 @@ void ClockedTransfers() {
     dma.EnableDma(1);
     const uint32_t ownClocks = dma.RunDma();
     Check(ownClocks == 8 + 16 + 512 * 8 + 2 && clocks.size() == 512, "DMA alignment, transfer and resume cycle accounting");
-    Check(clocks.front() == 32 && clocks.back() > 4000, "Writes follow alignment, startup and the first eight-clock read");
+    Check(clocks.front() == startedAt + 32 && clocks.back() > startedAt + 4000,
+          "Writes follow alignment, startup and the first eight-clock read");
     Check(std::is_sorted(clocks.begin(), clocks.end()), "DMA time is monotonic");
     unsigned refreshes = 0;
     for (size_t i = 1; i < clocks.size(); ++i)
         if (clocks[i] - clocks[i - 1] == 48) ++refreshes;
     Check(refreshes == 3, "Refresh pauses DMA by 40 clocks on each crossed scanline");
-    Check(emu->GetTiming().MasterClocksElapsed() == ownClocks + 120, "Refresh is counted once");
+    Check(emu->GetTiming().MasterClocksElapsed() == startedAt + ownClocks + 120,
+          "Refresh is counted once");
     Check(ch.sourceBank == 0x7e && ch.sourceAddress == 0x100, "DMA wraps within the source bank");
     Check(emu->GetCpu()->regs().pc == cpuPc, "DMA stalls CPU execution");
     Check(emu->GetSmp().CycleCount() > 0, "APU advances during DMA");
@@ -59,7 +64,7 @@ void PaletteClockUnits() {
         bus.Write(0x2121, 5);
         bus.Write(0x7e0000, 0x1f);
         bus.Write(0x7e0001, 0);
-        emu->GetTiming().Tick(1364 + start);
+        emu->GetTiming().Tick(uint32_t(1364 + start - emu->GetTiming().MasterClocksElapsed()));
         auto& ch = dma.Channel(0);
         ch.writeControl(0); ch.sourceBank = 0x7e; ch.sourceAddress = 0;
         ch.targetAddress = 0x22; ch.transferSize = 2;

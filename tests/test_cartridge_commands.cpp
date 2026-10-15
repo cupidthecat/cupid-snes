@@ -87,6 +87,7 @@ void BroadcastBus() {
     auto machine = std::make_unique<Emulator>();
     Check(machine->LoadCartridge(bios) && machine->LoadedCartridge()->Header().mapping == MappingType::Bsx,
           "An ordinary BIOS load selects the BS-X memory controller");
+    machine->GetCpu()->Step();
     Check(machine->LoadedCartridge()->SramData().size() == 0x8000 &&
           machine->LoadedCartridge()->MemoryPackData().size() == 0x100000,
           "BIOS-only loading supplies battery RAM and a blank one-MiB flash pack");

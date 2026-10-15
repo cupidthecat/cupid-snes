@@ -14,6 +14,12 @@ public:
     virtual uint8_t Read(uint32_t address) = 0;
     virtual void Write(uint32_t address, uint8_t value) = 0;
 
+    // CPU reads commit the data latch after their trailing bus clocks.
+    virtual uint8_t ReadCpu(uint32_t address) {
+      return Read(address);
+    }
+    virtual void SetOpenBus(uint8_t) noexcept {}
+
     // Speed lookup: returns the number of master clocks for this address.
     // Default implementation returns 6 (fast ROM).  Override for real mapping.
     virtual uint8_t Speed(uint32_t /*address*/) const { return 6; }

@@ -28,6 +28,7 @@ std::unique_ptr<Emulator> Machine(std::vector<uint8_t> rom) {
   auto machine = std::make_unique<Emulator>();
   std::string error;
   Check(machine->LoadCartridge(rom, &error), "The DMA diagnostic program loads");
+  machine->GetCpu()->Step();
   return machine;
 }
 

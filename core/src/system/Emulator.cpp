@@ -298,6 +298,7 @@ void Emulator::InitSubsystems() {
     cpuIo_.SetDmaEnableCallback([this](uint8_t channels) { dma_.EnableDma(channels); });
     dma_.SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
     dma_.SetClockQuery([this]() { return timing_.MasterClocksElapsed(); });
+    dma_.SetCpuBusLatches(cpu_->regs().mar, cpu_->regs().mdr);
     dma_.SetBoundaryCallback([this]() { ServicePendingHdma(); });
 
     // $420C HDMAEN → DMA controller
@@ -478,7 +479,7 @@ void Emulator::InitSubsystems() {
     // Set up DSP audio output buffer
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
 
-    // CPU reset — reads the reset vector from the cartridge
+    // Queue reset after wiring; execution begins only when the console is stepped.
     cpu_->Reset();
     cpu_->SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
     cpu_->SetBeforeCycleCallback([this](uint32_t clocks) { BeginCpuCycle(clocks); });
@@ -707,7 +708,7 @@ uint64_t Emulator::CurrentFrame() const noexcept {
 }
 
 uint64_t Emulator::CurrentMasterCycles() const noexcept {
-    return masterCycles_;
+  return initialized_ ? timing_.MasterClocksElapsed() : masterCycles_;
 }
 
 void Emulator::EmitTrace(const TraceEvent& event) const {

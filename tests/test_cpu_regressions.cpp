@@ -46,6 +46,18 @@ struct Bus : ICpuBus {
     }
 };
 
+void Boot(SnesCpu &cpu, Bus &bus) {
+  cpu.Reset();
+  cpu.Step();
+  bus.writes.clear();
+  bus.reads = 0;
+}
+
+void Boot(SnesCpu &cpu, MemoryBus &) {
+  cpu.Reset();
+  cpu.Step();
+}
+
 void InterruptStack() {
     // Exercise every byte of an interrupt frame across the page boundary.
     for (bool emulation : {false, true}) {
@@ -53,7 +65,7 @@ void InterruptStack() {
             for (unsigned kind = 0; kind < 4; ++kind) {
                 Bus bus;
                 SnesCpu cpu(bus);
-                cpu.Reset();
+                Boot(cpu, bus);
                 auto& r = cpu.regs();
                 r.e = emulation;
                 r.s = static_cast<uint16_t>(stack);
@@ -99,7 +111,7 @@ void ExtendedStackInstructions() {
         for (unsigned opcode : {0x0bu, 0x2bu, 0xf4u, 0xd4u, 0x62u, 0x22u, 0x6bu, 0xfcu}) {
             Bus bus;
             SnesCpu cpu(bus);
-            cpu.Reset();
+            Boot(cpu, bus);
             auto& r = cpu.regs();
             r.e = emulation;
             const bool pull = opcode == 0x2b || opcode == 0x6b;
@@ -143,7 +155,7 @@ void WaitInterrupt() {
         for (bool beforeWait : {false, true}) {
             Bus bus;
             SnesCpu cpu(bus);
-            cpu.Reset();
+            Boot(cpu, bus);
             cpu.regs().p &= ~Processor65816::FlagI;
             bus.ram[0x8000] = 0xcb; // WAI
             bus.ram[0x9000] = 0xa9; // LDA #$57
@@ -168,7 +180,7 @@ void WaitInterrupt() {
     }
     Bus bus;
     SnesCpu cpu(bus);
-    cpu.Reset(); // IRQ remains masked.
+    Boot(cpu, bus); // IRQ remains masked.
     bus.ram[0x8000] = 0xcb;
     bus.ram[0x8001] = 0xa9;
     bus.ram[0x8002] = 0x63;
@@ -190,7 +202,7 @@ void PullBankBoundaries() {
         for (uint8_t value : {uint8_t{0}, uint8_t{0x3d}, uint8_t{0x80}}) {
             Bus bus;
             SnesCpu cpu(bus);
-            cpu.Reset();
+            Boot(cpu, bus);
             auto& r = cpu.regs();
             r.e = test.emulation;
             r.s = uint16_t(test.stack);
@@ -217,7 +229,7 @@ void StackInstructionTiming() {
             for (unsigned index : {0u, 0xffu}) {
                 Bus bus;
                 SnesCpu cpu(bus);
-                cpu.Reset();
+                Boot(cpu, bus);
                 auto& r = cpu.regs();
                 r.e = false;
                 r.p = uint8_t(flags | Processor65816::FlagI);
@@ -242,7 +254,7 @@ void StackInstructionTiming() {
         for (bool emulation : {false, true}) {
             Bus bus;
             SnesCpu cpu(bus);
-            cpu.Reset();
+            Boot(cpu, bus);
             cpu.regs().e = emulation;
             cpu.regs().p = uint8_t(flags | Processor65816::FlagI | (emulation ? 0x30 : 0));
             bus.ram[0x8000] = 0x62;
@@ -321,20 +333,20 @@ void CpuIoInstructionReads() {
                           ReadCase{0x4017, 0x5e}, ReadCase{0x430c, 0x43},
                           ReadCase{0x4201, 0x42}, ReadCase{0x4000, 0x40},
                           ReadCase{0x43ff, 0x43}}) {
-            cpu.Reset();
-            cpu.regs().db = bank;
-            io.setNmiFlag(true);
-            io.setIrqFlag(true);
-            rom[0] = 0xad; // LDA absolute: final operand byte remains on the bus.
-            rom[1] = uint8_t(test.address);
-            rom[2] = uint8_t(test.address >> 8);
-            cpu.Step();
-            Check("LDA I/O uses the last address byte for open bus", cpu.regs().a, test.expected);
-            Check("LDA I/O preserves bus MDR", bus->OpenBus(), rom[2]);
-            Check("LDA I/O preserves CPU MDR", cpu.regs().mdr, rom[2]);
+          Boot(cpu, *bus);
+          cpu.regs().db = bank;
+          io.setNmiFlag(true);
+          io.setIrqFlag(true);
+          rom[0] = 0xad; // LDA absolute: final operand byte remains on the bus.
+          rom[1] = uint8_t(test.address);
+          rom[2] = uint8_t(test.address >> 8);
+          cpu.Step();
+          Check("LDA I/O uses the last address byte for open bus", cpu.regs().a, test.expected);
+          Check("LDA I/O preserves bus MDR", bus->OpenBus(), rom[2]);
+          Check("LDA I/O preserves CPU MDR", cpu.regs().mdr, rom[2]);
         }
 
-        cpu.Reset();
+        Boot(cpu, *bus);
         cpu.regs().e = false;
         cpu.regs().p = Processor65816::FlagI; // 16-bit accumulator.
         io.setNmiFlag(true);
@@ -355,7 +367,7 @@ void Stop() {
     for (bool pending : {false, true}) {
         Bus bus;
         SnesCpu cpu(bus);
-        cpu.Reset();
+        Boot(cpu, bus);
         cpu.regs().p &= ~Processor65816::FlagI;
         bus.ram[0x8000] = 0xdb; // STP
         if (pending) { cpu.RequestNmi(); cpu.SetIrqLevel(true); }
@@ -369,7 +381,7 @@ void Stop() {
         Check("STP does not read bus", bus.reads, reads);
         Check("STP does not push interrupt frames", unsigned(bus.writes.size()), 0);
         bus.ram[0x8000] = 0xea;
-        cpu.Reset();
+        Boot(cpu, bus);
         Check("Reset clears stopped state", cpu.regs().stp, false);
         cpu.Step();
         Check("Reset resumes execution", cpu.regs().pc, 0x8001);
