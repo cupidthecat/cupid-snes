@@ -10,11 +10,10 @@
 //
 // Clock rates:
 //   CPU master clock: 21,477,272 Hz
-//   SPC700 clock:      1,024,000 Hz
-//   Ratio:  SMP_cycles = master_cycles × 1024000 / 21477272
+//   Complete sound cycles: 1,025,280 Hz
 //
-// DSP sample generation is handled internally by the SMP — every 32 SMP
-// bus cycles, SMP::tickDsp() fires Dsp::RunSample().
+// SMP execution advances the DSP pipeline and publishes one sample every
+// 32 complete-cycle clocks, including clocks spent in stretched accesses.
 //
 // Usage:
 //   ApuScheduler sched;
@@ -23,7 +22,6 @@
 //   uint32_t cpuClocks = cpu.Step();
 //   sched.Run(smp, cpuClocks);
 //
-// Reference: bsnes sfc/smp/smp.cpp (thread synchronization)
 
 #pragma once
 
@@ -35,7 +33,7 @@ namespace snes::core {
 struct ApuScheduler {
     // Clock frequencies (Hz)
     static constexpr uint64_t kMasterClockRate = 21477272;  // ~21.477 MHz
-    static constexpr uint64_t kSmpClockRate    = 1024000;   // ~1.024 MHz
+    static constexpr uint64_t kSmpClockRate = Smp::kClockFrequency;
 
     // State
     uint64_t accumulator    = 0;  // Fractional SMP-cycle remainder

@@ -7445,8 +7445,8 @@ int main() {
         // 24a: ApuScheduler clock constants
         {
             assert(ApuScheduler::kMasterClockRate == 21477272);
-            assert(ApuScheduler::kSmpClockRate    == 1024000);
-            assert(Smp::kClockFrequency           == 1024000);
+            assert(ApuScheduler::kSmpClockRate == 1025280);
+            assert(Smp::kClockFrequency == 1025280);
             assert(Smp::kDspSampleInterval         == 32);
 
             std::printf("  [24a] Clock constants passed\n");
@@ -7454,18 +7454,18 @@ int main() {
 
         // 24b: ApuScheduler ratio math — one frame
         {
-            // One NTSC frame = 357368 master clocks
-            // Expected SMP clocks: 357368 * 1024000 / 21477272 ≈ 17038.7
-            ApuScheduler sched;
-            uint64_t target = sched.Advance(357368);
-            assert(target == 17038);  // Floor of fractional result
+          // One NTSC frame = 357368 master clocks
+          // Expected SMP clocks: floor(357368 * 1025280 / 21477272) = 17060.
+          ApuScheduler sched;
+          uint64_t target = sched.Advance(357368);
+          assert(target == 17060); // Floor of fractional result
 
-            // Accumulate another frame — fractional remainder carries over
-            uint64_t target2 = sched.Advance(357368);
-            // Total: 2 * 357368 * 1024000 / 21477272 ≈ 34077.4
-            assert(target2 == 34077);
+          // Accumulate another frame — fractional remainder carries over
+          uint64_t target2 = sched.Advance(357368);
+          // Total: floor(2 * 357368 * 1025280 / 21477272) = 34120.
+          assert(target2 == 34120);
 
-            std::printf("  [24b] Ratio math — one frame passed\n");
+          std::printf("  [24b] Ratio math — one frame passed\n");
         }
 
         // 24c: ApuScheduler ratio math — small increments
@@ -7497,17 +7497,17 @@ int main() {
             for (int f = 0; f < 60; f++) {
                 target = sched.Advance(357368);
             }
-            // Expected: 60 * 357368 * 1024000 / 21477272 ≈ 1022322.1
+            // Expected: floor(60 * 357368 * 1025280 / 21477272) = 1023600.
             // Should be within ±1
-            assert(target >= 1022321 && target <= 1022323);
+            assert(target >= 1023599 && target <= 1023601);
 
             // After 3600 frames (1 minute), check drift
             for (int f = 60; f < 3600; f++) {
                 target = sched.Advance(357368);
             }
-            // 3600 * 357368 * 1024000 / 21477272 ≈ 61339326.3
+            // One minute of these frame intervals gives 61416000 complete sound cycles.
             // Integer result should be very close
-            double expected = 3600.0 * 357368.0 * 1024000.0 / 21477272.0;
+            double expected = 3600.0 * 357368.0 * 1025280.0 / 21477272.0;
             int64_t err = static_cast<int64_t>(target) -
                           static_cast<int64_t>(expected);
             assert(err >= -2 && err <= 2);
@@ -7653,8 +7653,8 @@ int main() {
             }
 
             int totalSamples = dsp.SamplesWritten();
-            // Expected: ~1024000 SMP cycles / 32 = 32000 samples per second
-            // 60 frames at 59.94 Hz ≈ 1.001 seconds → ~32032 samples
+            // One sample per 32 sound cycles gives 32040 samples per second.
+            // Sixty NTSC frame intervals produce about 31988 sample pairs.
             // Allow 31000-33000
             assert(totalSamples >= 31000 && totalSamples <= 33000);
 
@@ -9728,7 +9728,7 @@ int main() {
             emu->StepFrame();
 
             assert(audio.submitCount == 1);
-            assert(audio.lastSampleRate == 32000);
+            assert(audio.lastSampleRate == AudioTiming::SampleRate);
             // Should have ~534 stereo sample pairs (×2 for interleaved)
             assert(audio.lastSampleCount > 400);
             std::printf("  [29j] Audio output receives %zu samples passed\n",

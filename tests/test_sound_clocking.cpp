@@ -1,3 +1,4 @@
+#include "audio/SoundUploadFixture.hpp"
 #include "snes/core/Emulator.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/Spc700.hpp"
@@ -51,7 +52,7 @@ void PortSamplingEdges() {
           smp.PortWrite(port, 0x11);
           cpu.Step();
           smp.IoState().internalWaitStates = uint8_t(setting);
-          constexpr uint64_t hardwareHz = 2'048'000;
+          constexpr uint64_t hardwareHz = Smp::kHardwareClockFrequency;
           const uint64_t sampleClock = 20 + waits[setting] / 2;
           const auto masterHz = machine->GetTiming().MasterClockHz();
           const auto writeEdge =
@@ -100,7 +101,8 @@ void HardwareClockPhase() {
         break;
       }
       const auto elapsed = machine->GetTiming().MasterClocksElapsed();
-      const auto clocks = elapsed * 2'048'000 / machine->GetTiming().MasterClockHz();
+      const auto clocks =
+          elapsed * Smp::kHardwareClockFrequency / machine->GetTiming().MasterClockHz();
       const auto timerPhase = smp.GetTimer0().stage0 + 128u * smp.GetTimer0().stage1;
       Check(timerPhase == clocks % 256,
             "Sound timer dividers retain every hardware-clock edge between CPU phases");
@@ -154,6 +156,52 @@ void HalfCycleDeadlinesAndReset() {
       Check(!smp.InstructionInProgress() && smp.CycleCount() == 2 && smp.PortRead(port) == 0 &&
                 smp.Ram()[0xf4 + port] == 0,
             "Power cancels an odd-phase store before executing the new program");
+    }
+  }
+}
+
+void ConsoleAudioRate() {
+  struct Audio final : IAudioOutput {
+    uint64_t frames = 0;
+    void Submit(const AudioBuffer &buffer) override {
+      Check(buffer.sampleRate == 32'040,
+            "Audio buffers report the oscillator's native sample rate");
+      frames += buffer.interleavedStereo.size() / 2;
+    }
+  };
+  for (bool pal : {false, true}) {
+    auto machine = Machine(pal);
+    Audio audio;
+    machine->AttachAudioOutput(&audio);
+    for (unsigned frame = 0; frame < 6; ++frame) {
+      machine->StepFrame();
+      const auto clocks =
+          machine->CurrentMasterCycles() * 2'050'560 / machine->GetTiming().MasterClockHz();
+      Check(machine->GetSmp().HardwareClockCount() == clocks &&
+                audio.frames == (clocks / 2 + 4) / 32,
+            "Both video regions generate samples at the native oscillator rate without drift");
+    }
+  }
+}
+
+void UploadedPortEdges() {
+  constexpr std::array<unsigned, 4> ntscEdges{16, 19, 23, 28};
+  constexpr std::array<unsigned, 4> palEdges{20, 15, 24, 24};
+  for (bool pal : {false, true}) {
+    const auto &edges = pal ? palEdges : ntscEdges;
+    for (unsigned setting = 0; setting < 4; ++setting) {
+      for (unsigned delay = edges[setting] - 1; delay <= edges[setting] + 1; ++delay) {
+        auto machine = std::make_unique<Emulator>();
+        std::string error;
+        Check(machine->LoadCartridge(sound_upload_test::PortProgram(setting, delay, pal), &error),
+              "The console-to-sound upload fixture loads");
+        std::fill_n(machine->GetBus().WramData(), MemoryBus::WramSize, 0);
+        for (unsigned frame = 0; frame < 3; ++frame)
+          machine->StepFrame();
+        const auto *result = machine->GetBus().WramData() + 0x100;
+        Check(result[1] == 0xa5 && result[0] == (delay < edges[setting] ? 0x77 : 0x11),
+              "An uploaded sound program samples console writes at the expected oscillator edge");
+      }
     }
   }
 }
@@ -288,8 +336,9 @@ void ControlTransitions() {
 
 int main() {
   unsigned failures = 0;
-  for (auto test : {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset,
-                    HaltedBusSequence, HaltedWaitClasses, ControlTransitions}) {
+  for (auto test :
+       {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset, ConsoleAudioRate,
+        UploadedPortEdges, HaltedBusSequence, HaltedWaitClasses, ControlTransitions}) {
     try {
       test();
     } catch (const std::exception &error) {

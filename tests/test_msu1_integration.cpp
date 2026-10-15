@@ -113,8 +113,9 @@ void Play(Emulator& machine, bool repeat = false) {
 struct Audio final : IAudioOutput {
     std::vector<float> samples;
     void Submit(const AudioBuffer& buffer) override {
-        Check(buffer.sampleRate == 32000, "Mixed PCM follows the core output rate");
-        samples.insert(samples.end(), buffer.interleavedStereo.begin(), buffer.interleavedStereo.end());
+      Check(buffer.sampleRate == AudioTiming::SampleRate, "Mixed PCM follows the core output rate");
+      samples.insert(samples.end(), buffer.interleavedStereo.begin(),
+                     buffer.interleavedStereo.end());
     }
 };
 
@@ -152,24 +153,26 @@ public:
 
 private:
     int64_t Integral(uint64_t ticks, unsigned channel) const {
-        // A source frame lasts 32,000 ticks; an output interval lasts 44,100.
-        const uint64_t wholeFrames = ticks / 32000;
-        size_t frame;
-        int64_t sum;
-        if (wholeFrames < frames_.size()) {
-            frame = static_cast<size_t>(wholeFrames);
-            sum = prefix_[frame][channel];
-        } else if (repeat_) {
-            const uint64_t extra = wholeFrames - frames_.size();
-            const size_t period = frames_.size() - loopFrame_;
-            frame = loopFrame_ + static_cast<size_t>(extra % period);
-            const int64_t loopSum = prefix_.back()[channel] - prefix_[loopFrame_][channel];
-            sum = prefix_.back()[channel] + static_cast<int64_t>(extra / period) * loopSum +
-                  prefix_[frame][channel] - prefix_[loopFrame_][channel];
-        } else {
-            return prefix_.back()[channel] * 32000;
-        }
-        return sum * 32000 + int64_t{frames_[frame][channel]} * static_cast<int64_t>(ticks % 32000);
+      // A source frame lasts 32,040 ticks; an output interval lasts 44,100.
+      const uint64_t wholeFrames = ticks / AudioTiming::SampleRate;
+      size_t frame;
+      int64_t sum;
+      if (wholeFrames < frames_.size()) {
+        frame = static_cast<size_t>(wholeFrames);
+        sum = prefix_[frame][channel];
+      } else if (repeat_) {
+        const uint64_t extra = wholeFrames - frames_.size();
+        const size_t period = frames_.size() - loopFrame_;
+        frame = loopFrame_ + static_cast<size_t>(extra % period);
+        const int64_t loopSum = prefix_.back()[channel] - prefix_[loopFrame_][channel];
+        sum = prefix_.back()[channel] + static_cast<int64_t>(extra / period) * loopSum +
+              prefix_[frame][channel] - prefix_[loopFrame_][channel];
+      } else {
+        return prefix_.back()[channel] * AudioTiming::SampleRate;
+      }
+      return sum * AudioTiming::SampleRate +
+             int64_t{frames_[frame][channel]} *
+                 static_cast<int64_t>(ticks % AudioTiming::SampleRate);
     }
 
     std::span<const PcmFrame> frames_;
@@ -315,7 +318,7 @@ void ActivePlaybackWithoutOutput() {
         while (machine->GetSmp().CycleCount() < target) machine->GetCpu()->idle();
         const uint64_t skipped = DspFrameCount(*machine) - firstFrame;
         Check(skipped == hiddenFrames && skipped > 2048, "Headless playback crosses a full DSP buffer");
-        Check(machine->GetDsp().Phase() != 0 && (skipped * 44100) % 32000 != 0,
+        Check(machine->GetDsp().Phase() != 0 && (skipped * 44100) % AudioTiming::SampleRate != 0,
               "Audio attachment exercises fractional DSP and PCM positions");
         Check((machine->GetBus().Read(0x2000) & 0x18) == 0x10, "PCM is still playing at audio attachment");
 

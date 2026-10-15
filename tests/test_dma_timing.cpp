@@ -137,7 +137,8 @@ void LongDmaAudio() {
     // Output occurs at phase 27, followed by one output every 32 SMP clocks.
     const auto generated = (before + 4) / 32;
     Check(emu->GetTiming().FrameCount() > 1 && generated > 2048, "A maximal DMA crosses fields and exceeds one audio buffer");
-    Check(output.calls == 1 && output.last.sampleRate == 32000 && output.last.interleavedStereo.size() == generated * 2,
+    Check(output.calls == 1 && output.last.sampleRate == AudioTiming::SampleRate &&
+              output.last.interleavedStereo.size() == generated * 2,
           "Every DSP sample survives a DMA operation longer than the frame buffer");
     Check(std::any_of(output.last.interleavedStereo.begin() + 4096, output.last.interleavedStereo.end(),
                      [](float sample) { return sample != 0.0f; }), "Overflow blocks retain generated audio rather than padding silence");

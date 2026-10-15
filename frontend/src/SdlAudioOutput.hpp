@@ -5,7 +5,7 @@
 #pragma once
 // SdlAudioOutput.hpp — SDL3-based audio output for the SNES emulator
 //
-// Opens an SDL3 audio stream at 32 kHz stereo float and implements
+// Opens an SDL3 audio stream at the native sample rate in stereo float and implements
 // IAudioOutput::Submit() by pushing interleaved samples into SDL's
 // internal queue.  SDL3's audio stream handles buffering, resampling
 // (if the hardware rate differs), and draining automatically.
@@ -26,8 +26,8 @@ namespace snes::frontend {
 class SdlAudioOutput final : public snes::core::IAudioOutput {
 public:
     struct Config {
-        int sampleRate = 32000;       // SNES native rate
-        int channels   = 2;           // stereo
+      int sampleRate = snes::core::AudioTiming::SampleRate;
+      int channels = 2; // stereo
     };
 
     explicit SdlAudioOutput();
@@ -65,7 +65,7 @@ private:
     void StartIfReady();
 
     SDL_AudioStream* stream_ = nullptr;
-    int sampleRate_ = 32000;
+    int sampleRate_ = snes::core::AudioTiming::SampleRate;
     int targetQueuedBytes_ = 0;
     bool playbackRequested_ = false;
     bool playing_ = false;

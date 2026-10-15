@@ -160,7 +160,7 @@ void Smp::tickDsp() {
     if (dsp_) dsp_->Tick();
 }
 
-// Batch execution — stop exactly at the requested 1.024 MHz clock deadline.
+// Batch execution — stop exactly at the requested complete-cycle deadline.
 
 void Smp::RunUntil(uint64_t targetCycles) {
   RunUntilHardwareClock(targetCycles * 2);

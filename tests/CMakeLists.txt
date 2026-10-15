@@ -160,7 +160,7 @@ target_link_libraries(snes_save_ram_tests PRIVATE snes_core SDL3::SDL3)
 add_test(NAME snes_save_ram_tests COMMAND snes_save_ram_tests)
 target_include_directories(snes_sdl_audio_tests PRIVATE ../frontend/src)
 target_link_libraries(snes_sdl_audio_tests PRIVATE snes_core SDL3::SDL3)
-foreach(rate 32000 44100 48000)
+foreach(rate 32000 32040 44100 48000)
   add_test(NAME snes_sdl_audio_${rate} COMMAND snes_sdl_audio_tests ${rate})
 endforeach()
 

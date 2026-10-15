@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "snes/core/AudioTiming.hpp"
 #include "snes/core/Spc700.hpp"
 #include <array>
 #include <cstdint>
@@ -73,16 +74,16 @@ public:
 
     // Timer stepping — call after each SMP bus cycle to advance timers
     // 'clocks' is the number of ideal timer ticks for this bus operation.
-    // Default wait states: two timer ticks per 1.024 MHz clock.
+    // Default wait states: two timer ticks per complete-cycle clock.
     void StepTimers(unsigned clocks);
 
     // DSP connection
     void SetDsp(Dsp& dsp) { dsp_ = &dsp; }
 
-    // Complete cycles use 1.024 MHz; bus midpoints use the 2.048 MHz hardware clock.
-    static constexpr uint64_t kClockFrequency = 1024000; // Complete-cycle time base.
-    static constexpr uint64_t kHardwareClockFrequency = 2 * kClockFrequency;
-    static constexpr int      kDspSampleInterval = 32;      // SMP clocks per DSP sample
+    // DSP pipeline clocks and SMP hardware clocks share the audio oscillator.
+    static constexpr uint64_t kClockFrequency = AudioTiming::DspClockRate;
+    static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
+    static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
 
     // Batch execution — run SMP through exactly targetCycles.
     // Instructions may pause within stretched bus cycles at the deadline; Step()
@@ -184,7 +185,7 @@ private:
     std::array<uint8_t, 4> apuInput_{};   // written by CPU portWrite()
     std::array<uint8_t, 4> cpuOutput_{};  // written by SMP writeIO($F4-$F7)
 
-    // Each elapsed 1.024 MHz clock advances one DSP pipeline phase.
+    // Each elapsed complete-cycle clock advances one DSP pipeline phase.
     void tickDsp();
 
     // DSP pointer (set via SetDsp)

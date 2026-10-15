@@ -141,8 +141,8 @@ void SoundPortDeadlines() {
                         sampledAt * Smp::kClockFrequency / reader->GetTiming().MasterClockHz();
                     Check(reader->GetCpu()->regs().a == (soundAtSample < 13 ? 0 : 0xa5),
                           "Console reads cannot observe a sound-port store before its cycle");
-                    const auto target = reader->GetTiming().MasterClocksElapsed() * 1024000 /
-                                        reader->GetTiming().MasterClockHz();
+                    const auto target = reader->GetTiming().MasterClocksElapsed() *
+                                        Smp::kClockFrequency / reader->GetTiming().MasterClockHz();
                     Check(sound.CycleCount() == target, "SMP follows the region clock ratio without overshoot");
                 }
 
