@@ -160,13 +160,13 @@ void Ppu::RenderFrame() {
 // RenderLine — the core per-scanline pipeline
 
 void Ppu::RenderLine(Line& line) {
-    const auto& events = rasterEvents_[line.y];
-    ColorMathLatch latch;
+  const auto &events = rasterEvents_[line.y];
+  ColorMathLatch latch;
 
-    if (events.empty()) {
-        RenderLineSpan(line, line.io, 0, 256, latch);
-        return;
-    }
+  if (events.empty()) {
+    RenderLineSpan(line, line.io, 0, 256, latch);
+    return;
+  }
 
     const IO snapshot = line.io;
     IO state = snapshot;
@@ -176,85 +176,84 @@ void Ppu::RenderLine(Line& line) {
 
     int x = 0;
     for (const auto& event : events) {
-        const int next = std::clamp<int>(event.x, x, 256);
-        if (next > x)
-            RenderLineSpan(line, state, x, next, latch);
-        ApplyRasterEvent(state, event, true);
-        x = next;
+      const int next = std::clamp<int>(event.x, x, 256);
+      if (next > x)
+        RenderLineSpan(line, state, x, next, latch);
+      ApplyRasterEvent(state, event, true);
+      x = next;
     }
     if (x < 256)
-        RenderLineSpan(line, state, x, 256, latch);
+      RenderLineSpan(line, state, x, 256, latch);
     line.io = snapshot;
 }
 
-void Ppu::RenderLineSpan(Line& line, const IO& state, int x0, int x1, ColorMathLatch& latch) {
-    line.io = state;
-    const uint16_t y = line.y;
+void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch) {
+  line.io = state;
+  const uint16_t y = line.y;
 
-    // Export visible rows directly: visible vcounter 1 maps to output row 0.
-    uint16_t outputY = static_cast<uint16_t>(y - 1);
-    if (frameInterlace_) outputY = uint16_t(outputY * 2 + unsigned(line.fieldID));
+  // Export visible rows directly: visible vcounter 1 maps to output row 0.
+  uint16_t outputY = static_cast<uint16_t>(y - 1);
+  if (frameInterlace_)
+    outputY = uint16_t(outputY * 2 + unsigned(line.fieldID));
 
-    auto* outRow = output_.get() + static_cast<size_t>(outputY) * OutputWidth;
-    const int scale = frameWidth_ == 512 ? 2 : 1;
-    const int outputStart = x0 * scale;
-    const int outputEnd = x1 * scale;
+  auto *outRow = output_.get() + static_cast<size_t>(outputY) * OutputWidth;
+  const int scale = frameWidth_ == 512 ? 2 : 1;
+  const int outputStart = x0 * scale;
+  const int outputEnd = x1 * scale;
 
-    // Display disabled → black
-    if (line.io.displayDisable) {
-        std::fill(outRow + outputStart, outRow + outputEnd, 0u);
-        return;
+  // Display disabled → black
+  if (line.io.displayDisable) {
+    std::fill(outRow + outputStart, outRow + outputEnd, 0u);
+    return;
+  }
+
+  // Step 1: Initialize line buffers with backdrop
+  InitLineBuffers(line);
+
+  // Step 2: Render background and object layers in priority order.
+  RenderBackground(line, line.io.bg1, Source::BG1);
+  if (!line.io.extbg)
+    RenderBackground(line, line.io.bg2, Source::BG2);
+  RenderBackground(line, line.io.bg3, Source::BG3);
+  RenderBackground(line, line.io.bg4, Source::BG4);
+  RenderObjects(line, line.io.obj);
+  if (line.io.extbg)
+    RenderBackground(line, line.io.bg2, Source::BG2); // EXTBG: BG2 after sprites
+
+  // Step 3: Compute color windows
+  RenderWindowColor(line, line.io.col.window, line.io.col.window.aboveMask, line.windowAbove);
+  RenderWindowColor(line, line.io.col.window, line.io.col.window.belowMask, line.windowBelow);
+
+  // Step 4: Final compositing with brightness
+  auto *luma = lightTable_[line.io.displayBrightness];
+
+  const bool hires = line.io.pseudoHires || line.io.bgMode == 5 || line.io.bgMode == 6;
+  const auto expandColor = [luma](uint16_t color555) {
+    uint16_t dimmed = luma[color555];
+
+    // Convert BGR555 → RGBA8888
+    // dimmed is BGR555: bbbbb_ggggg_rrrrr
+    // Expand each five-bit channel with (c << 3) | (c >> 2).
+    uint32_t r5 = (dimmed >> 0) & 31;
+    uint32_t g5 = (dimmed >> 5) & 31;
+    uint32_t b5 = (dimmed >> 10) & 31;
+    uint32_t r8 = (r5 << 3) | (r5 >> 2);
+    uint32_t g8 = (g5 << 3) | (g5 >> 2);
+    uint32_t b8 = (b5 << 3) | (b5 >> 2);
+    return (0xFFu << 24) | (b8 << 16) | (g8 << 8) | r8;
+  };
+  for (int x = x0; x < x1; ++x) {
+    // The sub dot consumes the preceding main dot's decisions before the
+    // current main dot replaces them. Blank spans leave those latches alone.
+    const uint16_t sub = hires ? CompositeHiresSubPixel(line, x, latch) : 0;
+    const uint16_t main = CompositePixel(line, x, latch);
+    if (scale == 2) {
+      outRow[x * 2] = expandColor(hires ? sub : main);
+      outRow[x * 2 + 1] = expandColor(main);
+    } else {
+      outRow[x] = expandColor(main);
     }
-
-    // Step 1: Initialize line buffers with backdrop
-    InitLineBuffers(line);
-
-    // Step 2: Render background and object layers in priority order.
-    RenderBackground(line, line.io.bg1, Source::BG1);
-    if (!line.io.extbg)
-        RenderBackground(line, line.io.bg2, Source::BG2);
-    RenderBackground(line, line.io.bg3, Source::BG3);
-    RenderBackground(line, line.io.bg4, Source::BG4);
-    RenderObjects(line, line.io.obj);
-    if (line.io.extbg)
-        RenderBackground(line, line.io.bg2, Source::BG2); // EXTBG: BG2 after sprites
-
-    // Step 3: Compute color windows
-    RenderWindowColor(line, line.io.col.window,
-                      line.io.col.window.aboveMask, line.windowAbove);
-    RenderWindowColor(line, line.io.col.window,
-                      line.io.col.window.belowMask, line.windowBelow);
-
-    // Step 4: Final compositing with brightness
-    auto* luma = lightTable_[line.io.displayBrightness];
-
-    const bool hires = line.io.pseudoHires || line.io.bgMode == 5 || line.io.bgMode == 6;
-    const auto expandColor = [luma](uint16_t color555) {
-        uint16_t dimmed = luma[color555];
-
-        // Convert BGR555 → RGBA8888
-        // dimmed is BGR555: bbbbb_ggggg_rrrrr
-        // Expand each five-bit channel with (c << 3) | (c >> 2).
-        uint32_t r5 = (dimmed >>  0) & 31;
-        uint32_t g5 = (dimmed >>  5) & 31;
-        uint32_t b5 = (dimmed >> 10) & 31;
-        uint32_t r8 = (r5 << 3) | (r5 >> 2);
-        uint32_t g8 = (g5 << 3) | (g5 >> 2);
-        uint32_t b8 = (b5 << 3) | (b5 >> 2);
-        return (0xFFu << 24) | (b8 << 16) | (g8 << 8) | r8;
-    };
-    for (int x = x0; x < x1; ++x) {
-        // The sub dot consumes the preceding main dot's decisions before the
-        // current main dot replaces them. Blank spans leave those latches alone.
-        const uint16_t sub = hires ? CompositeHiresSubPixel(line, x, latch) : 0;
-        const uint16_t main = CompositePixel(line, x, latch);
-        if (scale == 2) {
-            outRow[x * 2] = expandColor(hires ? sub : main);
-            outRow[x * 2 + 1] = expandColor(main);
-        } else {
-            outRow[x] = expandColor(main);
-        }
-    }
+  }
 }
 
 // InitLineBuffers — fill with backdrop color
@@ -372,8 +371,8 @@ void Ppu::RenderBackground(Line& line, const Background& bg, uint8_t source) {
     if (hires) {
         hscroll <<= 1;
         if (line.io.interlace) {
-            // Interlace selects the field parity unless mosaic holds the row.
-            y = (y << 1) | static_cast<uint32_t>(line.fieldID && !bg.mosaicEnable);
+          // Interlace selects the field parity unless mosaic holds the row.
+          y = (y << 1) | static_cast<uint32_t>(line.fieldID && !bg.mosaicEnable);
         }
     }
 
@@ -960,30 +959,30 @@ void Ppu::RenderWindowColor(const Line& line, const WindowColor& wc,
 // CompositePixel — color math compositing per pixel
 //
 
-uint16_t Ppu::CompositePixel(const Line& line, int x, ColorMathLatch& latch) const {
-    const Pixel& main = line.above[x];
-    const Pixel& sub = line.below[x];
-    latch.mainColor = main.color;
-    latch.mainVisible = line.windowAbove[x];
-    latch.mathEnabled = line.windowBelow[x] && line.io.col.enable[main.source];
-    const uint16_t visible = latch.mainVisible ? main.color : 0;
-    if (!latch.mathEnabled)
-        return visible;
+uint16_t Ppu::CompositePixel(const Line &line, int x, ColorMathLatch &latch) const {
+  const Pixel &main = line.above[x];
+  const Pixel &sub = line.below[x];
+  latch.mainColor = main.color;
+  latch.mainVisible = line.windowAbove[x];
+  latch.mathEnabled = line.windowBelow[x] && line.io.col.enable[main.source];
+  const uint16_t visible = latch.mainVisible ? main.color : 0;
+  if (!latch.mathEnabled)
+    return visible;
 
-    // A transparent sub screen selects fixed color and suppresses halving.
-    const bool transparent = sub.source == Source::COL;
-    latch.useSubscreen = line.io.col.blendMode && !transparent;
-    latch.halve = line.io.col.halve && latch.mainVisible && !(line.io.col.blendMode && transparent);
-    const uint16_t operand = latch.useSubscreen ? sub.color : line.io.col.fixedColor;
-    return Blend(line, visible, operand, latch.halve);
+  // A transparent sub screen selects fixed color and suppresses halving.
+  const bool transparent = sub.source == Source::COL;
+  latch.useSubscreen = line.io.col.blendMode && !transparent;
+  latch.halve = line.io.col.halve && latch.mainVisible && !(line.io.col.blendMode && transparent);
+  const uint16_t operand = latch.useSubscreen ? sub.color : line.io.col.fixedColor;
+  return Blend(line, visible, operand, latch.halve);
 }
 
-uint16_t Ppu::CompositeHiresSubPixel(const Line& line, int x, const ColorMathLatch& latch) const {
-    const uint16_t visible = latch.mainVisible ? line.below[x].color : 0;
-    if (!latch.mathEnabled)
-        return visible;
-    const uint16_t operand = latch.useSubscreen ? latch.mainColor : line.io.col.fixedColor;
-    return Blend(line, visible, operand, latch.halve);
+uint16_t Ppu::CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const {
+  const uint16_t visible = latch.mainVisible ? line.below[x].color : 0;
+  if (!latch.mathEnabled)
+    return visible;
+  const uint16_t operand = latch.useSubscreen ? latch.mainColor : line.io.col.fixedColor;
+  return Blend(line, visible, operand, latch.halve);
 }
 
 // Blend packed BGR555 channels with saturation.

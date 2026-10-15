@@ -105,20 +105,21 @@ void SnesCpu::idle() {
     if (beforeCycle_) beforeCycle_(6);
     addClocks(6);
     if (onBusPhase_)
-        onBusPhase_();
+      onBusPhase_();
     if (onAluStep_) onAluStep_(false);
 }
 
 uint8_t SnesCpu::read(uint32_t address) {
     const uint8_t speed = bus_.Speed(address);
-    if (beforeCycle_) beforeCycle_(speed);
+    if (beforeCycle_)
+      beforeCycle_(speed);
     addClocks(speed - 4);
     if (onBusPhase_)
-        onBusPhase_();
+      onBusPhase_();
     uint8_t data = bus_.Read(address);
     addClocks(4);
     if (onAluStep_)
-        onAluStep_(false);
+      onAluStep_(false);
     // Internal register reads leave the external memory data latch intact.
     if ((address & 0x40fc00) != 0x4000) regs().mdr = data;
     return data;
@@ -130,7 +131,7 @@ void SnesCpu::write(uint32_t address, uint8_t data) {
     if (beforeCycle_) beforeCycle_(speed);
     addClocks(speed);
     if (onBusPhase_)
-        onBusPhase_();
+      onBusPhase_();
     bus_.Write(address, regs().mdr = data);
 }
 

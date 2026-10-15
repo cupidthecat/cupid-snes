@@ -101,14 +101,16 @@ public:
 
     /// Interlace timing samples the PPU input when scanline 128 begins.
     bool Interlace() const noexcept { return interlace_; }
-    void SetInterlace(bool v) noexcept { interlaceInput_ = v; }
+    void SetInterlace(bool v) noexcept {
+      interlaceInput_ = v;
+    }
 
     /// VDisp — number of active (visible) scanlines.
     /// 225 in normal mode, 240 with overscan.
     uint16_t VDisp() const noexcept { return vdisp_; }
     void SetVDisp(uint16_t v) noexcept {
-        vdisp_ = v;
-        updateNextEvent();
+      vdisp_ = v;
+      updateNextEvent();
     }
 
     // Counter state
@@ -129,11 +131,15 @@ public:
 
     /// Master clocks in the current scanline.
     uint16_t HPeriod() const noexcept { return hperiod_; }
-    uint16_t PreviousHPeriod() const noexcept { return previousHPeriod_; }
+    uint16_t PreviousHPeriod() const noexcept {
+      return previousHPeriod_;
+    }
 
     /// Scanlines in the current frame.
     uint16_t VPeriod() const noexcept { return vperiod_; }
-    uint16_t PreviousVPeriod() const noexcept { return previousVPeriod_; }
+    uint16_t PreviousVPeriod() const noexcept {
+      return previousVPeriod_;
+    }
 
     /// Total master clocks elapsed since power-on / reset.
     uint64_t MasterClocksElapsed() const noexcept { return masterClocksElapsed_; }
@@ -211,39 +217,39 @@ public:
     uint16_t HPeriodForScanline(uint16_t scanline) const;
 
 private:
-    void tickOnce(uint8_t clocks = 2);
-    void dispatchScanlineEvents();
-    void updateNextEvent();
-    void tickScanline();      // Called when H counter wraps
-    void updateHPeriod();     // Recompute hperiod_ for the current scanline
+  void tickOnce(uint8_t clocks = 2);
+  void dispatchScanlineEvents();
+  void updateNextEvent();
+  void tickScanline();  // Called when H counter wraps
+  void updateHPeriod(); // Recompute hperiod_ for the current scanline
 
-    Region   region_    = Region::NTSC;
-    bool     interlace_ = false;
-    bool interlaceInput_ = false;
-    uint16_t vdisp_     = 225;
+  Region region_ = Region::NTSC;
+  bool interlace_ = false;
+  bool interlaceInput_ = false;
+  uint16_t vdisp_ = 225;
 
-    uint16_t hcounter_  = 0;       // 0 .. hperiod_-1
-    uint16_t vcounter_  = 0;       // 0 .. vperiod_-1
-    bool     field_     = false;   // 0=even, 1=odd
-    uint16_t hperiod_   = kDotsPerLine;
-    uint16_t vperiod_   = kScanlinesNTSC;
-    uint16_t previousHPeriod_ = kDotsPerLine;
-    uint16_t previousVPeriod_ = kScanlinesNTSC;
-    uint16_t nextEventH_ = 12;
+  uint16_t hcounter_ = 0; // 0 .. hperiod_-1
+  uint16_t vcounter_ = 0; // 0 .. vperiod_-1
+  bool field_ = false;    // 0=even, 1=odd
+  uint16_t hperiod_ = kDotsPerLine;
+  uint16_t vperiod_ = kScanlinesNTSC;
+  uint16_t previousHPeriod_ = kDotsPerLine;
+  uint16_t previousVPeriod_ = kScanlinesNTSC;
+  uint16_t nextEventH_ = 12;
 
-    uint64_t masterClocksElapsed_ = 0;
-    uint64_t frameCount_ = 0;
-    uint16_t dramRefreshPosition_ = kDramRefreshPos;
-    uint16_t hdmaSetupPosition_ = 12;
-    bool hdmaSetupFired_ = false;
-    bool halfClockPending_ = false;
+  uint64_t masterClocksElapsed_ = 0;
+  uint64_t frameCount_ = 0;
+  uint16_t dramRefreshPosition_ = kDramRefreshPos;
+  uint16_t hdmaSetupPosition_ = 12;
+  bool hdmaSetupFired_ = false;
+  bool halfClockPending_ = false;
 
-    // Per-scanline event flags (reset on each new scanline)
-    bool dramRefreshFired_ = false;
-    bool hblankFired_      = false;
-    bool hdmaFired_        = false;
-    bool renderCycleFired_ = false;
-    bool nmiFired_         = false;
+  // Per-scanline event flags (reset on each new scanline)
+  bool dramRefreshFired_ = false;
+  bool hblankFired_ = false;
+  bool hdmaFired_ = false;
+  bool renderCycleFired_ = false;
+  bool nmiFired_ = false;
 
 };
 

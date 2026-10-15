@@ -138,31 +138,31 @@ public:
     bool IrqHold()       const noexcept { return irqHold_; }
 
 private:
-    void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod);
+  void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod);
 
-    // NMI state machine
-    bool nmiEnable_ = false;
-    bool nmiLine_ = false;       // NMI flag (returned by RDNMI)
-    bool nmiValid_ = false;      // Edge detector input (V >= vdisp)
-    bool nmiHold_ = false;       // 4-clock hold (protects RDNMI clear)
-    bool nmiTransition_ = false; // Pending NMI dispatch
+  // NMI state machine
+  bool nmiEnable_ = false;
+  bool nmiLine_ = false;       // NMI flag (returned by RDNMI)
+  bool nmiValid_ = false;      // Edge detector input (V >= vdisp)
+  bool nmiHold_ = false;       // 4-clock hold (protects RDNMI clear)
+  bool nmiTransition_ = false; // Pending NMI dispatch
 
-    // IRQ state machine
-    bool hirqEnable_ = false;
-    bool virqEnable_ = false;
-    bool irqEnable_ = false;     // hirq || virq
-    bool irqLine_ = false;       // IRQ flag (returned by TIMEUP)
-    bool irqValid_ = false;      // Edge detector input
-    bool irqHold_ = false;       // 4-clock hold (protects TIMEUP clear)
-    bool irqTransition_ = false; // Pending IRQ dispatch
+  // IRQ state machine
+  bool hirqEnable_ = false;
+  bool virqEnable_ = false;
+  bool irqEnable_ = false;     // hirq || virq
+  bool irqLine_ = false;       // IRQ flag (returned by TIMEUP)
+  bool irqValid_ = false;      // Edge detector input
+  bool irqHold_ = false;       // 4-clock hold (protects TIMEUP clear)
+  bool irqTransition_ = false; // Pending IRQ dispatch
 
-    // H/V timer targets
-    uint16_t htimeRaw_ = 0x1FF; // Raw 9-bit value from $4207/$4208
-    uint16_t htimeMc_ = 0;      // Converted to master clocks: (raw+1)<<2
-    uint16_t vtime_ = 0x1FF;    // Raw 9-bit value from $4209/$420A
+  // H/V timer targets
+  uint16_t htimeRaw_ = 0x1FF; // Raw 9-bit value from $4207/$4208
+  uint16_t htimeMc_ = 0;      // Converted to master clocks: (raw+1)<<2
+  uint16_t vtime_ = 0x1FF;    // Raw 9-bit value from $4209/$420A
 
-    // Lock
-    bool irqLock_ = false;
+  // Lock
+  bool irqLock_ = false;
 };
 
 } // namespace snes::core

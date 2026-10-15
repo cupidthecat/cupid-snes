@@ -404,19 +404,19 @@ void Emulator::InitSubsystems() {
 
     // IRQ/NMI condition polling (every ~4 master clocks)
     timing_.onIrqPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t) {
-        irq_.Poll(h, v, vdisp, timing_.PreviousHPeriod(), timing_.PreviousVPeriod());
-        autoJoypad_.Ports().BeamPosition(timing_.HDot(), v, vdisp - 1);
+      irq_.Poll(h, v, vdisp, timing_.PreviousHPeriod(), timing_.PreviousVPeriod());
+      autoJoypad_.Ports().BeamPosition(timing_.HDot(), v, vdisp - 1);
     };
 
     // Auto-joypad polling (every 128 master clocks)
     timing_.onJoypadPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp) {
-        autoJoypad_.Tick128(h, v, vdisp, (timing_.MasterClocksElapsed() & 255) == 0);
-        // Synchronize joy registers into CpuIoRegisters
-        cpuIo_.setJoy1(autoJoypad_.Joy1());
-        cpuIo_.setJoy2(autoJoypad_.Joy2());
-        cpuIo_.setJoy3(autoJoypad_.Joy3());
-        cpuIo_.setJoy4(autoJoypad_.Joy4());
-        cpuIo_.setAutoJoypadCounter(autoJoypad_.Counter());
+      autoJoypad_.Tick128(h, v, vdisp, (timing_.MasterClocksElapsed() & 255) == 0);
+      // Synchronize joy registers into CpuIoRegisters
+      cpuIo_.setJoy1(autoJoypad_.Joy1());
+      cpuIo_.setJoy2(autoJoypad_.Joy2());
+      cpuIo_.setJoy3(autoJoypad_.Joy3());
+      cpuIo_.setJoy4(autoJoypad_.Joy4());
+      cpuIo_.setAutoJoypadCounter(autoJoypad_.Counter());
     };
 
     // HBlank callback (not currently needed, but available)
@@ -637,7 +637,7 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
     // Several CPU bus phases can end within one sound clock. No audio state
     // changes until that clock edge, so avoid repeating the conversion there.
     if (elapsed < nextSmpMasterClock_)
-        return;
+      return;
     const auto smpTarget = elapsed * Smp::kClockFrequency / timing_.MasterClockHz();
     nextSmpMasterClock_ = ((smpTarget + 1) * timing_.MasterClockHz() + Smp::kClockFrequency - 1) /
                           Smp::kClockFrequency;

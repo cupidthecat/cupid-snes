@@ -44,10 +44,10 @@ void AutoJoypad::Reset() {
 // FrameBegin — reset for new frame
 
 void AutoJoypad::FrameBegin() {
-    // Scanline zero ends the previous polling sequence.
-    counter_ = 33;
-    autoLatch_ = false;
-    ports_.SetLatch(manualLatch_);
+  // Scanline zero ends the previous polling sequence.
+  counter_ = 33;
+  autoLatch_ = false;
+  ports_.SetLatch(manualLatch_);
 }
 
 // SetAutoJoypadPoll — $4200 NMITIMEN bit 0
@@ -56,8 +56,8 @@ void AutoJoypad::SetAutoJoypadPoll(bool enabled) {
     autoJoypadPoll_ = enabled;
 
     if (counter_ == 0) {
-        autoLatch_ = enabled;
-        ports_.SetLatch(manualLatch_ || autoLatch_);
+      autoLatch_ = enabled;
+      ports_.SetLatch(manualLatch_ || autoLatch_);
     }
 
     // Disabling automatic input during shifting ends the sequence.
@@ -90,53 +90,54 @@ uint16_t AutoJoypad::InputStateToSnesFormat(const InputState& input) {
 // Tick128 — 128-clock state machine step
 
 void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256) {
-    // Start condition: V = vdisp, 256-clock aligned, H ∈ [130, 384]
-    if (v == vdisp && aligned256 && h >= 130 && h <= 384) {
-        counter_ = 0;
+  // Start condition: V = vdisp, 256-clock aligned, H ∈ [130, 384]
+  if (v == vdisp && aligned256 && h >= 130 && h <= 384) {
+    counter_ = 0;
+  } else {
+    if (counter_ >= 33)
+      return;
+    counter_++;
+  }
+
+  // Counter 0: latch controllers and clear results when polling is enabled.
+  if (counter_ == 0) {
+    if (autoJoypadPoll_) {
+      autoLatch_ = true;
+      ports_.SetLatch(true);
+      // Clear shift registers at start of polling
+      joy1_ = joy2_ = joy3_ = joy4_ = 0;
+    }
+  }
+
+  if (counter_ == 1) {
+    autoLatch_ = false;
+    ports_.SetLatch(manualLatch_);
+  }
+
+  // Abort if disabled and not at counter 1
+  // Counter one always runs so the controller latch is released.
+  if (counter_ != 1 && !autoJoypadPoll_) {
+    counter_ = 33;
+    return;
+  }
+
+  // Counters 2-33: Read/shift 16 bits (one bit per 256 clocks)
+  //   Even counter: read serial data from controller shift register
+  //   Odd counter:  shift data into joy1-4 registers
+  //
+  // Both serial wires feed the four result registers.
+  if (counter_ >= 2) {
+    if ((counter_ & 1) == 0) {
+      port1Data_ = ports_.Read(0);
+      port2Data_ = ports_.Read(1);
     } else {
-        if (counter_ >= 33) return;
-        counter_++;
+      // Shift: push bit into joy registers
+      joy1_ = static_cast<uint16_t>((joy1_ << 1) | (port1Data_ & 1));
+      joy2_ = static_cast<uint16_t>((joy2_ << 1) | (port2Data_ & 1));
+      joy3_ = static_cast<uint16_t>((joy3_ << 1) | ((port1Data_ >> 1) & 1));
+      joy4_ = static_cast<uint16_t>((joy4_ << 1) | ((port2Data_ >> 1) & 1));
     }
-
-    // Counter 0: latch controllers and clear results when polling is enabled.
-    if (counter_ == 0) {
-        if (autoJoypadPoll_) {
-            autoLatch_ = true;
-            ports_.SetLatch(true);
-            // Clear shift registers at start of polling
-            joy1_ = joy2_ = joy3_ = joy4_ = 0;
-        }
-    }
-
-    if (counter_ == 1) {
-        autoLatch_ = false;
-        ports_.SetLatch(manualLatch_);
-    }
-
-    // Abort if disabled and not at counter 1
-    // Counter one always runs so the controller latch is released.
-    if (counter_ != 1 && !autoJoypadPoll_) {
-        counter_ = 33;
-        return;
-    }
-
-    // Counters 2-33: Read/shift 16 bits (one bit per 256 clocks)
-    //   Even counter: read serial data from controller shift register
-    //   Odd counter:  shift data into joy1-4 registers
-    //
-    // Both serial wires feed the four result registers.
-    if (counter_ >= 2) {
-        if ((counter_ & 1) == 0) {
-            port1Data_ = ports_.Read(0);
-            port2Data_ = ports_.Read(1);
-        } else {
-            // Shift: push bit into joy registers
-            joy1_ = static_cast<uint16_t>((joy1_ << 1) | (port1Data_ & 1));
-            joy2_ = static_cast<uint16_t>((joy2_ << 1) | (port2Data_ & 1));
-            joy3_ = static_cast<uint16_t>((joy3_ << 1) | ((port1Data_ >> 1) & 1));
-            joy4_ = static_cast<uint16_t>((joy4_ << 1) | ((port2Data_ >> 1) & 1));
-        }
-    }
+  }
 }
 
 } // namespace snes::core

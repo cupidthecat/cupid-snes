@@ -8979,7 +8979,7 @@ int main() {
             // 33 more ticks to complete (counter 1..33)
             // Use V != vdisp so we don't re-trigger
             for (int i = 0; i < 33; i++) {
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             }
 
             assert(aj.Counter() == 33);
@@ -9009,7 +9009,7 @@ int main() {
 
             aj.Tick128(256, 225, 225, true);
             for (int i = 0; i < 33; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
 
             uint16_t expected = 0x8000 | 0x1000 | 0x0010;  // B + Start + R
             assert(aj.Joy1() == expected);
@@ -9030,7 +9030,7 @@ int main() {
 
             aj.Tick128(256, 225, 225, true);
             for (int i = 0; i < 33; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
 
             assert(aj.Joy1() == 0);  // Port 1 empty
             uint16_t expected = 0x0040 | 0x0020;  // X + L
@@ -9075,13 +9075,13 @@ int main() {
 
             // Advance to counter=16 (mid-sequence)
             for (int i = 0; i < 16; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             assert(aj.Counter() == 16);
             assert(aj.IsPolling());
 
             // Advance to counter=33 (done)
             for (int i = 0; i < 17; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             assert(aj.Counter() == 33);
             assert(!aj.IsPolling());
             std::printf("  [27l] IsPolling busy flag passed\n");
@@ -9105,7 +9105,7 @@ int main() {
             // Frame 1: poll
             aj.Tick128(256, 225, 225, true);
             for (int i = 0; i < 33; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             assert(aj.Joy1() == 0x0080);  // A
 
             // FrameBegin resets counter
@@ -9117,7 +9117,7 @@ int main() {
             aj.Tick128(256, 225, 225, true);
             assert(aj.Counter() == 0);
             for (int i = 0; i < 33; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             assert(aj.Joy1() == 0x8000);  // B
             std::printf("  [27m] Re-trigger on next frame passed\n");
         }
@@ -9148,7 +9148,7 @@ int main() {
 
             // Wire Timing → AutoJoypad
             t.onJoypadPoll = [&aj, &t](uint16_t h, uint16_t v, uint16_t vdisp) {
-                aj.Tick128(h, v, vdisp, (t.MasterClocksElapsed() & 255) == 0);
+              aj.Tick128(h, v, vdisp, (t.MasterClocksElapsed() & 255) == 0);
             };
             t.onFrameBegin = [&aj]() {
                 aj.FrameBegin();
@@ -9204,7 +9204,7 @@ int main() {
 
             // Complete polling
             for (int i = 0; i < 33; i++)
-                aj.Tick128(500, 226, 225, true);
+              aj.Tick128(500, 226, 225, true);
             cpuIo.setAutoJoypadCounter(aj.Counter());
             hvbjoy = cpuIo.Read(0x4212, 0);
             assert(!(hvbjoy & 0x01));  // Done
