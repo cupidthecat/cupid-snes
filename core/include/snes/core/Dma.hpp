@@ -158,6 +158,10 @@ public:
   void SetClockCallback(std::function<void(uint32_t)> callback) {
     onClock_ = std::move(callback);
   }
+  // Both halves of a DMA read synchronize cartridge hardware; overhead does not.
+  void SetCoprocessorSyncCallback(std::function<void()> callback) {
+    onCoprocessorSync_ = std::move(callback);
+  }
   void SetClockQuery(std::function<uint64_t()> callback) {
     clockQuery_ = std::move(callback);
   }
@@ -263,6 +267,7 @@ private:
   uint32_t *cpuAddress_ = nullptr;
   uint8_t *cpuData_ = nullptr;
   std::function<void(uint32_t)> onClock_;
+  std::function<void()> onCoprocessorSync_;
   std::function<uint64_t()> clockQuery_;
   std::function<void()> onBoundary_;
   // DMA bus clocks since the last alignment, excluding CPU resumption stalls.
@@ -271,7 +276,7 @@ private:
   bool inDma_ = false;
   bool inHdma_ = false;
 
-  void Clock(uint32_t clocks);
+  void Clock(uint32_t clocks, bool synchronize = false);
   uint32_t AlignToDma();
   uint32_t ResumeCpu();
 

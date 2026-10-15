@@ -54,6 +54,69 @@ constexpr uint8_t Prefix(unsigned mode) { return mode ? uint8_t(0x3c + mode) : u
 int Signed8(uint16_t value) { return (value & 255) < 128 ? (value & 255) : int(value & 255) - 256; }
 int Signed16(uint16_t value) { return value < 32768 ? value : int(value) - 65536; }
 
+void CacheFillAndInternalRam() {
+  for (unsigned idlePhase = 1; idlePhase < 6; ++idlePhase) {
+    Fixture f;
+    f.Cache({0, 1});
+    f.chip.Advance(idlePhase);
+    f.Start(0);
+    // The stopped processor finishes its live six-clock idle before fetching.
+    f.chip.Advance(10 - idlePhase - 1);
+    Check(f.Running(), "GO retains the remainder of the stopped processor's idle interval");
+    f.chip.Advance(1);
+    Check(!f.Running(), "GO begins fetching when the current stopped idle completes");
+  }
+  for (bool fast : {false, true}) {
+    Fixture f;
+    f.chip.WriteCpu(0x3039, fast);
+    f.Reg(1, 0x100);
+    f.ram[0x100] = 0x34;
+    f.ram[0x101] = 0x12;
+    f.Cache({0x41, 0, 1}); // LDW R0,(R1); STOP.
+    f.Start(0);
+    const unsigned stopClock = 3 * (fast ? 1 : 2);
+    f.chip.Advance(stopClock - 1);
+    Check(f.Running(), "STOP follows the load's final pipeline fetch");
+    f.chip.Advance(1);
+    Check(!f.Running() && f.Reg(0) == 0x1234,
+          "Ordinary RAM loads synchronize pending writes without extra memory clocks");
+  }
+  for (bool fast : {false, true}) {
+    Fixture f;
+    f.chip.WriteCpu(0x3039, fast);
+    f.Program({0, 1}, 0);
+    f.Reg(14, 0x1234); // The independent ROM buffer is still busy at GO.
+    f.Start(0);
+    const unsigned stopClock = 16 * (fast ? 5 : 6) + (fast ? 1 : 2);
+    f.chip.Advance(stopClock - 1);
+    Check(f.Running(), "A cache fill waits for all sixteen bytes and the following fetch");
+    f.chip.Advance(1);
+    Check(!f.Running() && f.chip.CpuIrqPending(),
+          "Cache fills overlap the ROM buffer rather than delaying their first byte");
+  }
+  for (uint8_t bank : {0x60, 0x6f, 0x70, 0x71, 0x7f}) {
+    Fixture f;
+    f.chip.WriteCpu(0x303a, 8); // Cached/uncached RAM code needs no ROM grant.
+    f.chip.WriteCpu(0x3034, bank);
+    f.ram[0x2000] = 0xa0;
+    f.ram[0x2001] = 0x75;
+    f.ram[0x2002] = 0;
+    f.ram[0x2003] = 1;
+    f.Start(0x2000);
+    f.chip.Advance(100);
+    Check(!f.Running() && f.Reg(0) == 0x75,
+          "Every internal RAM bank decodes its mirrored storage independently of console windows");
+  }
+  Fixture bytes;
+  bytes.Program({0x42, 1}, 0);
+  bytes.Start(0);
+  bytes.chip.Advance(12);
+  bytes.chip.WriteCpu(0x3100, 0xa5);
+  bytes.chip.Advance(84);
+  Check(bytes.chip.ReadCpu(0x3100) == 0xa5 && bytes.chip.ReadCpu(0x3101) == 1,
+        "A cache fill samples each byte on its own bus edge before later CPU cache stores");
+}
+
 void RegistersAndMapping() {
     Fixture f(0x200000, 0x40000);
     for (size_t i = 0; i < f.rom.size(); ++i) f.rom[i] = uint8_t(i / 0x8000);
@@ -350,9 +413,10 @@ void RamInstructions() {
                 else f.Program({Prefix(mode), opcode, 0x83, 0, 1});
                 f.Run();
                 if (mode == 2) {
-                    const uint16_t expected = n == 15 ? 0x8002 : 0x5678;
-                    Check(f.ram[address] == uint8_t(expected) && f.ram[address ^ 1] == uint8_t(expected >> 8),
-                          "SM/SMS sample source register and write byte-paired RAM address");
+                  const uint16_t expected = n == 15 ? uint16_t(word ? 0x8004 : 0x8003) : 0x5678;
+                  Check(f.ram[address] == uint8_t(expected) &&
+                            f.ram[address ^ 1] == uint8_t(expected >> 8),
+                        "SM/SMS sample the source after consuming the address operands");
                 } else {
                     const uint16_t expected = !mode ? (word ? 0x0123 : 0xff83) : 0xabcd;
                     Check(f.Reg(n) == uint16_t(expected + (n == 15 ? 1 : 0)), "IBT/IWT/LM/LMS all register encodings and ALT aliases");
@@ -414,12 +478,12 @@ void RomBufferInstructions() {
     g.chip.WriteCpu(0x303a, 0);
     g.Reg(14, 0x8234);
     g.chip.Advance(100);
-    Check(g.chip.ReadCpu(0x3030) & 0x40, "ROM read remains pending while CPU owns ROM");
+    Check(!(g.chip.ReadCpu(0x3030) & 0x40),
+          "ROM busy clears when the countdown ends even while the data access waits for ownership");
     g.chip.WriteCpu(0x303a, 0x10);
-    g.chip.Advance(5);
-    Check(g.chip.ReadCpu(0x3030) & 0x40, "ROM buffer busy flag lasts the full memory latency");
-    g.chip.Advance(1);
-    Check(!(g.chip.ReadCpu(0x3030) & 0x40), "ROM buffer completion advances even while GSU is stopped");
+    g.Program({0xef, 0, 1});
+    g.Run();
+    Check(g.Reg(0) == 0x6b, "A granted buffered read resumes with its original address and data");
 }
 
 unsigned TileOffset(unsigned x, unsigned y, unsigned bpp, unsigned heightMode, unsigned base) {
@@ -534,12 +598,18 @@ void CacheAndSynchronization() {
     Fixture buffered;
     buffered.chip.WriteCpu(0x3039, 1); buffered.chip.WriteCpu(0x303a, 8);
     buffered.Reg(0, 0xaa); buffered.Reg(1, 0x1000);
-    buffered.Cache({0x3d, 0x31, 0, 1}); buffered.Start(0); buffered.chip.Advance(4);
-    Check(!buffered.Running() && buffered.ram[0x1000] == 0, "Buffered RAM write can outlive STOP");
+    buffered.Cache({0x3d, 0x31, 0, 1});
+    buffered.Start(0);
     buffered.chip.Advance(3);
-    Check(buffered.ram[0x1000] == 0, "Buffered RAM write is not visible one clock early");
+    Check(buffered.Running() && buffered.ram[0x1000] == 0,
+          "The store remains buffered before STOP enters the stopped idle");
     buffered.chip.Advance(1);
-    Check(buffered.ram[0x1000] == 0xaa, "Pending RAM write completes at its physical bus latency");
+    Check(!buffered.Running() && buffered.ram[0x1000] == 0xaa,
+          "The first stopped idle synchronizes the pending RAM write before CPU access");
+    buffered.chip.WriteCpu(0x701000, 0x99);
+    buffered.chip.Advance(32);
+    Check(buffered.ram[0x1000] == 0x99,
+          "A CPU store after STOP is not overwritten by a stale buffered GSU write");
 
     Fixture masked;
     masked.chip.WriteCpu(0x3037, 0x80); masked.Program({0, 1}); masked.Run();
@@ -551,7 +621,7 @@ void CacheAndSynchronization() {
     bus.ram[0x123] = 0x54;
     Check(bus.chip.ReadCpu(0x700123, 0x29) == 0x29, "CPU RAM read is open bus while GSU owns RAM");
     bus.chip.WriteCpu(0x700123, 0x99);
-    Check(bus.ram[0x123] == 0x54, "CPU writes cannot corrupt RAM assigned to the GSU");
+    Check(bus.ram[0x123] == 0x99, "CPU stores reach shared RAM while the GSU owns its read port");
     bus.chip.WriteCpu(0x303a, 0x10);
     bus.chip.WriteCpu(0x700123, 0x68);
     Check(bus.chip.ReadCpu(0x700123) == 0x68, "RAM ownership can be handed back while GSU continues");
@@ -629,9 +699,17 @@ void CacheBoundaryAndClockModes() {
 
 int main() {
     try {
-        RegistersAndMapping(); ExpandedCpuWindows(); ArithmeticMatrix(); TransfersAndSpecialOperations();
-        BranchesAndPipeline(); RamInstructions(); RomBufferInstructions();
-        PixelsAndScreenModes(); CacheAndSynchronization(); CacheBoundaryAndClockModes();
+      CacheFillAndInternalRam();
+      RegistersAndMapping();
+      ExpandedCpuWindows();
+      ArithmeticMatrix();
+      TransfersAndSpecialOperations();
+      BranchesAndPipeline();
+      RamInstructions();
+      RomBufferInstructions();
+      PixelsAndScreenModes();
+      CacheAndSynchronization();
+      CacheBoundaryAndClockModes();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "Super FX: %s\n", error.what());
         return 1;

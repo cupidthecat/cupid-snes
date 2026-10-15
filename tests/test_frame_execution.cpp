@@ -70,7 +70,7 @@ void BoundaryDelivery() {
             result.masterCycles * Smp::kHardwareClockFrequency / timing.MasterClockHz();
         Check(machine->GetSmp().CycleCount() == hardwareClocks / 2 &&
                   output.samples == (hardwareClocks / 2 + 4) / 32,
-              "Sound and cartridge devices reach the exact display deadline before delivery");
+              "Sound reaches the exact display deadline before delivery");
       }
     }
   }

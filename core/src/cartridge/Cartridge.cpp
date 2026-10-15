@@ -6,6 +6,7 @@
 
 #include "snes/core/Logging.hpp"
 #include "snes/core/Sdd1.hpp"
+#include "snes/core/Timing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -519,11 +520,18 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks) {
     if (sa1_) sa1_->Advance(masterClocks);
-    if (superFx_) superFx_->Advance(masterClocks);
+    if (superFx_) {
+      const auto clocks = uint64_t(masterClocks) * SuperFx::ClockFrequency + superFxClockRemainder_;
+      superFxClockRemainder_ = static_cast<uint32_t>(clocks % masterClockHz_);
+      superFx_->Advance(clocks / masterClockHz_);
+    }
 }
 
 void Cartridge::SetPal(bool pal) {
-    if (sa1_) sa1_->SetPal(pal);
+  masterClockHz_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+  superFxClockRemainder_ = 0;
+  if (sa1_)
+    sa1_->SetPal(pal);
 }
 
 bool Cartridge::CpuIrqPending() const noexcept {

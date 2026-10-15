@@ -57,6 +57,11 @@ public:
     void SetBeforeCycleCallback(std::function<void(uint32_t)> callback) {
       beforeCycle_ = std::move(callback);
     }
+    // Cartridge clocks synchronize before reads and writes. Idle cycles and
+    // the trailing half of a read retain their clock debt until the next edge.
+    void SetCoprocessorSyncCallback(std::function<void()> callback) {
+      onCoprocessorSync_ = std::move(callback);
+    }
 
     // Release the previous access's interrupt lock after arbitration and the
     // leading clocks, immediately before accessing the device.
@@ -132,6 +137,7 @@ private:
   AluStepCallback onAluStep_;
   std::function<void(uint32_t)> onClock_;
   std::function<void(uint32_t)> beforeCycle_;
+  std::function<void()> onCoprocessorSync_;
   std::function<void()> onBusPhase_;
   std::function<bool()> onInterruptPoll_;
 };

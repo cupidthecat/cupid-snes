@@ -123,6 +123,8 @@ uint8_t SnesCpu::read(uint32_t address) {
       beforeCycle_(speed);
     regs().mar = address & 0x00ffffff;
     addClocks(speed - 4);
+    if (onCoprocessorSync_)
+      onCoprocessorSync_();
     if (onBusPhase_)
       onBusPhase_();
     uint8_t data = bus_.ReadCpu(address);
@@ -143,6 +145,8 @@ void SnesCpu::write(uint32_t address, uint8_t data) {
     if (beforeCycle_) beforeCycle_(speed);
     regs().mar = address & 0x00ffffff;
     addClocks(speed);
+    if (onCoprocessorSync_)
+      onCoprocessorSync_();
     if (onBusPhase_)
       onBusPhase_();
     bus_.Write(address, regs().mdr = data);

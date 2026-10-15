@@ -117,6 +117,101 @@ void Sa1Expansion() {
     Check(processor.ReadSa1(0xc01234) == 0x62, "Processor reset preserves the attached expansion");
 }
 
+void SuperFxOscillator() {
+  constexpr uint64_t crystal = 21'440'000;
+  for (bool pal : {false, true}) {
+    const uint64_t masterHz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+    for (bool fast : {false, true}) {
+      const uint64_t nativeClocks = 129 * (fast ? 1 : 2);
+      const auto deadline = (nativeClocks * masterHz + crystal - 1) / crystal;
+      for (bool singleClocks : {false, true}) {
+        auto cartridge = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+        Check(cartridge.has_value(), "The cartridge oscillator fixture loads");
+        cartridge->SetPal(pal);
+        // The initial pipeline NOP plus 127 cached NOPs precede STOP.
+        for (unsigned byte = 0; byte < 512; ++byte)
+          cartridge->Write(0x3100 + byte, byte == 127 ? 0 : 1);
+        cartridge->Write(0x3039, fast);
+        cartridge->Write(0x301e, 0);
+        cartridge->Write(0x301f, 0);
+        if (singleClocks) {
+          for (uint64_t clock = 1; clock < deadline; ++clock) {
+            cartridge->AdvanceHardware(1);
+            Check(!cartridge->CpuIrqPending(), "The cartridge crystal never completes STOP early");
+          }
+        } else {
+          cartridge->AdvanceHardware(static_cast<uint32_t>(deadline - 1));
+          Check(!cartridge->CpuIrqPending(),
+                "The regional clock conversion retains fractional clocks");
+        }
+        cartridge->AdvanceHardware(1);
+        Check(cartridge->CpuIrqPending(),
+              "Both television regions reach STOP at the cartridge's own oscillator deadline");
+      }
+    }
+  }
+}
+
+void CoprocessorBusSynchronization() {
+  for (bool write : {false, true}) {
+    auto machine = Machine(Rom(0x20, 0x15));
+    auto &bus = machine->GetBus();
+    bus.Write(0x3039, 1);
+    bus.Write(0x303a, 8);
+    bus.Write(0x3000, 0x55);
+    bus.Write(0x3002, 0);
+    bus.Write(0x3003, 1);
+    const uint8_t program[]{0x3d, 0x31, 0, 1}; // STB (R1),R0; STOP.
+    for (unsigned byte = 0; byte < 16; ++byte)
+      bus.Write(0x3100 + byte, byte < sizeof(program) ? program[byte] : 1);
+    bus.Write(0x301e, 0);
+    bus.Write(0x301f, 0);
+    for (unsigned cycle = 0; cycle < 100; ++cycle)
+      machine->GetCpu()->idle();
+    Check(machine->LoadedCartridge()->SramData()[0x100] == 0 &&
+              !machine->LoadedCartridge()->CpuIrqPending(),
+          "Idle cycles retain coprocessor clock debt until a CPU bus synchronization");
+    if (write)
+      machine->GetCpu()->write(0x7e0100, 0);
+    else
+      machine->GetCpu()->read(0x7e0100);
+    Check(
+        machine->LoadedCartridge()->SramData()[0x100] == 0x55 &&
+            machine->LoadedCartridge()->CpuIrqPending(),
+        "CPU reads and writes synchronize all preceding coprocessor clocks before their bus edge");
+  }
+}
+
+void SuperFxBufferedBus() {
+  for (bool pal : {false, true}) {
+    auto cartridge = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+    Check(cartridge.has_value(), "The shared RAM timing fixture loads");
+    cartridge->SetPal(pal);
+    cartridge->Write(0x3039, 1);
+    cartridge->Write(0x303a, 8);
+    cartridge->Write(0x3000, 0xaa);
+    cartridge->Write(0x3002, 0);
+    cartridge->Write(0x3003, 1);
+    const uint8_t program[]{0x3d, 0x31, 0, 1};
+    for (unsigned byte = 0; byte < 16; ++byte)
+      cartridge->Write(0x3100 + byte, byte < sizeof(program) ? program[byte] : 1);
+    cartridge->Write(0x301e, 0);
+    cartridge->Write(0x301f, 0);
+    const uint64_t masterHz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+    const auto deadline = (4 * masterHz + SuperFx::ClockFrequency - 1) / SuperFx::ClockFrequency;
+    cartridge->AdvanceHardware(static_cast<uint32_t>(deadline - 1));
+    Check(!cartridge->CpuIrqPending() && cartridge->SramData()[0x100] == 0,
+          "The shared store stays buffered before STOP reaches its native step");
+    cartridge->AdvanceHardware(1);
+    Check(cartridge->CpuIrqPending() && cartridge->Read(0x700100) == 0xaa,
+          "CPU RAM reads after STOP see the store completed by the first stopped idle");
+    cartridge->Write(0x700100, 0x99);
+    cartridge->AdvanceHardware(64);
+    Check(cartridge->Read(0x700100) == 0x99,
+          "Later cartridge clocks preserve the CPU store after the handoff");
+  }
+}
+
 void SuperFxIntegration() {
     auto rom = Rom(0x20, 0x15);
     const uint8_t program[]{0xf0, 0xef, 0xbe, 0xf1, 0x00, 0x01, 0x31, 0x00, 0x01};
@@ -210,7 +305,17 @@ void SuperFxExtendedBoards() {
 }
 
 int main() {
-    try { Sa1Integration(); Sa1Expansion(); SuperFxIntegration(); SuperFxExtendedBoards(); }
-    catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
+  try {
+    Sa1Integration();
+    Sa1Expansion();
+    SuperFxOscillator();
+    CoprocessorBusSynchronization();
+    SuperFxBufferedBus();
+    SuperFxIntegration();
+    SuperFxExtendedBoards();
+  } catch (const std::exception &error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
+  }
     std::puts("Cartridge processor bus, scheduling, IRQ and save integration checks passed");
 }

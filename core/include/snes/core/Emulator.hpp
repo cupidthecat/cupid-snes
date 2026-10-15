@@ -137,6 +137,7 @@ private:
     void InitSubsystems();
     void AdvanceClocks(uint32_t clocks);
     void SynchronizeDevices();
+    void SynchronizeCoprocessors();
     void StopFrameExecution();
     uint32_t ResumeCpuInstruction();
     void SuspendFrame();
@@ -183,7 +184,7 @@ private:
     std::vector<int16_t> audioOverflow_;
     bool collectingAudio_ = false;
     uint64_t nextSmpMasterClock_ = 0;
-    uint64_t devicesSyncedClock_ = 0;
+    uint64_t coprocessorsSyncedClock_ = 0;
     AudioBuffer audioOutputBuffer_;
     VideoFrame videoOutputFrame_;
 

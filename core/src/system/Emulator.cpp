@@ -11,6 +11,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -303,6 +304,7 @@ void Emulator::InitSubsystems() {
     // Queue DMA for arbitration at a subsequent CPU bus-cycle boundary.
     cpuIo_.SetDmaEnableCallback([this](uint8_t channels) { dma_.EnableDma(channels); });
     dma_.SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
+    dma_.SetCoprocessorSyncCallback([this]() { SynchronizeCoprocessors(); });
     dma_.SetClockQuery([this]() { return timing_.MasterClocksElapsed(); });
     dma_.SetCpuBusLatches(cpu_->regs().mar, cpu_->regs().mdr);
     dma_.SetBoundaryCallback([this]() { ServicePendingHdma(); });
@@ -484,7 +486,7 @@ void Emulator::InitSubsystems() {
     audioOverflow_.clear();
     collectingAudio_ = false;
     nextSmpMasterClock_ = 0;
-    devicesSyncedClock_ = 0;
+    coprocessorsSyncedClock_ = 0;
 
     // Set up DSP audio output buffer
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
@@ -494,6 +496,7 @@ void Emulator::InitSubsystems() {
     cpu_->resumeStep_ = [this]() { return ResumeCpuInstruction(); };
     cpu_->discardStep_ = [this]() { StopFrameExecution(); };
     cpu_->SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
+    cpu_->SetCoprocessorSyncCallback([this]() { SynchronizeCoprocessors(); });
     cpu_->SetBeforeCycleCallback([this](uint32_t clocks) { BeginCpuCycle(clocks); });
     cpu_->SetBusPhaseCallback([this]() { irq_.SetIrqLock(false); });
 
@@ -653,11 +656,19 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
     SynchronizeDevices();
 }
 
+void Emulator::SynchronizeCoprocessors() {
+  const auto elapsed = timing_.MasterClocksElapsed();
+  auto delta = elapsed - coprocessorsSyncedClock_;
+  coprocessorsSyncedClock_ = elapsed;
+  while (delta > std::numeric_limits<uint32_t>::max()) {
+    cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max());
+    delta -= std::numeric_limits<uint32_t>::max();
+  }
+  cartridge_->AdvanceHardware(static_cast<uint32_t>(delta));
+}
+
 void Emulator::SynchronizeDevices() {
   const auto elapsed = timing_.MasterClocksElapsed();
-  const auto delta = elapsed - devicesSyncedClock_;
-  devicesSyncedClock_ = elapsed;
-  cartridge_->AdvanceHardware(static_cast<uint32_t>(delta));
   // Several CPU bus phases can end within one sound clock. No audio state
   // changes until that clock edge, so avoid repeating the conversion there.
   if (elapsed < nextSmpMasterClock_)

@@ -33,10 +33,12 @@ struct RunningGuard {
 };
 } // namespace
 
-void DmaController::Clock(uint32_t clocks) {
+void DmaController::Clock(uint32_t clocks, bool synchronize) {
   dmaClocks_ += clocks;
   if (onClock_)
     onClock_(clocks);
+  if (synchronize && onCoprocessorSync_)
+    onCoprocessorSync_();
 }
 
 uint32_t DmaController::AlignToDma() {
@@ -306,12 +308,12 @@ bool DmaController::ValidWramTransfer(uint8_t bBusAddr, uint32_t aBusAddr) noexc
 uint8_t DmaController::ReadA(uint32_t address) {
   if (cpuAddress_)
     *cpuAddress_ = address;
-  Clock(4);
+  Clock(4, true);
   const auto value = ValidA(address) ? bus_->Read(address) : uint8_t(0);
   bus_->SetOpenBus(value);
   if (cpuData_)
     *cpuData_ = value;
-  Clock(4);
+  Clock(4, true);
   return value;
 }
 
@@ -326,12 +328,12 @@ void DmaController::WriteA(uint32_t address, uint8_t data) {
 // B-bus read — reads from $2100 | address (8-bit B-bus address)
 // If !valid (WRAM-to-WRAM), returns 0x00.
 uint8_t DmaController::ReadB(uint8_t address, bool valid) {
-  Clock(4);
+  Clock(4, true);
   const auto value = valid ? bus_->Read(0x2100 | address) : uint8_t(0);
   bus_->SetOpenBus(value);
   if (cpuData_)
     *cpuData_ = value;
-  Clock(4);
+  Clock(4, true);
   return value;
 }
 
@@ -391,12 +393,12 @@ void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
     // Direction 0: A→B (CPU → PPU / register)
     uint8_t data;
     if (source) {
-      Clock(4);
+      Clock(4, true);
       data = *source;
       bus_->SetOpenBus(data);
       if (cpuData_)
         *cpuData_ = data;
-      Clock(4);
+      Clock(4, true);
     } else {
       data = ReadA(addressA);
     }
