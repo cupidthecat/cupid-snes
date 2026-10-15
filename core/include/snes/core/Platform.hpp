@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "snes/core/AudioTiming.hpp"
+
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -17,8 +19,8 @@ struct VideoFrame {
 };
 
 struct AudioBuffer {
-    uint32_t sampleRate = 32000;
-    std::vector<float> interleavedStereo;
+  uint32_t sampleRate = AudioTiming::SampleRate;
+  std::vector<float> interleavedStereo;
 };
 
 struct InputState {

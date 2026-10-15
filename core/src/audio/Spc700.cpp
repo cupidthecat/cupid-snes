@@ -376,46 +376,49 @@ Spc700::Routine Spc700::InstrIndirectIndexedWrite(uint8_t data, uint8_t index) {
 
 // Indirect X: op A, (X)
 Spc700::Routine Spc700::InstrIndirectXRead(AlgOp op) {
-    co_await WaitCycle();
-    uint8_t val = co_await Load(r.x);
-    r.a = (this->*op)(r.a, val);
+  (void)co_await ReadCycleAt(r.pc);
+  uint8_t val = co_await Load(r.x);
+  r.a = (this->*op)(r.a, val);
 }
 
 // Indirect X write: MOV (X), A
 Spc700::Routine Spc700::InstrIndirectXWrite(uint8_t data) {
-    co_await WaitCycle();
-    (void)co_await Load(r.x); // dummy read
-    co_await Store(r.x, data);
+  (void)co_await ReadCycleAt(r.pc);
+  (void)co_await Load(r.x); // dummy read
+  co_await Store(r.x, data);
 }
 
 // MOV A,(X++)
 Spc700::Routine Spc700::InstrIndirectXIncrementRead(uint8_t& target) {
-    co_await WaitCycle();
-    target = AlgLD(target, co_await Load(r.x++));
+  (void)co_await ReadCycleAt(r.pc);
+  target = co_await Load(r.x++);
+  co_await WaitCycle();
+  target = AlgLD(target, target);
 }
 
 // MOV (X++),A
 Spc700::Routine Spc700::InstrIndirectXIncrementWrite(uint8_t data) {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await Store(r.x++, data);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  co_await Store(r.x++, data);
 }
 
 // CMP (X),(Y)
 Spc700::Routine Spc700::InstrIndirectXCompareIndirectY(AlgOp op) {
-    co_await WaitCycle();
-    uint8_t yVal = co_await Load(r.y);
-    uint8_t xVal = co_await Load(r.x);
-    (this->*op)(xVal, yVal);
+  (void)co_await ReadCycleAt(r.pc);
+  uint8_t yVal = co_await Load(r.y);
+  uint8_t xVal = co_await Load(r.x);
+  (this->*op)(xVal, yVal);
+  co_await WaitCycle();
 }
 
 // op (X)=(Y) — e.g. ADC (X)=(Y), OR (X)=(Y)
 Spc700::Routine Spc700::InstrIndirectXWriteIndirectY(AlgOp op) {
-    co_await WaitCycle();
-    uint8_t yVal = co_await Load(r.y);
-    uint8_t xVal = co_await Load(r.x);
-    xVal = (this->*op)(xVal, yVal);
-    co_await Store(r.x, xVal);
+  (void)co_await ReadCycleAt(r.pc);
+  uint8_t yVal = co_await Load(r.y);
+  uint8_t xVal = co_await Load(r.x);
+  xVal = (this->*op)(xVal, yVal);
+  co_await Store(r.x, xVal);
 }
 
 // Direct-Direct, Direct-Immediate instruction groups
@@ -427,6 +430,7 @@ Spc700::Routine Spc700::InstrDirectDirectCompare(AlgOp op) {
     uint8_t dstDp = co_await Fetch();
     uint8_t dstVal = co_await Load(dstDp);
     (this->*op)(dstVal, srcVal);
+    co_await WaitCycle();
 }
 
 // op dp, dp (e.g. ADC dp,dp)
@@ -453,6 +457,7 @@ Spc700::Routine Spc700::InstrDirectImmediateCompare(AlgOp op) {
     uint8_t dp = co_await Fetch();
     uint8_t val = co_await Load(dp);
     (this->*op)(val, imm);
+    co_await WaitCycle();
 }
 
 // op dp, #imm (e.g. ADC dp,#imm)
@@ -578,11 +583,11 @@ Spc700::Routine Spc700::InstrTestSetBitsAbsolute(bool set) {
     uint8_t hi = co_await Fetch();
     uint16_t addr = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
     uint8_t val = co_await ReadCycleAt(addr);
-    (void)co_await ReadCycleAt(addr); // dummy read
     // Flags: N/Z set from (A - val) (like CMP)
     uint8_t diff = static_cast<uint8_t>(r.a - val);
     r.p.z = diff == 0;
     r.p.n = (diff & 0x80) != 0;
+    (void)co_await ReadCycleAt(addr); // dummy read
     // Modify memory
     if (set) val |= r.a; else val &= ~r.a;
     co_await WriteCycleAt(addr, val);
@@ -650,13 +655,14 @@ Spc700::Routine Spc700::InstrBranchNotDirectDecrement() {
 
 // DBNZ Y, rel
 Spc700::Routine Spc700::InstrBranchNotYDecrement() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    uint8_t offset = co_await Fetch();
-    if (--r.y == 0) co_return;
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.pc += static_cast<int8_t>(offset);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  uint8_t offset = co_await Fetch();
+  if (--r.y == 0)
+    co_return;
+  co_await WaitCycle();
+  co_await WaitCycle();
+  r.pc += static_cast<int8_t>(offset);
 }
 
 // Flow control
@@ -685,15 +691,15 @@ Spc700::Routine Spc700::InstrCallPage() {
 
 // TCALL n — vector at $FFDE - (n * 2)
 Spc700::Routine Spc700::InstrCallTable(uint8_t vector) {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await Push(static_cast<uint8_t>(r.pc >> 8));
-    co_await Push(static_cast<uint8_t>(r.pc));
-    co_await WaitCycle();
-    uint16_t vecAddr = static_cast<uint16_t>(0xFFDE - (vector << 1));
-    uint8_t lo = co_await ReadCycleAt(vecAddr);
-    uint8_t hi = co_await ReadCycleAt(static_cast<uint16_t>(vecAddr + 1));
-    r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  co_await Push(static_cast<uint8_t>(r.pc >> 8));
+  co_await Push(static_cast<uint8_t>(r.pc));
+  co_await WaitCycle();
+  uint16_t vecAddr = static_cast<uint16_t>(0xFFDE - (vector << 1));
+  uint8_t lo = co_await ReadCycleAt(vecAddr);
+  uint8_t hi = co_await ReadCycleAt(static_cast<uint16_t>(vecAddr + 1));
+  r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
 }
 
 // JMP abs
@@ -716,136 +722,138 @@ Spc700::Routine Spc700::InstrJumpIndirectX() {
 
 // RET
 Spc700::Routine Spc700::InstrReturnSubroutine() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    uint8_t lo = co_await Pull();
-    uint8_t hi = co_await Pull();
-    r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  uint8_t lo = co_await Pull();
+  uint8_t hi = co_await Pull();
+  r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
 }
 
 // RETI
 Spc700::Routine Spc700::InstrReturnInterrupt() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.p.Unpack(co_await Pull());
-    uint8_t lo = co_await Pull();
-    uint8_t hi = co_await Pull();
-    r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  r.p.Unpack(co_await Pull());
+  uint8_t lo = co_await Pull();
+  uint8_t hi = co_await Pull();
+  r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
 }
 
 // BRK
 Spc700::Routine Spc700::InstrBreak() {
-    uint8_t lo = co_await ReadCycleAt(0xFFDE);
-    uint8_t hi = co_await ReadCycleAt(0xFFDF);
-    co_await WaitCycle();
-    co_await Push(static_cast<uint8_t>(r.pc >> 8));
-    co_await Push(static_cast<uint8_t>(r.pc));
-    co_await Push(r.p.Pack());
-    co_await WaitCycle();
-    r.p.i = false;
-    r.p.b = true;
-    r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await Push(static_cast<uint8_t>(r.pc >> 8));
+  co_await Push(static_cast<uint8_t>(r.pc));
+  co_await Push(r.p.Pack());
+  co_await WaitCycle();
+  uint8_t lo = co_await ReadCycleAt(0xFFDE);
+  uint8_t hi = co_await ReadCycleAt(0xFFDF);
+  r.pc = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+  r.p.i = false;
+  r.p.b = true;
 }
 
 // Register transfer
 
 Spc700::Routine Spc700::InstrTransfer(uint8_t from, uint8_t& to) {
-    co_await WaitCycle();
-    to = from;
-    // No flag changes if target is SP
-    if (&to != &r.s) {
-        r.p.z = to == 0;
-        r.p.n = (to & 0x80) != 0;
-    }
+  (void)co_await ReadCycleAt(r.pc);
+  to = from;
+  // No flag changes if target is SP
+  if (&to != &r.s) {
+    r.p.z = to == 0;
+    r.p.n = (to & 0x80) != 0;
+  }
 }
 
 // Push / Pull
 
 Spc700::Routine Spc700::InstrPush(uint8_t data) {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await Push(data);
+  (void)co_await ReadCycleAt(r.pc);
+  co_await Push(data);
+  co_await WaitCycle();
 }
 
 Spc700::Routine Spc700::InstrPull(uint8_t& target) {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    target = co_await Pull();
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  target = co_await Pull();
 }
 
 Spc700::Routine Spc700::InstrPushP() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await Push(r.p.Pack());
+  (void)co_await ReadCycleAt(r.pc);
+  co_await Push(r.p.Pack());
+  co_await WaitCycle();
 }
 
 Spc700::Routine Spc700::InstrPullP() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.p.Unpack(co_await Pull());
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  r.p.Unpack(co_await Pull());
 }
 
 // Flag manipulation
 
 Spc700::Routine Spc700::InstrFlagSet(bool& flag, bool value) {
+  (void)co_await ReadCycleAt(r.pc);
+  if (&flag == &r.p.i)
     co_await WaitCycle();
-    co_await WaitCycle();
-    flag = value;
+  flag = value;
 }
 
 Spc700::Routine Spc700::InstrOverflowClear() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.p.h = false;
-    r.p.v = false;
+  (void)co_await ReadCycleAt(r.pc);
+  r.p.h = false;
+  r.p.v = false;
 }
 
 Spc700::Routine Spc700::InstrComplementCarry() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.p.c = !r.p.c;
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  r.p.c = !r.p.c;
 }
 
 // Implied register single-operand modify
 
 Spc700::Routine Spc700::InstrImpliedModify(ModOp op, uint8_t& target) {
-    co_await WaitCycle();
-    target = (this->*op)(target);
+  (void)co_await ReadCycleAt(r.pc);
+  target = (this->*op)(target);
 }
 
 // Special instructions
 
 // MUL YA — Y*A → YA (16-bit result), flags on Y
 Spc700::Routine Spc700::InstrMultiply() {
+  (void)co_await ReadCycleAt(r.pc);
+  for (int i = 0; i < 7; i++)
     co_await WaitCycle();
-    for (int i = 0; i < 8; i++) co_await WaitCycle();
-    uint16_t result = static_cast<uint16_t>(r.y) * static_cast<uint16_t>(r.a);
-    r.setYA(result);
-    r.p.z = r.y == 0;
-    r.p.n = (r.y & 0x80) != 0;
+  uint16_t result = static_cast<uint16_t>(r.y) * static_cast<uint16_t>(r.a);
+  r.setYA(result);
+  r.p.z = r.y == 0;
+  r.p.n = (r.y & 0x80) != 0;
 }
 
 // DIV YA,X — YA / X → A (quotient), Y (remainder)
 Spc700::Routine Spc700::InstrDivide() {
+  (void)co_await ReadCycleAt(r.pc);
+  for (int i = 0; i < 10; i++)
     co_await WaitCycle();
-    for (int i = 0; i < 11; i++) co_await WaitCycle();
 
-    // Save original values for overflow detection
-    uint16_t ya = r.ya();
-    uint8_t x = r.x;
+  // Save original values for overflow detection
+  uint16_t ya = r.ya();
+  uint8_t x = r.x;
 
-    r.p.h = ((r.y & 0x0F) >= (r.x & 0x0F));  // half-carry heuristic
-    r.p.v = r.y >= r.x;  // overflow if Y >= X
+  r.p.h = ((r.y & 0x0F) >= (r.x & 0x0F)); // half-carry heuristic
+  r.p.v = r.y >= r.x;                     // overflow if Y >= X
 
-    if (r.y < (r.x << 1)) {
-        // Normal division
-        r.a = static_cast<uint8_t>(ya / x);
-        r.y = static_cast<uint8_t>(ya % x);
-    } else {
-      // Overflow case.
-      r.a = static_cast<uint8_t>(255 - (ya - (static_cast<uint16_t>(x) << 9)) / (256 - x));
-      r.y = static_cast<uint8_t>(x + (ya - (static_cast<uint16_t>(x) << 9)) % (256 - x));
-    }
+  if (r.y < (r.x << 1)) {
+    // Normal division
+    r.a = static_cast<uint8_t>(ya / x);
+    r.y = static_cast<uint8_t>(ya % x);
+  } else {
+    // Overflow case.
+    r.a = static_cast<uint8_t>(255 - (ya - (static_cast<uint16_t>(x) << 9)) / (256 - x));
+    r.y = static_cast<uint8_t>(x + (ya - (static_cast<uint16_t>(x) << 9)) % (256 - x));
+  }
 
     r.p.z = r.a == 0;
     r.p.n = (r.a & 0x80) != 0;
@@ -853,9 +861,12 @@ Spc700::Routine Spc700::InstrDivide() {
 
 // DAA — BCD adjust after addition
 Spc700::Routine Spc700::InstrDecimalAdjustAdd() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    if (r.p.c || r.a > 0x99) { r.a += 0x60; r.p.c = true; }
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  if (r.p.c || r.a > 0x99) {
+    r.a += 0x60;
+    r.p.c = true;
+  }
     if (r.p.h || (r.a & 0x0F) > 0x09) { r.a += 0x06; }
     r.p.z = r.a == 0;
     r.p.n = (r.a & 0x80) != 0;
@@ -863,9 +874,12 @@ Spc700::Routine Spc700::InstrDecimalAdjustAdd() {
 
 // DAS — BCD adjust after subtraction
 Spc700::Routine Spc700::InstrDecimalAdjustSub() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    if (!r.p.c || r.a > 0x99) { r.a -= 0x60; r.p.c = false; }
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  if (!r.p.c || r.a > 0x99) {
+    r.a -= 0x60;
+    r.p.c = false;
+  }
     if (!r.p.h || (r.a & 0x0F) > 0x09) { r.a -= 0x06; }
     r.p.z = r.a == 0;
     r.p.n = (r.a & 0x80) != 0;
@@ -873,17 +887,17 @@ Spc700::Routine Spc700::InstrDecimalAdjustSub() {
 
 // XCN — swap nibbles of A
 Spc700::Routine Spc700::InstrExchangeNibble() {
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await WaitCycle();
-    co_await WaitCycle();
-    r.a = static_cast<uint8_t>((r.a >> 4) | (r.a << 4));
-    r.p.z = r.a == 0;
-    r.p.n = (r.a & 0x80) != 0;
+  (void)co_await ReadCycleAt(r.pc);
+  co_await WaitCycle();
+  co_await WaitCycle();
+  co_await WaitCycle();
+  r.a = static_cast<uint8_t>((r.a >> 4) | (r.a << 4));
+  r.p.z = r.a == 0;
+  r.p.n = (r.a & 0x80) != 0;
 }
 
 Spc700::Routine Spc700::InstrNoOperation() {
-    co_await WaitCycle();
+  (void)co_await ReadCycleAt(r.pc);
 }
 
 Spc700::Routine Spc700::InstrSleep() {
@@ -1246,11 +1260,9 @@ Spc700::Routine Spc700::ExecuteInstructions() {
     case 0xE3: co_await InstrBranchBit(7, true); break;
     case 0xE4: co_await InstrDirectRead(&Spc700::AlgLD, r.a); break;  // MOV A,dp
     case 0xE5: co_await InstrAbsoluteRead(&Spc700::AlgLD, r.a); break;  // MOV A,abs
-    case 0xE6: { // MOV A,(X)
-        co_await WaitCycle();
-        r.a = AlgLD(r.a, co_await Load(r.x));
-        break;
-    }
+    case 0xE6:
+      co_await InstrIndirectXRead(&Spc700::AlgLD);
+      break;                                                                   // MOV A,(X)
     case 0xE7: co_await InstrIndexedIndirectRead(&Spc700::AlgLD, r.x); break;  // MOV A,[dp+X]
     case 0xE8: co_await InstrImmediateRead(&Spc700::AlgLD, r.a); break;  // MOV A,#imm
     case 0xE9: co_await InstrAbsoluteRead(&Spc700::AlgLD, r.x); break;  // MOV X,abs

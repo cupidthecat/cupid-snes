@@ -533,7 +533,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
         }
         if (audioOutput_) {
             auto& audio = audioOutputBuffer_;
-            audio.sampleRate = 32000;
+            audio.sampleRate = AudioTiming::SampleRate;
             audio.interleavedStereo.clear();
             audioOutput_->Submit(audio);
         }
@@ -576,7 +576,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
     // Submit audio (convert int16_t → float)
     if (audioOutput_) {
         auto& audio = audioOutputBuffer_;
-        audio.sampleRate = 32000;
+        audio.sampleRate = AudioTiming::SampleRate;
         audio.interleavedStereo.clear();
         const int samples = dsp_.SamplesWritten();
         audio.interleavedStereo.reserve(audioOverflow_.size() + static_cast<size_t>(samples) * 2);
@@ -652,12 +652,12 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
         // must not change PCM that has already played. Use the DSP's sample
         // clock so NTSC, PAL and intervals spanning frame boundaries agree.
         for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
-            const auto pcm = msu1_->NextSample();
-            for (int channel = 0; channel < 2; ++channel) {
-                const int index = sample * 2 + channel;
-                audioBuf_[index] = static_cast<int16_t>(
-                    std::clamp(int{audioBuf_[index]} + pcm[channel], -32768, 32767));
-            }
+          const auto pcm = msu1_->NextSample(AudioTiming::SampleRate);
+          for (int channel = 0; channel < 2; ++channel) {
+            const int index = sample * 2 + channel;
+            audioBuf_[index] = static_cast<int16_t>(
+                std::clamp(int{audioBuf_[index]} + pcm[channel], -32768, 32767));
+          }
         }
     }
     // A single DMA operation can cross several fields before StepFrame returns.

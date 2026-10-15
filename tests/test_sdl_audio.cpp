@@ -21,7 +21,7 @@ void Expect(bool condition, const char* message) {
 
 AudioBuffer Tone(int frames) {
     AudioBuffer buffer;
-    buffer.sampleRate = 32000;
+    buffer.sampleRate = snes::core::AudioTiming::SampleRate;
     for (int i = 0; i < frames; ++i) {
         const float sample = (i % 32 < 16) ? 0.25f : -0.25f;
         buffer.interleavedStereo.push_back(sample);
@@ -33,15 +33,16 @@ AudioBuffer Tone(int frames) {
 void QueuePreservesInput() {
     SdlAudioOutput audio;
     Expect(audio.NeedsSamples(), "an empty queue requests an emulated frame");
-    audio.Submit(Tone(1279));
+    constexpr int primeFrames = 1282;
+    audio.Submit(Tone(primeFrames - 1));
     Expect(audio.NeedsSamples(), "a queue below 40 ms requests more input");
     audio.Submit(Tone(1));
     Expect(!audio.NeedsSamples(), "40 ms of queued input stops frame production");
     audio.Submit(Tone(1920));
-    Expect(audio.QueuedBytes() == 3200 * 2 * sizeof(float),
+    Expect(audio.QueuedBytes() == (primeFrames + 1920) * 2 * sizeof(float),
            "queue size uses input bytes even when the device resamples");
     audio.Submit(Tone(532));
-    Expect(audio.QueuedBytes() == 3732 * 2 * sizeof(float),
+    Expect(audio.QueuedBytes() == (primeFrames + 1920 + 532) * 2 * sizeof(float),
            "a full queue preserves the next audio block");
 }
 

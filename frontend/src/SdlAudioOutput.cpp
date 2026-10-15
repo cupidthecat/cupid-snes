@@ -77,7 +77,7 @@ void SdlAudioOutput::Submit(const snes::core::AudioBuffer& buffer) {
     }
 
     // Push interleaved float samples into SDL's internal queue.
-    // SDL will resample automatically if the hardware rate differs from 32 kHz.
+    // SDL resamples automatically when the playback device uses a different rate.
     const int bytes = static_cast<int>(
         buffer.interleavedStereo.size() * sizeof(float));
     if (!SDL_PutAudioStreamData(stream_, buffer.interleavedStereo.data(), bytes)) {
