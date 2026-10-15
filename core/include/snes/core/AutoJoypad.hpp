@@ -14,22 +14,18 @@
 //   3. The entire sequence takes ~4224 master clocks (33 × 128)
 //   4. HVBJOY ($4212) bit 0 reports "busy" during this time
 //
-// The state machine runs every 128 master clocks, matching bsnes's
-// joypadEdge() in timing.cpp which fires when (counter.cpu & 127) == 0.
+// The state machine advances on each global 128-master-clock edge.
 //
 // Button bit layout in joy registers (MSB → LSB):
 //   B  Y  Sel Sta  Up Dn Le Ri  A  X  L  R  0 0 0 0
 //   15 14 13  12   11 10  9  8  7  6  5  4  3 2 1 0
 //
 // Usage:
-//   1. Timing::onJoypadPoll  → AutoJoypad::Tick128(h, v, vdisp)
+//   1. Timing::onJoypadPoll  → AutoJoypad::Tick128(h, v, vdisp, aligned256)
 //   2. Timing::onFrameBegin  → AutoJoypad::FrameBegin()
 //   3. CpuIoRegisters $4200  → AutoJoypad::SetAutoJoypadPoll()
 //   4. After polling, sync joy1-4 → CpuIoRegisters setJoy1-4
 //
-// Reference: bsnes sfc/cpu/timing.cpp  (joypadEdge)
-//            bsnes sfc/cpu/io.cpp      ($4200, $4212, $4218-$421F)
-//            bsnes sfc/controller/gamepad/gamepad.cpp (serial bit order)
 
 #include <cstdint>
 #include <functional>
@@ -54,10 +50,11 @@ public:
     /// @param h     Current H counter (master clocks, 0..hperiod-1)
     /// @param v     Current V counter (scanline, 0..vperiod-1)
     /// @param vdisp First VBlank scanline (225 or 240)
-    void Tick128(uint16_t h, uint16_t v, uint16_t vdisp);
+    /// @param aligned256 True on the global 256-clock divider edge.
+    void Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256);
 
     /// Called at V=0 (start of frame) to reset polling state.
-    /// Matches bsnes: status.autoJoypadCounter = 33 at vcounter()==0.
+    /// Resets the polling counter to inactive at scanline zero.
     void FrameBegin();
 
     // $4200 NMITIMEN interaction
@@ -105,14 +102,13 @@ public:
 private:
     bool autoJoypadPoll_ = false;   ///< NMITIMEN bit 0
     uint8_t counter_     = 33;      ///< State machine (0..33; 33 = inactive)
-    bool div256_         = false;   ///< 256-clock alignment divider
 
     // Controller packets and the two sources of the shared latch line.
     ControllerPorts ports_;
     bool manualLatch_ = false;
     bool autoLatch_ = false;
 
-    // Serial data temps (2 bits per port, matching bsnes autoJoypadPort1/2)
+    // Two serial data bits per controller port.
     uint8_t port1Data_   = 0;
     uint8_t port2Data_   = 0;
 

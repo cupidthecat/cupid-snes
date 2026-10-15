@@ -51,7 +51,9 @@ void WordAccessesAdvanceHardware() {
                 bytes.push_back(value);
             });
         Check(cpu.Step() == 36, "Word I/O instruction consumes three ROM cycles and two I/O cycles");
-        Check(moments == std::vector<uint64_t>{24, 30}, "Hardware advances between the two bytes of word I/O");
+        const std::vector<uint64_t> expected =
+            write ? std::vector<uint64_t>{30, 36} : std::vector<uint64_t>{26, 32};
+        Check(moments == expected, "Word I/O uses each byte's read or write phase");
         Check(machine->GetTiming().MasterClocksElapsed() == 36, "CPU clocks reach the scheduler exactly once");
         Check(machine->GetSmp().CycleCount() > 0, "SMP advances during CPU bus cycles");
         if (write) Check(bytes == std::vector<uint8_t>{0x34, 0x12}, "Word writes preserve low then high ordering");
@@ -243,6 +245,36 @@ void DmaStartupCycle() {
           "DMA startup and CPU resumption preserve bus phase");
     Check(!dma.AnyDmaEnabled() && channel.transferSize == 0, "DMA completes before the interrupted CPU cycle resumes");
 }
+
+void TimerWriteComparison() {
+    auto machine = Machine({0xea});
+    auto &cpu = *machine->GetCpu();
+    auto &bus = machine->GetBus();
+    bus.Write(0x4208, 0);
+    bus.Write(0x4200, 0x10);
+    while (machine->GetTiming().HCounter() < 396)
+        cpu.idle();
+    Check(machine->GetTiming().HCounter() == 396, "Timer fixture reaches the write's leading edge");
+    cpu.write(0x4207, 97);
+    Check(machine->GetTiming().HCounter() == 402 && machine->GetIrq().IrqLine(),
+          "Timer writes reevaluate IRQ after their final bus phase at the current comparison "
+          "position");
+    Check(machine->GetIrq().IrqHold(), "A timer-write match starts the normal IRQ hold interval");
+}
+
+void InputBusyAfterEnableChanges() {
+    auto machine = Machine({0xea});
+    auto &bus = machine->GetBus();
+    auto &cpu = *machine->GetCpu();
+    bus.Write(0x4200, 1);
+    while (machine->GetAutoJoypad().Counter() != 2)
+        cpu.idle();
+    Check((bus.Read(0x4212) & 1) != 0, "Automatic input reports an active transfer");
+    cpu.write(0x4200, 0);
+    cpu.write(0x4200, 1);
+    Check((bus.Read(0x4212) & 1) == 0,
+          "Reenabling an aborted input transfer cannot expose a stale busy counter");
+}
 }
 
 int main() {
@@ -250,6 +282,8 @@ int main() {
         WordAccessesAdvanceHardware(); HBlankWithinInstruction(); SoundPortDeadlines();
         SlowSoundPortDeadline();
         InterruptMaskSampling(); NmiInsideInstruction(); EnableNmiDuringVblank(); DmaStartupCycle();
+        TimerWriteComparison();
+        InputBusyAfterEnableChanges();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

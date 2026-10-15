@@ -283,6 +283,7 @@ void Emulator::InitSubsystems() {
     cpuIo_.SetNmitimenCallback([this](uint8_t data) {
         irq_.NmitimenUpdate(data);
         autoJoypad_.SetAutoJoypadPoll((data & 0x01) != 0);
+        cpuIo_.setAutoJoypadCounter(autoJoypad_.Counter());
     });
 
     // $420D MEMSEL → MemoryBus fast-ROM + Cartridge access timing
@@ -352,6 +353,8 @@ void Emulator::InitSubsystems() {
     cpuIo_.SetHVTimeChangeCallback([this](uint16_t htime, uint16_t vtime) {
         irq_.SetHTime(htime);
         irq_.SetVTime(vtime);
+        irq_.PollTimer(timing_.HCounter(), timing_.VCounter(), timing_.PreviousHPeriod(),
+                       timing_.PreviousVPeriod());
     });
 
     // 5. Wire Timing → subsystem callbacks
@@ -400,14 +403,14 @@ void Emulator::InitSubsystems() {
     };
 
     // IRQ/NMI condition polling (every ~4 master clocks)
-    timing_.onIrqPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod) {
-        irq_.Poll(h, v, vdisp, hperiod);
+    timing_.onIrqPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t) {
+        irq_.Poll(h, v, vdisp, timing_.PreviousHPeriod(), timing_.PreviousVPeriod());
         autoJoypad_.Ports().BeamPosition(timing_.HDot(), v, vdisp - 1);
     };
 
     // Auto-joypad polling (every 128 master clocks)
     timing_.onJoypadPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp) {
-        autoJoypad_.Tick128(h, v, vdisp);
+        autoJoypad_.Tick128(h, v, vdisp, (timing_.MasterClocksElapsed() & 255) == 0);
         // Synchronize joy registers into CpuIoRegisters
         cpuIo_.setJoy1(autoJoypad_.Joy1());
         cpuIo_.setJoy2(autoJoypad_.Joy2());
@@ -472,6 +475,7 @@ void Emulator::InitSubsystems() {
     dmaArmed_ = false;
     audioOverflow_.clear();
     collectingAudio_ = false;
+    nextSmpMasterClock_ = 0;
 
     // Set up DSP audio output buffer
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
@@ -480,6 +484,7 @@ void Emulator::InitSubsystems() {
     cpu_->Reset();
     cpu_->SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
     cpu_->SetBeforeCycleCallback([this](uint32_t clocks) { BeginCpuCycle(clocks); });
+    cpu_->SetBusPhaseCallback([this]() { irq_.SetIrqLock(false); });
 
     initialized_ = true;
 
@@ -629,8 +634,15 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
     ppu_.SetCurrentHClock(timing_.HCounter());
     const auto elapsed = timing_.MasterClocksElapsed();
     cartridge_->AdvanceHardware(static_cast<uint32_t>(elapsed - before));
+    // Several CPU bus phases can end within one sound clock. No audio state
+    // changes until that clock edge, so avoid repeating the conversion there.
+    if (elapsed < nextSmpMasterClock_)
+        return;
+    const auto smpTarget = elapsed * Smp::kClockFrequency / timing_.MasterClockHz();
+    nextSmpMasterClock_ = ((smpTarget + 1) * timing_.MasterClockHz() + Smp::kClockFrequency - 1) /
+                          Smp::kClockFrequency;
     const int firstSample = dsp_.SamplesWritten();
-    smp_.RunUntil(elapsed * Smp::kClockFrequency / timing_.MasterClockHz());
+    smp_.RunUntil(smpTarget);
     if (msu1_) {
         // Mix before this bus phase completes: later volume or track writes
         // must not change PCM that has already played. Use the DSP's sample
@@ -667,10 +679,6 @@ void Emulator::BeginCpuCycle(uint32_t clocks) {
         dmaArmed_ = false;
     }
     if (pendingHdmaSetup_ || pendingHdmaRun_ || dma_.AnyDmaEnabled()) dmaArmed_ = true;
-    // Release an earlier bus operation's lock before the new access. A write
-    // to $4200 can set a fresh lock which must survive until the following
-    // access, including the last-cycle sample inside a sixteen-bit store.
-    irq_.SetIrqLock(false);
 }
 
 void Emulator::ServicePendingHdma() {

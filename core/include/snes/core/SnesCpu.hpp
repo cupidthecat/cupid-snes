@@ -48,11 +48,15 @@ public:
     /// Total master clocks elapsed
     uint64_t Cycles() const noexcept { return cycles_; }
 
-    // Advance connected hardware after each memory access or internal cycle.
+    // Advance connected hardware through each bus phase or internal cycle.
     // Step() still returns CPU clocks; a caller using this callback must not
     // advance the same clocks again.
     void SetClockCallback(std::function<void(uint32_t)> callback) { onClock_ = std::move(callback); }
     void SetBeforeCycleCallback(std::function<void(uint32_t)> callback) { beforeCycle_ = std::move(callback); }
+
+    // Release the previous access's interrupt lock after arbitration and the
+    // leading clocks, immediately before accessing the device.
+    void SetBusPhaseCallback(std::function<void()> callback) { onBusPhase_ = std::move(callback); }
 
     // Refresh interrupt inputs at the instruction's sampling point. Returning
     // false suppresses the current sample while interrupt recognition is locked.
@@ -62,7 +66,7 @@ public:
 
     /// Apply the 40-master-clock DRAM refresh penalty.
     /// Called by the Timing onDramRefresh callback once per scanline.
-    /// Internally performed as 5 × (6+2) sub-steps matching bsnes.
+    /// Internally performed as five (6+2)-clock substeps.
     /// An optional ALU step callback is invoked between each sub-step to
     /// advance the multiply/divide hardware pipeline.
     void ApplyDramRefreshPenalty();
@@ -113,6 +117,7 @@ private:
     AluStepCallback onAluStep_;
     std::function<void(uint32_t)> onClock_;
     std::function<void(uint32_t)> beforeCycle_;
+    std::function<void()> onBusPhase_;
     std::function<bool()> onInterruptPoll_;
 };
 

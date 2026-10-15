@@ -4,7 +4,7 @@
 
 // AutoJoypad.cpp — SNES auto-joypad polling implementation
 //
-// Implements the 34-step state machine matching bsnes's joypadEdge().
+// Implements the 34-step automatic polling sequence.
 // Called every 128 master clocks by the timing system.
 //
 // State machine:
@@ -16,11 +16,10 @@
 //   Counter 33    : Inactive (polling complete)
 //
 // The start condition requires V = vdisp, H ∈ [130, 384], and 256-clock
-// alignment (every other 128-clock edge).  This matches bsnes's condition:
+// alignment (every other 128-clock edge):
 //   vcounter()==ppu.vdisp() && (counter.cpu&255)==0 &&
 //   hcounter()>=130 && hcounter()<=384
 //
-// Reference: bsnes sfc/cpu/timing.cpp (joypadEdge)
 
 #include "snes/core/AutoJoypad.hpp"
 
@@ -35,7 +34,6 @@ AutoJoypad::AutoJoypad() {
 void AutoJoypad::Reset() {
     autoJoypadPoll_ = false;
     counter_    = 33;
-    div256_     = false;
     ports_.Reset();
     manualLatch_ = autoLatch_ = false;
     port1Data_  = 0;
@@ -46,7 +44,7 @@ void AutoJoypad::Reset() {
 // FrameBegin — reset for new frame
 
 void AutoJoypad::FrameBegin() {
-    // bsnes timing.cpp scanline(): at vcounter()==0, autoJoypadCounter = 33
+    // Scanline zero ends the previous polling sequence.
     counter_ = 33;
     autoLatch_ = false;
     ports_.SetLatch(manualLatch_);
@@ -57,7 +55,12 @@ void AutoJoypad::FrameBegin() {
 void AutoJoypad::SetAutoJoypadPoll(bool enabled) {
     autoJoypadPoll_ = enabled;
 
-    // bsnes io.cpp $4200: if disabled during active shifting, abort
+    if (counter_ == 0) {
+        autoLatch_ = enabled;
+        ports_.SetLatch(manualLatch_ || autoLatch_);
+    }
+
+    // Disabling automatic input during shifting ends the sequence.
     if (!enabled && counter_ >= 2 && counter_ < 33) {
         counter_ = 33;
     }
@@ -86,12 +89,9 @@ uint16_t AutoJoypad::InputStateToSnesFormat(const InputState& input) {
 
 // Tick128 — 128-clock state machine step
 
-void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp) {
-    // 256-clock alignment: alternates every 128 clocks (true = aligned)
-    div256_ = !div256_;
-
+void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256) {
     // Start condition: V = vdisp, 256-clock aligned, H ∈ [130, 384]
-    if (v == vdisp && div256_ && h >= 130 && h <= 384) {
+    if (v == vdisp && aligned256 && h >= 130 && h <= 384) {
         counter_ = 0;
     } else {
         if (counter_ >= 33) return;
@@ -114,7 +114,7 @@ void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp) {
     }
 
     // Abort if disabled and not at counter 1
-    // bsnes: counter 1 always runs (to properly release the latch)
+    // Counter one always runs so the controller latch is released.
     if (counter_ != 1 && !autoJoypadPoll_) {
         counter_ = 33;
         return;

@@ -104,17 +104,23 @@ void SnesCpu::SetIrqLevel(bool active) {
 void SnesCpu::idle() {
     if (beforeCycle_) beforeCycle_(6);
     addClocks(6);
+    if (onBusPhase_)
+        onBusPhase_();
     if (onAluStep_) onAluStep_(false);
 }
 
 uint8_t SnesCpu::read(uint32_t address) {
     const uint8_t speed = bus_.Speed(address);
     if (beforeCycle_) beforeCycle_(speed);
+    addClocks(speed - 4);
+    if (onBusPhase_)
+        onBusPhase_();
     uint8_t data = bus_.Read(address);
+    addClocks(4);
+    if (onAluStep_)
+        onAluStep_(false);
     // Internal register reads leave the external memory data latch intact.
     if ((address & 0x40fc00) != 0x4000) regs().mdr = data;
-    addClocks(speed);
-    if (onAluStep_) onAluStep_(false);
     return data;
 }
 
@@ -122,9 +128,10 @@ void SnesCpu::write(uint32_t address, uint8_t data) {
     if (onAluStep_) onAluStep_(true);
     const uint8_t speed = bus_.Speed(address);
     if (beforeCycle_) beforeCycle_(speed);
-    bus_.Write(address, data);
-    regs().mdr = data;
     addClocks(speed);
+    if (onBusPhase_)
+        onBusPhase_();
+    bus_.Write(address, regs().mdr = data);
 }
 
 void SnesCpu::lastCycle() {
@@ -157,10 +164,10 @@ void SnesCpu::pollInterrupts() {
 
 // DRAM Refresh — 40-master-clock penalty per scanline
 //
-// bsnes performs 5 sub-steps of (6 halt + 2 interleave) = 40 total clocks.
+// Refresh consists of five (6 halt + 2 interleave) substeps, totaling 40 clocks.
 // Between each sub-step, the ALU pipeline (multiply/divide) is advanced.
 //
-// The dramRefreshState_ variable mirrors bsnes status.dramRefresh:
+// The refresh state identifies the current bus phase:
 //   0 = not refreshing
 //   1 = bus halted (6 clocks)  — coprocessors see the bus as unavailable
 //   2 = interleave  (2 clocks) — brief gap between halt phases

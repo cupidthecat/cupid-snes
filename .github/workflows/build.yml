@@ -1,0 +1,31 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Cache SDL build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: out/build/ci/_deps
+          key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('CMakeLists.txt') }}
+      - name: Configure
+        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON
+      - name: Build
+        run: cmake --build out/build/ci --config Release --parallel 4
+      - name: Test
+        run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120

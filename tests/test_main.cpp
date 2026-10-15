@@ -424,7 +424,7 @@ int main() {
         assert(bus.Speed(0x801000) == 8);
 
         // PPU registers ($2100-$21FF): 6 cycles (B-bus, fast I/O)
-        // bsnes: falls through check1/check2, matched by (addr-0x4000)&0x7E00 → 6
+        // CPU I/O uses six clocks through (addr-0x4000)&0x7E00.
         assert(bus.Speed(0x002100) == 6);
 
         // APU ports ($2140): also 6 cycles (B-bus area)
@@ -847,7 +847,7 @@ int main() {
     {
         snes::core::DmaController dma;
 
-        // After reset, all registers should be 0xFF (bsnes default)
+        // Channel registers initialize to 0xFF.
         for (int ch = 0; ch < 8; ++ch) {
             const auto& c = dma.Channel(ch);
             assert(c.readControl() == 0xFF);
@@ -2281,7 +2281,7 @@ int main() {
 
             // BG12NBA ($210B) with nibble=0xF (would produce 0xF000 without mask)
             ppu.WriteIO(0x210B, 0xFF);
-            // bsnes: (data << 12) & 0x7000 → (0xFF << 12) & 0x7000 = 0x7000
+            // (data << 12) & 0x7000 yields 0x7000 for data 0xFF.
             // for BG2: (data << 8) & 0x7000 → (0xFF << 8) & 0x7000 = 0x7000
             assert(io.bg1.tiledataAddress == 0x7000);
             assert(io.bg2.tiledataAddress == 0x7000);
@@ -2397,7 +2397,7 @@ int main() {
             std::printf("  [14r] STAT78 PIO behavior passed\n");
         }
 
-        // Sub-test 14s: VRAM visible-line gating matches bsnes
+        // Sub-test 14s: VRAM access during visible lines
         {
             Ppu ppu;
             ppu.WriteIO(0x2100, 0x00);  // display enabled
@@ -2771,7 +2771,7 @@ int main() {
             ppu.VramData()[0x2001] = 0x0080; // row 1: leftmost pixel = color 1
 
             // The first visible line maps to vcounter 1, so scanline 0 samples
-            // tile row 1 in bsnes-visible coordinates.
+            // tile row 1 in visible scanline coordinates.
             const uint32_t* row = renderOneScanline(ppu, 0);
 
             // Pixel 0 should be palette color 1 (green) at full brightness
@@ -2863,7 +2863,7 @@ int main() {
             // In Mode 1, BG1 has higher priority than BG2 at same priority level
             // Mode 1 priorities: BG1pri1(12) > BG2pri1(10) > ...
             // Since BG1 renders last with same priority, BG1 should win
-            // Actually bsnes rendering order: bg1 first, then bg2.
+            // Draw BG1 before BG2.
             // PlotAbove uses '>': strictly greater priority wins.
             // Mode 1 from UpdateVideoMode:
             // Need to check what priorities are assigned.
@@ -8669,12 +8669,12 @@ int main() {
             irq.Poll(14, 0, vdisp, hperiod);
             assert(irq.IrqLine());
 
-            // Now test true last dot: V=0, H=0 (delayed both zero)
-            // hd = 0 + hperiod - 10 = 1354, vd = 0 (v > 0 check fails, so vd=0)
-            // Wait — at H=0, hd = 0 + 1364 - 10 = 1354, vd = 0 (since v=0, v-1 wraps, stored as 0)
-            // Condition: (!vIrq || 0==0) && (!hIrq || 1354==4) → false (H mismatch)
-            // So this specific case naturally doesn't fire due to H mismatch.
-            // The last-dot guard is for the exact case where vd=0,hd=0 simultaneously.
+            // The six-clock guard suppresses a delayed match from the prior field.
+            irq.Reset();
+            irq.NmitimenUpdate(0x20);
+            irq.SetVTime(261);
+            irq.Poll(6, 0, vdisp, hperiod);
+            assert(!irq.IrqLine());
             std::printf("  [26t] Last-dot guard passed\n");
         }
 
@@ -8915,7 +8915,7 @@ int main() {
             AutoJoypad aj;
             aj.SetAutoJoypadPoll(true);
             // Trigger polling at V=225, H=256
-            aj.Tick128(256, 225, 225);
+            aj.Tick128(256, 225, 225, true);
             assert(aj.Counter() == 0);
             // FrameBegin resets to inactive
             aj.FrameBegin();
@@ -8928,7 +8928,7 @@ int main() {
         {
             AutoJoypad aj;
             // autoJoypadPoll is false by default
-            aj.Tick128(256, 225, 225);
+            aj.Tick128(256, 225, 225, true);
             // Counter is set to 0 (trigger condition met) but...
             // The abort check fires: counter!=1 && !autoJoypadPoll → counter=33
             assert(aj.Counter() == 33);
@@ -8941,22 +8941,23 @@ int main() {
             aj.SetAutoJoypadPoll(true);
 
             // Wrong V (not vdisp)
-            aj.Tick128(256, 100, 225);
+            aj.Tick128(256, 100, 225, true);
             assert(aj.Counter() == 33);
 
             // Wrong H (too low)
-            aj.Tick128(100, 225, 225);  // div256_ alternated
+            aj.Tick128(100, 225, 225, false);
             assert(aj.Counter() == 33);
 
-            // Wrong H (too high) — need div256_ true for next check
-            aj.Tick128(500, 225, 225);  // div256_ false now
+            // Wrong H (too high), with either divider phase.
+            aj.Tick128(500, 225, 225, false);
             assert(aj.Counter() == 33);
-            aj.Tick128(500, 225, 225);  // div256_ true, but h>384
+            aj.Tick128(500, 225, 225, true);
             assert(aj.Counter() == 33);
 
-            // Correct V/H with div256_ true
-            // div256_ is now false (after the last call), next will be true
-            aj.Tick128(256, 225, 225);
+            // Correct V/H must also coincide with a 256-clock edge.
+            aj.Tick128(256, 225, 225, false);
+            assert(aj.Counter() == 33);
+            aj.Tick128(256, 225, 225, true);
             assert(aj.Counter() == 0);
             std::printf("  [27g] Trigger condition passed\n");
         }
@@ -8972,13 +8973,13 @@ int main() {
             });
 
             // Trigger
-            aj.Tick128(256, 225, 225);
+            aj.Tick128(256, 225, 225, true);
             assert(aj.Counter() == 0);
 
             // 33 more ticks to complete (counter 1..33)
             // Use V != vdisp so we don't re-trigger
             for (int i = 0; i < 33; i++) {
-                aj.Tick128(500, 226, 225);
+                aj.Tick128(500, 226, 225, true);
             }
 
             assert(aj.Counter() == 33);
@@ -9006,8 +9007,9 @@ int main() {
                 return s;
             });
 
-            aj.Tick128(256, 225, 225);
-            for (int i = 0; i < 33; i++) aj.Tick128(500, 226, 225);
+            aj.Tick128(256, 225, 225, true);
+            for (int i = 0; i < 33; i++)
+                aj.Tick128(500, 226, 225, true);
 
             uint16_t expected = 0x8000 | 0x1000 | 0x0010;  // B + Start + R
             assert(aj.Joy1() == expected);
@@ -9026,8 +9028,9 @@ int main() {
                 return s;
             });
 
-            aj.Tick128(256, 225, 225);
-            for (int i = 0; i < 33; i++) aj.Tick128(500, 226, 225);
+            aj.Tick128(256, 225, 225, true);
+            for (int i = 0; i < 33; i++)
+                aj.Tick128(500, 226, 225, true);
 
             assert(aj.Joy1() == 0);  // Port 1 empty
             uint16_t expected = 0x0040 | 0x0020;  // X + L
@@ -9043,9 +9046,9 @@ int main() {
                 InputState s{}; s.a = true; return s;
             });
 
-            aj.Tick128(256, 225, 225);  // counter=0
-            aj.Tick128(500, 226, 225);  // counter=1
-            aj.Tick128(500, 226, 225);  // counter=2
+            aj.Tick128(256, 225, 225, true); // counter=0
+            aj.Tick128(500, 226, 225, true); // counter=1
+            aj.Tick128(500, 226, 225, true); // counter=2
             assert(aj.Counter() == 2);
             assert(aj.IsPolling());
 
@@ -9067,16 +9070,18 @@ int main() {
 
             assert(!aj.IsPolling());  // Before trigger
 
-            aj.Tick128(256, 225, 225);  // counter=0
+            aj.Tick128(256, 225, 225, true); // counter=0
             assert(aj.IsPolling());     // During polling
 
             // Advance to counter=16 (mid-sequence)
-            for (int i = 0; i < 16; i++) aj.Tick128(500, 226, 225);
+            for (int i = 0; i < 16; i++)
+                aj.Tick128(500, 226, 225, true);
             assert(aj.Counter() == 16);
             assert(aj.IsPolling());
 
             // Advance to counter=33 (done)
-            for (int i = 0; i < 17; i++) aj.Tick128(500, 226, 225);
+            for (int i = 0; i < 17; i++)
+                aj.Tick128(500, 226, 225, true);
             assert(aj.Counter() == 33);
             assert(!aj.IsPolling());
             std::printf("  [27l] IsPolling busy flag passed\n");
@@ -9098,8 +9103,9 @@ int main() {
             });
 
             // Frame 1: poll
-            aj.Tick128(256, 225, 225);
-            for (int i = 0; i < 33; i++) aj.Tick128(500, 226, 225);
+            aj.Tick128(256, 225, 225, true);
+            for (int i = 0; i < 33; i++)
+                aj.Tick128(500, 226, 225, true);
             assert(aj.Joy1() == 0x0080);  // A
 
             // FrameBegin resets counter
@@ -9107,19 +9113,11 @@ int main() {
             callCount = 1;
             assert(aj.Counter() == 33);
 
-            // Frame 2: poll again — need div256_ alignment
-            // div256_ has been alternating; let's trigger directly
-            // After 34 prior Tick128 calls, div256_ is in some state.
-            // Call enough times to get an aligned trigger.
-            // Since we need div256_=true at the trigger call, we might
-            // need a warm-up call first.
-            aj.Tick128(256, 225, 225);  // might trigger
-            if (aj.Counter() == 33) {
-                // div256_ was wrong, try again
-                aj.Tick128(256, 225, 225);
-            }
+            // Frame 2 starts on another global 256-clock edge.
+            aj.Tick128(256, 225, 225, true);
             assert(aj.Counter() == 0);
-            for (int i = 0; i < 33; i++) aj.Tick128(500, 226, 225);
+            for (int i = 0; i < 33; i++)
+                aj.Tick128(500, 226, 225, true);
             assert(aj.Joy1() == 0x8000);  // B
             std::printf("  [27m] Re-trigger on next frame passed\n");
         }
@@ -9149,8 +9147,8 @@ int main() {
             });
 
             // Wire Timing → AutoJoypad
-            t.onJoypadPoll = [&aj](uint16_t h, uint16_t v, uint16_t vdisp) {
-                aj.Tick128(h, v, vdisp);
+            t.onJoypadPoll = [&aj, &t](uint16_t h, uint16_t v, uint16_t vdisp) {
+                aj.Tick128(h, v, vdisp, (t.MasterClocksElapsed() & 255) == 0);
             };
             t.onFrameBegin = [&aj]() {
                 aj.FrameBegin();
@@ -9197,7 +9195,7 @@ int main() {
             assert(!(hvbjoy & 0x01));  // Not busy
 
             // Start polling
-            aj.Tick128(256, 225, 225);
+            aj.Tick128(256, 225, 225, true);
             cpuIo.setAutoJoypadCounter(aj.Counter());
             // cpuIo needs autoJoypadPoll_ == true for the flag
             cpuIo.Write(0x4200, 0x01);  // Enable auto-joypad in CpuIoRegisters
@@ -9205,7 +9203,8 @@ int main() {
             assert(hvbjoy & 0x01);  // Busy!
 
             // Complete polling
-            for (int i = 0; i < 33; i++) aj.Tick128(500, 226, 225);
+            for (int i = 0; i < 33; i++)
+                aj.Tick128(500, 226, 225, true);
             cpuIo.setAutoJoypadCounter(aj.Counter());
             hvbjoy = cpuIo.Read(0x4212, 0);
             assert(!(hvbjoy & 0x01));  // Done
@@ -9457,11 +9456,11 @@ int main() {
             std::printf("  [28k] Full PAL frame = 312 refreshes passed\n");
         }
 
-        // 28l: Constants match bsnes
+        // 28l: Console timing constants
         {
             assert(Timing::kDramRefreshPos == 538);
             assert(Timing::kDramRefreshClocks == 40);
-            std::printf("  [28l] Constants match bsnes passed\n");
+            std::printf("  [28l] Console timing constants passed\n");
         }
 
         std::printf("[DRAM Refresh] All DRAM refresh tests passed\n");

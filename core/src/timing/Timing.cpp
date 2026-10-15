@@ -21,10 +21,13 @@ void Timing::Reset() {
     vcounter_  = 0;
     field_     = false;  // even field first
     interlace_ = false;
+    interlaceInput_ = false;
     vdisp_     = 225;
 
     vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
     hperiod_ = kDotsPerLine;
+    previousHPeriod_ = hperiod_;
+    previousVPeriod_ = vperiod_;
 
     masterClocksElapsed_ = 0;
     frameCount_ = 0;
@@ -38,8 +41,7 @@ void Timing::Reset() {
     hdmaFired_        = false;
     renderCycleFired_ = false;
     nmiFired_         = false;
-
-    joypadDivider_ = 0;
+    updateNextEvent();
 }
 
 void Timing::SetRegion(Region r) noexcept {
@@ -48,15 +50,14 @@ void Timing::SetRegion(Region r) noexcept {
     // when vcounter wraps).  For immediate effect after a region change
     // mid-frame, we also update it here.
     vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
+    previousVPeriod_ = vperiod_;
 }
 
 // Core tick
 
 void Timing::Tick(uint32_t clocks) {
-    // Process in 2-clock increments (smallest timing unit on the SNES).
-    // For large batches we can fast-path full scanlines, but the callback-
-    // driven design means we need to check events at each position.  Since
-    // a scanline is only 682 ticks (1364/2) this is perfectly tractable.
+    // Interrupt evaluation retains its two-clock grid. Scanline events only
+    // need dispatch when the counter reaches their next scheduled position.
 
     if (halfClockPending_ && clocks != 0) {
         halfClockPending_ = false;
@@ -79,6 +80,23 @@ void Timing::Tick(uint32_t clocks) {
 void Timing::tickOnce(uint8_t clocks) {
     masterClocksElapsed_ += clocks;
     hcounter_ += clocks;
+    if (hcounter_ >= nextEventH_)
+        dispatchScanlineEvents();
+
+    // Poll NMI and IRQ every four master clocks.
+    // Fire after wrap so hcounter_ is valid (0..hperiod-1).
+    // Bit 1 set after increment → fires every other tick → every 4 clocks.
+    if ((hcounter_ & 2) && onIrqPoll) {
+        onIrqPoll(hcounter_, vcounter_, vdisp_, hperiod_);
+    }
+
+    // Controller edges share the free-running CPU clock divider.
+    if ((masterClocksElapsed_ & 127) == 0 && onJoypadPoll) {
+        onJoypadPoll(hcounter_, vcounter_, vdisp_);
+    }
+}
+
+void Timing::dispatchScanlineEvents() {
     // Per-dot event checks (only fire once per scanline per event)
 
     if (!hdmaSetupFired_ && vcounter_ == 0 && hcounter_ >= hdmaSetupPosition_) {
@@ -121,23 +139,26 @@ void Timing::tickOnce(uint8_t clocks) {
 
     // Scanline wrap
     if (hcounter_ >= hperiod_) {
+        previousHPeriod_ = hperiod_;
         hcounter_ -= hperiod_;
         tickScanline();
     }
 
-    // NMI/IRQ poll every 4 master clocks (matching bsnes stepOnce)
-    // Fire after wrap so hcounter_ is valid (0..hperiod-1).
-    // Bit 1 set after increment → fires every other tick → every 4 clocks.
-    if ((hcounter_ & 2) && onIrqPoll) {
-        onIrqPoll(hcounter_, vcounter_, vdisp_, hperiod_);
-    }
+    updateNextEvent();
+}
 
-    // Joypad poll every 128 master clocks (matching bsnes joypadEdge)
-    // Check before increment so the first tick fires immediately.
-    if (joypadDivider_ == 0 && onJoypadPoll) {
-        onJoypadPoll(hcounter_, vcounter_, vdisp_);
-    }
-    joypadDivider_ = (joypadDivider_ + 2) & 0x7F;
+void Timing::updateNextEvent() {
+    nextEventH_ = hperiod_;
+    const auto include = [this](bool pending, uint16_t position) {
+        if (pending && position < nextEventH_)
+            nextEventH_ = position;
+    };
+    include(!hdmaSetupFired_ && vcounter_ == 0, hdmaSetupPosition_);
+    include(!nmiFired_ && vcounter_ == vdisp_, kNmiHPos);
+    include(!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_, kRenderCycle);
+    include(!dramRefreshFired_, dramRefreshPosition_);
+    include(!hblankFired_ && vcounter_ < vdisp_, kHBlankStart);
+    include(!hdmaFired_ && vcounter_ < vdisp_, kHdmaPosition);
 }
 
 // Scanline transition
@@ -146,9 +167,9 @@ void Timing::tickScanline() {
     // Advance V counter
     vcounter_++;
 
-    // At V=128 bsnes captures the interlace flag for the current frame.
-    // We mirror that: the effective vperiod may gain +1 for interlace.
+    // Sample interlace at scanline 128 for the remaining field timing.
     if (vcounter_ == 128) {
+        interlace_ = interlaceInput_;
         // Recalculate vperiod based on interlace + field.
         // In interlace mode on alternating fields the frame gains one line.
         vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
@@ -159,6 +180,7 @@ void Timing::tickScanline() {
 
     // Frame wrap
     if (vcounter_ >= vperiod_) {
+        previousVPeriod_ = vperiod_;
         vcounter_ = 0;
         field_ = !field_;
         frameCount_++;
@@ -212,11 +234,13 @@ void Timing::updateHPeriod() {
 
 uint16_t Timing::HDot() const noexcept {
     uint16_t clocks = hcounter_;
-    // Normal lines stretch dots 322 and 326 by two clocks each.
+    // Normal and long lines stretch the dots starting at clocks 1292 and 1310.
     // The short NTSC line has uniform four-clock dots.
-    if (hperiod_ == kDotsPerLine) {
-        if (hcounter_ >= 1292) clocks -= 2;
-        if (hcounter_ >= 1310) clocks -= 2;
+    if (hperiod_ != kDotsPerLineShort) {
+        if (hcounter_ > 1292)
+            clocks -= 2;
+        if (hcounter_ > 1310)
+            clocks -= 2;
     }
     return clocks / 4;
 }
