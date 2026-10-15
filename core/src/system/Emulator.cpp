@@ -294,10 +294,8 @@ void Emulator::InitSubsystems() {
         }
     });
 
-    // Start DMA after the current CPU instruction has completed.
-    cpuIo_.SetDmaEnableCallback([this](uint8_t channels) {
-        dma_.EnableDma(channels);
-    });
+    // Queue DMA for arbitration at a subsequent CPU bus-cycle boundary.
+    cpuIo_.SetDmaEnableCallback([this](uint8_t channels) { dma_.EnableDma(channels); });
     dma_.SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
     dma_.SetClockQuery([this]() { return timing_.MasterClocksElapsed(); });
     dma_.SetBoundaryCallback([this]() { ServicePendingHdma(); });
@@ -688,15 +686,15 @@ void Emulator::ServicePendingHdma() {
         if (pendingHdmaSetup_) {
             pendingHdmaSetup_ = false;
             if (dma_.AnyHdmaEnabled()) {
-                dma_.HdmaSetup();
-                irq_.SetIrqLock(true);
+              dma_.HdmaSetup();
+              irq_.SetIrqLock(true);
             }
         } else {
-            pendingHdmaRun_ = false;
-            if (dma_.AnyHdmaActive()) {
-                dma_.HdmaRun();
-                irq_.SetIrqLock(true);
-            }
+          pendingHdmaRun_ = false;
+          if (dma_.AnyHdmaEnabled()) {
+            dma_.HdmaRun();
+            irq_.SetIrqLock(true);
+          }
         }
     }
     servicingHdma_ = false;
