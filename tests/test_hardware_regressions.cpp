@@ -237,13 +237,12 @@ void CounterLatching() {
     emu = Load(Rom(0x8000, 0x20));
     auto& timing = emu->GetTiming();
     struct Position { unsigned clocks; unsigned dots; };
-    for (const auto pos : {Position{1288, 322}, Position{1292, 322},
-                           Position{1294, 323}, Position{1306, 326},
-                           Position{1308, 326}, Position{1310, 326},
-                           Position{1312, 327}, Position{1362, 339}}) {
-        timing.Tick(pos.clocks - timing.HCounter());
-        emu->GetBus().Read(0x2137);
-        Check("Long-dot H counter", HCounter(emu->GetBus()), pos.dots);
+    for (const auto pos :
+         {Position{1288, 322}, Position{1292, 323}, Position{1294, 323}, Position{1306, 326},
+          Position{1308, 326}, Position{1310, 327}, Position{1312, 327}, Position{1362, 339}}) {
+      timing.Tick(pos.clocks - timing.HCounter());
+      emu->GetBus().Read(0x2137);
+      Check("Long-dot H counter", HCounter(emu->GetBus()), pos.dots);
     }
     // First odd field, scanline 240: every dot takes four clocks.
     timing.Tick(262 * 1364 - timing.MasterClocksElapsed() + 240 * 1364);

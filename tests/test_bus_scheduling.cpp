@@ -51,7 +51,9 @@ void WordAccessesAdvanceHardware() {
                 bytes.push_back(value);
             });
         Check(cpu.Step() == 36, "Word I/O instruction consumes three ROM cycles and two I/O cycles");
-        Check(moments == std::vector<uint64_t>{24, 30}, "Hardware advances between the two bytes of word I/O");
+        const std::vector<uint64_t> expected =
+            write ? std::vector<uint64_t>{30, 36} : std::vector<uint64_t>{26, 32};
+        Check(moments == expected, "Word I/O uses each byte's read or write phase");
         Check(machine->GetTiming().MasterClocksElapsed() == 36, "CPU clocks reach the scheduler exactly once");
         Check(machine->GetSmp().CycleCount() > 0, "SMP advances during CPU bus cycles");
         if (write) Check(bytes == std::vector<uint8_t>{0x34, 0x12}, "Word writes preserve low then high ordering");
@@ -67,6 +69,35 @@ void HBlankWithinInstruction() {
     Check(machine->GetTiming().HCounter() == 1072, "Test begins before HBlank");
     cpu.Step();
     Check((cpu.regs().a & 0x40) != 0, "HVBJOY sees HBlank reached during operand fetches");
+}
+
+void HBlankReadPhase() {
+  auto machine = Machine({0xea});
+  auto &cpu = *machine->GetCpu();
+  while (machine->GetTiming().HCounter() < 1078)
+    cpu.idle();
+  cpu.read(0x7e0000);
+  cpu.read(0x7e0001);
+  Check(machine->GetTiming().HCounter() == 1094,
+        "HBlank fixture starts two clocks before assertion");
+  Check((cpu.read(0x4212) & 0x40) != 0,
+        "HVBJOY samples HBlank after the read's leading clocks cross the assertion edge");
+}
+
+void HBlankPaletteWritePhase() {
+  auto machine = Machine({0xea});
+  auto &cpu = *machine->GetCpu();
+  auto &bus = machine->GetBus();
+  bus.Write(0x2100, 0x0f);
+  while (machine->GetTiming().VCounter() == 0 || machine->GetTiming().HCounter() < 1090)
+    cpu.idle();
+  Check(machine->GetTiming().VCounter() == 1 && machine->GetTiming().HCounter() < 1096,
+        "Palette fixture starts during the final six clocks before HBlank");
+  bus.Write(0x2121, 5);
+  bus.Write(0x2122, 0x1f);
+  cpu.write(0x2122, 0);
+  Check(machine->GetPpu().CgramData()[5] == 0x1f && machine->GetPpu().CgramData()[0] == 0,
+        "CGRAM commits at the write's final phase after HBlank restores the programmed address");
 }
 
 void SoundPortDeadlines() {
@@ -243,13 +274,47 @@ void DmaStartupCycle() {
           "DMA startup and CPU resumption preserve bus phase");
     Check(!dma.AnyDmaEnabled() && channel.transferSize == 0, "DMA completes before the interrupted CPU cycle resumes");
 }
+
+void TimerWriteComparison() {
+  auto machine = Machine({0xea});
+  auto &cpu = *machine->GetCpu();
+  auto &bus = machine->GetBus();
+  bus.Write(0x4208, 0);
+  bus.Write(0x4200, 0x10);
+  while (machine->GetTiming().HCounter() < 396)
+    cpu.idle();
+  Check(machine->GetTiming().HCounter() == 396, "Timer fixture reaches the write's leading edge");
+  cpu.write(0x4207, 97);
+  Check(machine->GetTiming().HCounter() == 402 && machine->GetIrq().IrqLine(),
+        "Timer writes reevaluate IRQ after their final bus phase at the current comparison "
+        "position");
+  Check(machine->GetIrq().IrqHold(), "A timer-write match starts the normal IRQ hold interval");
+}
+
+void InputBusyAfterEnableChanges() {
+  auto machine = Machine({0xea});
+  auto &bus = machine->GetBus();
+  auto &cpu = *machine->GetCpu();
+  bus.Write(0x4200, 1);
+  while (machine->GetAutoJoypad().Counter() != 2)
+    cpu.idle();
+  Check((bus.Read(0x4212) & 1) != 0, "Automatic input reports an active transfer");
+  cpu.write(0x4200, 0);
+  cpu.write(0x4200, 1);
+  Check((bus.Read(0x4212) & 1) == 0,
+        "Reenabling an aborted input transfer cannot expose a stale busy counter");
+}
 }
 
 int main() {
     try {
         WordAccessesAdvanceHardware(); HBlankWithinInstruction(); SoundPortDeadlines();
+        HBlankReadPhase();
+        HBlankPaletteWritePhase();
         SlowSoundPortDeadline();
         InterruptMaskSampling(); NmiInsideInstruction(); EnableNmiDuringVblank(); DmaStartupCycle();
+        TimerWriteComparison();
+        InputBusyAfterEnableChanges();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

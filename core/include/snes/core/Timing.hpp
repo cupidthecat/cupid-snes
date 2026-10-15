@@ -13,7 +13,7 @@
 //   CPU   — NMI edge at V=vblank, H≈2;  DRAM refresh once per line
 //   DMA   — HDMA setup at V=0 / HDMA run per visible scanline
 //
-// Timing parameters (from Fullsnes & bsnes PPUcounter):
+// Video timing parameters:
 //
 //   NTSC: 262 scanlines per frame, 1364 master clocks per scanline
 //         Exception: on non-interlace odd fields scanline 240 is 1360 clocks
@@ -32,8 +32,6 @@
 // The counter is paced externally: call Tick(masterClocks) to advance time.
 // Callbacks fire at the correct position.
 //
-// Reference: bsnes/sfc/ppu/counter/counter-inline.hpp
-//            https://problemkaputt.de/fullsnes.htm#sabortsnesframecyclecounts
 
 #include <cstdint>
 #include <functional>
@@ -84,7 +82,7 @@ public:
     /// HDMA horizontal trigger position.
     static constexpr uint16_t kHdmaPosition = 1104;
 
-    /// Approximate PPU render sampling point used by bsnes fast PPU.
+    /// Register sampling point for the scanline renderer.
     static constexpr uint16_t kRenderCycle = 512;
 
     /// NMI trigger position (H counter = 2, at the start of vblank scanline).
@@ -101,14 +99,19 @@ public:
     uint32_t MasterClockHz() const noexcept { return region_ == Region::PAL ? kMasterClockHzPal : kMasterClockHz; }
     void SetRegion(Region r) noexcept;
 
-    /// Get/set interlace mode (mirrors PPU SETINI bit 0).
+    /// Interlace timing samples the PPU input when scanline 128 begins.
     bool Interlace() const noexcept { return interlace_; }
-    void SetInterlace(bool v) noexcept { interlace_ = v; }
+    void SetInterlace(bool v) noexcept {
+      interlaceInput_ = v;
+    }
 
     /// VDisp — number of active (visible) scanlines.
     /// 225 in normal mode, 240 with overscan.
     uint16_t VDisp() const noexcept { return vdisp_; }
-    void SetVDisp(uint16_t v) noexcept { vdisp_ = v; }
+    void SetVDisp(uint16_t v) noexcept {
+      vdisp_ = v;
+      updateNextEvent();
+    }
 
     // Counter state
 
@@ -126,11 +129,17 @@ public:
     /// Current field (0 = even, 1 = odd).  Toggles every frame.
     bool Field() const noexcept { return field_; }
 
-    /// Master clocks remaining in the current scanline.
+    /// Master clocks in the current scanline.
     uint16_t HPeriod() const noexcept { return hperiod_; }
+    uint16_t PreviousHPeriod() const noexcept {
+      return previousHPeriod_;
+    }
 
     /// Scanlines in the current frame.
     uint16_t VPeriod() const noexcept { return vperiod_; }
+    uint16_t PreviousVPeriod() const noexcept {
+      return previousVPeriod_;
+    }
 
     /// Total master clocks elapsed since power-on / reset.
     uint64_t MasterClocksElapsed() const noexcept { return masterClocksElapsed_; }
@@ -192,12 +201,10 @@ public:
 
     /// Called every 4 master clocks for NMI/IRQ condition evaluation.
     /// Parameters: (hcounter, vcounter, vdisp, hperiod).
-    /// Matches bsnes stepOnce() polling frequency.
     std::function<void(uint16_t, uint16_t, uint16_t, uint16_t)> onIrqPoll;
 
     /// Called every 128 master clocks for auto-joypad polling.
     /// Parameters: (hcounter, vcounter, vdisp).
-    /// Matches bsnes joypadEdge() frequency.
     std::function<void(uint16_t, uint16_t, uint16_t)> onJoypadPoll;
 
     // Utility
@@ -210,36 +217,40 @@ public:
     uint16_t HPeriodForScanline(uint16_t scanline) const;
 
 private:
-    void tickOnce(uint8_t clocks = 2);
-    void tickScanline();      // Called when H counter wraps
-    void updateHPeriod();     // Recompute hperiod_ for the current scanline
+  void tickOnce(uint8_t clocks = 2);
+  void dispatchScanlineEvents();
+  void updateNextEvent();
+  void tickScanline();  // Called when H counter wraps
+  void updateHPeriod(); // Recompute hperiod_ for the current scanline
 
-    Region   region_    = Region::NTSC;
-    bool     interlace_ = false;
-    uint16_t vdisp_     = 225;
+  Region region_ = Region::NTSC;
+  bool interlace_ = false;
+  bool interlaceInput_ = false;
+  uint16_t vdisp_ = 225;
 
-    uint16_t hcounter_  = 0;       // 0 .. hperiod_-1
-    uint16_t vcounter_  = 0;       // 0 .. vperiod_-1
-    bool     field_     = false;   // 0=even, 1=odd
-    uint16_t hperiod_   = kDotsPerLine;
-    uint16_t vperiod_   = kScanlinesNTSC;
+  uint16_t hcounter_ = 0; // 0 .. hperiod_-1
+  uint16_t vcounter_ = 0; // 0 .. vperiod_-1
+  bool field_ = false;    // 0=even, 1=odd
+  uint16_t hperiod_ = kDotsPerLine;
+  uint16_t vperiod_ = kScanlinesNTSC;
+  uint16_t previousHPeriod_ = kDotsPerLine;
+  uint16_t previousVPeriod_ = kScanlinesNTSC;
+  uint16_t nextEventH_ = 12;
 
-    uint64_t masterClocksElapsed_ = 0;
-    uint64_t frameCount_ = 0;
-    uint16_t dramRefreshPosition_ = kDramRefreshPos;
-    uint16_t hdmaSetupPosition_ = 12;
-    bool hdmaSetupFired_ = false;
-    bool halfClockPending_ = false;
+  uint64_t masterClocksElapsed_ = 0;
+  uint64_t frameCount_ = 0;
+  uint16_t dramRefreshPosition_ = kDramRefreshPos;
+  uint16_t hdmaSetupPosition_ = 12;
+  bool hdmaSetupFired_ = false;
+  bool halfClockPending_ = false;
 
-    // Per-scanline event flags (reset on each new scanline)
-    bool dramRefreshFired_ = false;
-    bool hblankFired_      = false;
-    bool hdmaFired_        = false;
-    bool renderCycleFired_ = false;
-    bool nmiFired_         = false;
+  // Per-scanline event flags (reset on each new scanline)
+  bool dramRefreshFired_ = false;
+  bool hblankFired_ = false;
+  bool hdmaFired_ = false;
+  bool renderCycleFired_ = false;
+  bool nmiFired_ = false;
 
-    // Joypad poll divider (fires every 128 master clocks)
-    uint8_t joypadDivider_ = 0;
 };
 
 } // namespace snes::core

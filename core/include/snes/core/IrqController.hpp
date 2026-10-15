@@ -5,7 +5,7 @@
 #pragma once
 // IrqController.hpp — SNES NMI / IRQ dispatch state machine
 //
-// Implements the NMI/IRQ evaluation logic from bsnes's irq.cpp:
+// Evaluates the console NMI and timer IRQ signals:
 //
 //   NMI:
 //     - Condition: V counter >= VDisp (with 2-clock communication delay)
@@ -29,7 +29,6 @@
 //   IRQ lock:
 //     - Set when NMITIMEN ($4200) is written
 //     - Prevents NMI/IRQ dispatch for one instruction (one lastCycle test)
-//     - Matches bsnes status.irqLock behavior
 //
 // The IrqController is self-contained — it owns its own copies of all
 // enable flags, timer targets, and state machines.  The integration layer
@@ -41,9 +40,8 @@
 //   3. CpuIoRegisters $4207-$420A writes → IrqController::SetHTime/SetVTime
 //   4. CpuIoRegisters $4210 read → IrqController::Rdnmi()
 //   5. CpuIoRegisters $4211 read → IrqController::Timeup()
-//   6. After each CPU Step: check NmiTest/IrqTest → drive SnesCpu interrupts
+//   6. At the CPU's final-cycle sample: test NMI/IRQ and update CPU inputs
 //
-// Reference: bsnes sfc/cpu/irq.cpp
 
 #include <cstdint>
 
@@ -62,8 +60,12 @@ public:
     /// @param h       Current H counter (master clocks, 0..hperiod-1)
     /// @param v       Current V counter (scanline, 0..vperiod-1)
     /// @param vdisp   First VBlank scanline (225 or 240)
-    /// @param hperiod Width of current scanline in master clocks
-    void Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod);
+    /// @param hperiod Width of the previous scanline in master clocks
+    /// @param vperiod Scanline count of the previous field
+    void Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod, uint16_t vperiod = 262);
+
+    /// Reevaluate only the timer condition after a timer register write.
+    void PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t vperiod = 262);
 
     // NMITIMEN ($4200) write handler
 
@@ -136,32 +138,31 @@ public:
     bool IrqHold()       const noexcept { return irqHold_; }
 
 private:
-    void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp);
-    void irqPoll(uint16_t h, uint16_t v, uint16_t hperiod);
+  void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod);
 
-    // NMI state machine
-    bool nmiEnable_     = false;
-    bool nmiLine_       = false;  // NMI flag (returned by RDNMI)
-    bool nmiValid_      = false;  // Edge detector input (V >= vdisp)
-    bool nmiHold_       = false;  // 4-clock hold (protects RDNMI clear)
-    bool nmiTransition_ = false;  // Pending NMI dispatch
+  // NMI state machine
+  bool nmiEnable_ = false;
+  bool nmiLine_ = false;       // NMI flag (returned by RDNMI)
+  bool nmiValid_ = false;      // Edge detector input (V >= vdisp)
+  bool nmiHold_ = false;       // 4-clock hold (protects RDNMI clear)
+  bool nmiTransition_ = false; // Pending NMI dispatch
 
-    // IRQ state machine
-    bool hirqEnable_    = false;
-    bool virqEnable_    = false;
-    bool irqEnable_     = false;  // hirq || virq
-    bool irqLine_       = false;  // IRQ flag (returned by TIMEUP)
-    bool irqValid_      = false;  // Edge detector input
-    bool irqHold_       = false;  // 4-clock hold (protects TIMEUP clear)
-    bool irqTransition_ = false;  // Pending IRQ dispatch
+  // IRQ state machine
+  bool hirqEnable_ = false;
+  bool virqEnable_ = false;
+  bool irqEnable_ = false;     // hirq || virq
+  bool irqLine_ = false;       // IRQ flag (returned by TIMEUP)
+  bool irqValid_ = false;      // Edge detector input
+  bool irqHold_ = false;       // 4-clock hold (protects TIMEUP clear)
+  bool irqTransition_ = false; // Pending IRQ dispatch
 
-    // H/V timer targets
-    uint16_t htimeRaw_  = 0x1FF;  // Raw 9-bit value from $4207/$4208
-    uint16_t htimeMc_   = 0;      // Converted to master clocks: (raw+1)<<2
-    uint16_t vtime_     = 0x1FF;  // Raw 9-bit value from $4209/$420A
+  // H/V timer targets
+  uint16_t htimeRaw_ = 0x1FF; // Raw 9-bit value from $4207/$4208
+  uint16_t htimeMc_ = 0;      // Converted to master clocks: (raw+1)<<2
+  uint16_t vtime_ = 0x1FF;    // Raw 9-bit value from $4209/$420A
 
-    // Lock
-    bool irqLock_       = false;
+  // Lock
+  bool irqLock_ = false;
 };
 
 } // namespace snes::core

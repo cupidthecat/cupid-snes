@@ -6,7 +6,7 @@
 // Ppu.hpp — SNES PPU register model + scanline renderer
 //
 // Covers all PPU I/O registers $2100–$213F and a scanline-based rendering
-// pipeline following bsnes ppu-fast.
+// pipeline for backgrounds, sprites, windows, and color math.
 //
 // Write registers: $2100–$2133
 // Read  registers: $2134–$213F
@@ -20,7 +20,6 @@
 //   Per-scanline pipeline: snapshot IO → render BG/OBJ → window → composite
 //   Output: 256×224(240) pixels as uint32_t RGBA8888
 //
-// Reference: bsnes sfc/ppu-fast/ppu.hpp, line.cpp, background.cpp, object.cpp
 
 #include <array>
 #include <cstdint>
@@ -446,11 +445,19 @@ private:
 
     // Scanline rendering internals
 
+    struct ColorMathLatch {
+      uint16_t mainColor = 0;
+      bool mainVisible = false;
+      bool mathEnabled = false;
+      bool useSubscreen = false;
+      bool halve = false;
+    };
+
     /// Render a single cached scanline.
     void RenderLine(Line& line);
 
     /// Render one IO state over a logical 256-dot span of a cached scanline.
-    void RenderLineSpan(Line& line, const IO& state, int x0, int x1);
+    void RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch);
 
     /// Initialize above/below buffers with backdrop color.
     void InitLineBuffers(Line& line);
@@ -483,13 +490,11 @@ private:
                           uint8_t priority, uint16_t color);
 
     /// Color math compositing for a single pixel.
-    uint16_t CompositePixel(const Line& line, int x,
-                            Pixel above, Pixel below) const;
+    uint16_t CompositePixel(const Line &line, int x, ColorMathLatch &latch) const;
 
-    /// Hires/pseudo-hires sub pixel.  Sub(x+1) uses the operation and color
-    /// window selected by Main(x), with Main(x) as the adjacent paired color.
-    uint16_t CompositeHiresSubPixel(const Line& line, int subX,
-                                    int controlX) const;
+    /// Sub(x+1) uses Main(x)'s visibility, math enable, operand selection, and
+    /// halving decision. Fixed color and the add/subtract operation remain live.
+    uint16_t CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const;
 
     /// Color math blend (add/subtract with saturation).
     uint16_t Blend(const Line& line, uint16_t x, uint16_t y,

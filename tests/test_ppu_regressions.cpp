@@ -208,8 +208,11 @@ void HighResolutionOutput() {
         Render(*ppu);
         Expect(ppu->FrameWidth() == 512, "Hires output retains 512 dots");
         for (int x : {0, 2, 128, 254, 510}) {
-            Expect(Pixel(*ppu, x, 0) == (mode == 0 ? 0x7c00 : 0x001f), "Even output dot comes from sub screen");
-            Expect(Pixel(*ppu, x + 1, 0) == (mode == 0 ? 0x001f : 0x03e0), "Odd output dot comes from main screen");
+          const uint16_t sub = x == 0 ? 0 : (mode == 0 ? 0x7c00 : 0x001f);
+          Expect(Pixel(*ppu, x, 0) == sub,
+                 "Even output dots follow the scanline's initial empty sub-dot latch");
+          Expect(Pixel(*ppu, x + 1, 0) == (mode == 0 ? 0x001f : 0x03e0),
+                 "Odd output dot comes from main screen");
         }
         // A forced blank line must clear the entire wide output row.
         ppu->WriteIO(0x2100, 0x80);
@@ -260,6 +263,8 @@ void HiresMosaicSampling() {
                             source = (source + scroll * 2) & 15;
                             if (flip) source ^= 15;
                             uint16_t expected = ppu->CgramData()[pattern[source & 3]];
+                            if (x == 0)
+                              expected = 0;
                             if ((x & 1) && dot >= 5 && dot <= 9) expected = 0;
                             matches &= Pixel(*ppu, x, 0) == expected;
                         }
@@ -326,7 +331,10 @@ void Mode6TileOffsets() {
                             const int mapY = (sourceY / (tall ? 16 : 8)) & 63;
                             int tile = 2 * ((mapX + mapY * 3) & 7) + ((sourceX & 8) ? 1 : 0);
                             if (tall && (sourceY & 8)) tile += 16;
-                            const uint16_t expected = static_cast<uint16_t>(((tile + (sourceY & 7) * 2) % 15 + 1) * 0x421);
+                            const uint16_t expected =
+                                x == 0 ? 0
+                                       : static_cast<uint16_t>(
+                                             ((tile + (sourceY & 7) * 2) % 15 + 1) * 0x421);
                             matches &= Pixel(*ppu, x, y) == expected;
                         }
                     }
@@ -1017,6 +1025,116 @@ void HiresAdjacentMathAndWindows() {
     }
 }
 
+void HiresCompositingLatches() {
+  constexpr uint16_t green = 5 << 5;
+  constexpr uint16_t combined = green | 5;
+  constexpr uint16_t half = (2 << 5) | 2;
+  for (uint8_t mode : {uint8_t(0), uint8_t(5), uint8_t(6)}) {
+    const auto setup = [mode](Ppu &ppu) {
+      SetupHiresPair(ppu, mode != 0);
+      if (mode == 6) {
+        ppu.WriteIO(0x2105, 6);
+        ppu.WriteIO(0x212d, 1);
+        ppu.CgramData()[2] = 5 << 5;
+        for (int tile : {0, 1}) {
+          for (int row = 0; row < 8; ++row)
+            ppu.VramData()[0x1000 + tile * 16 + row] = 0xaa55;
+        }
+      }
+    };
+    for (bool math : {false, true}) {
+      auto ppu = std::make_unique<Ppu>();
+      setup(*ppu);
+      ppu->WriteIO(0x2130, 2);
+      ppu->WriteIO(0x2131, math ? 1 : 0);
+      RenderLines(*ppu, 2);
+      for (int y : {0, 1}) {
+        Expect(Pixel(*ppu, 0, y) == 0, "Each hires scanline starts with an empty sub-dot pipeline");
+        Expect(Pixel(*ppu, 1, y) == (math ? combined : 5),
+               "The first main dot uses the current pixel's math selection");
+        Expect(Pixel(*ppu, 2, y) == (math ? combined : green),
+               "The following sub dot uses the preceding main dot's decisions");
+      }
+    }
+
+    struct Change {
+      uint8_t selection;
+      uint8_t math;
+      uint16_t address;
+      uint8_t value;
+      uint16_t boundarySub;
+      uint16_t boundaryMain;
+      uint16_t nextSub;
+    };
+    const Change changes[]{
+        {2, 1, 0x2131, 0, combined, 5, green},
+        {2, 0, 0x2131, 1, green, combined, combined},
+        {2, 1, 0x2131, 0x41, combined, half, half},
+        {2, 1, 0x2130, 0, combined, 7, uint16_t(green | 2)},
+        {0, 1, 0x2132, 0x23, uint16_t(green | 3), 8, uint16_t(green | 3)},
+        {2, 1, 0x2131, 0x81, green, 5, green},
+    };
+    for (const auto &change : changes) {
+      auto ppu = std::make_unique<Ppu>();
+      setup(*ppu);
+      ppu->WriteIO(0x2130, change.selection);
+      ppu->WriteIO(0x2131, change.math);
+      ppu->WriteIO(0x2132, 0x22);
+      ppu->FrameBegin();
+      ppu->SetCurrentLine(1);
+      ppu->ScanlineBegin(1);
+      ppu->SetCurrentHClock(RasterClock(128));
+      ppu->WriteIO(change.address, change.value);
+      ppu->VBlankBegin();
+      Expect(Pixel(*ppu, 256, 0) == change.boundarySub,
+             "A raster boundary retains prior pixel decisions while reading live color "
+             "operands");
+      Expect(Pixel(*ppu, 257, 0) == change.boundaryMain,
+             "The boundary's main dot uses the new color-math registers");
+      Expect(Pixel(*ppu, 258, 0) == change.nextSub,
+             "The next sub dot receives the boundary main dot's math decisions");
+    }
+
+    auto ppu = std::make_unique<Ppu>();
+    setup(*ppu);
+    ppu->WriteIO(0x2130, 2);
+    ppu->WriteIO(0x2131, 1);
+    ppu->WriteIO(0x2100, 0x8f);
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    ppu->ScanlineBegin(1);
+    ppu->SetCurrentHClock(RasterClock(128));
+    ppu->WriteIO(0x2100, 0x0f);
+    ppu->VBlankBegin();
+    Expect(Pixel(*ppu, 254, 0) == 0 && Pixel(*ppu, 256, 0) == 0,
+           "Forced blank preserves the empty hires pipeline until the first active main dot");
+    Expect(Pixel(*ppu, 257, 0) == combined && Pixel(*ppu, 258, 0) == combined,
+           "Hires math resumes after the first main dot following forced blank");
+
+    ppu = std::make_unique<Ppu>();
+    setup(*ppu);
+    ppu->WriteIO(0x2130, 0);
+    ppu->WriteIO(0x2131, 0x41);
+    ppu->WriteIO(0x2132, 0x22);
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    ppu->ScanlineBegin(1);
+    ppu->SetCurrentHClock(RasterClock(64));
+    ppu->WriteIO(0x2100, 0x8f);
+    ppu->SetCurrentHClock(RasterClock(96));
+    ppu->WriteIO(0x2131, 0);
+    ppu->WriteIO(0x2132, 0x26);
+    ppu->SetCurrentHClock(RasterClock(128));
+    ppu->WriteIO(0x2100, 0x0f);
+    ppu->VBlankBegin();
+    Expect(Pixel(*ppu, 255, 0) == 0 && Pixel(*ppu, 256, 0) == uint16_t((2 << 5) | 3),
+           "Forced blank holds the prior halving and enable latches while fixed color remains "
+           "live");
+    Expect(Pixel(*ppu, 257, 0) == 5 && Pixel(*ppu, 258, 0) == green,
+           "The first active main dot replaces decisions retained across forced blank");
+  }
+}
+
 void ObjectOverflowAndStat77() {
     {
         Ppu ppu;
@@ -1070,6 +1188,7 @@ int main() {
     RasterRegisterChanges();
     Mode7DirectColorAndExtbgMosaic();
     HiresAdjacentMathAndWindows();
+    HiresCompositingLatches();
     ObjectOverflowAndStat77();
     std::printf("PPU regression failures: %d\n", failures);
     return failures ? 1 : 0;

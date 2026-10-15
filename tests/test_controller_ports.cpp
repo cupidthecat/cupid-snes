@@ -87,10 +87,10 @@ void PadsAndPolling() {
     auto& poller = emu->GetAutoJoypad();
     poller.Reset();
     bus.Write(0x4200, 1);
-    poller.Tick128(256, 225, 225);
+    poller.Tick128(256, 225, 225, true);
     bus.Write(0x4016, 1);
     bus.Write(0x4200, 0);
-    poller.Tick128(512, 226, 225);
+    poller.Tick128(512, 226, 225, true);
     for (unsigned i = 0; i < 20; ++i) Check(bus.Read(0x4016) & 1, "CPU latch survives automatic release");
     bus.Write(0x4016, 0);
     Check(Packet(bus, 0, 16) == 0x9010, "Disabling auto polling during latch releases it");

@@ -4,9 +4,7 @@
 
 // IrqController.cpp — SNES NMI / IRQ dispatch implementation
 //
-// Matches bsnes sfc/cpu/irq.cpp behavior:
-//   nmiPoll(), irqPoll(), nmitimenUpdate(), rdnmi(), timeup(),
-//   nmiTest(), irqTest(), lastCycle()
+// Interrupt evaluation, register holds, and instruction-boundary dispatch.
 
 #include "snes/core/IrqController.hpp"
 
@@ -53,13 +51,13 @@ void IrqController::SetVTime(uint16_t raw9bit) noexcept {
 
 // Poll — called every 4 master clocks by the timing system
 
-void IrqController::Poll(uint16_t h, uint16_t v, uint16_t vdisp,
-                          uint16_t hperiod) {
-    nmiPoll(h, v, vdisp);
-    irqPoll(h, v, hperiod);
+void IrqController::Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod,
+                         uint16_t vperiod) {
+  nmiPoll(h, v, vdisp, vperiod);
+  PollTimer(h, v, hperiod, vperiod);
 }
 
-// NMI poll — matches bsnes CPU::nmiPoll()
+// NMI polling
 //
 // Logic:
 //   1. If nmiHold was active (from previous poll), it expires now.
@@ -68,32 +66,33 @@ void IrqController::Poll(uint16_t h, uint16_t v, uint16_t vdisp,
 //      On false→true transition: set nmiLine, start hold.
 //      On true→false transition: clear nmiLine.
 
-void IrqController::nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp) {
-    // Step 1: NMI hold expiration → transition fires
-    if (nmiHold_) {
-        nmiHold_ = false;
-        if (nmiEnable_) {
-            nmiTransition_ = true;
-        }
+void IrqController::nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod) {
+  // Step 1: NMI hold expiration → transition fires
+  if (nmiHold_) {
+    nmiHold_ = false;
+    if (nmiEnable_) {
+      nmiTransition_ = true;
     }
+  }
 
-    // Step 2: Evaluate NMI condition with 2-clock delay
-    // vcounter(2): if h >= 2, use current V; if h < 2, use V-1
-    // (at the very start of a scanline, "2 clocks ago" was the previous line)
-    uint16_t vDelayed = (h >= 2) ? v : (v > 0 ? static_cast<uint16_t>(v - 1) : uint16_t(0));
-    bool newValid = (vDelayed >= vdisp);
+  // Step 2: Evaluate NMI condition with 2-clock delay
+  // vcounter(2): if h >= 2, use current V; if h < 2, use V-1
+  // (at the very start of a scanline, "2 clocks ago" was the previous line)
+  uint16_t vDelayed =
+      (h >= 2) ? v : (v > 0 ? static_cast<uint16_t>(v - 1) : static_cast<uint16_t>(vperiod - 1));
+  bool newValid = (vDelayed >= vdisp);
 
-    // Edge detection — fire on change
-    if (newValid != nmiValid_) {
-        nmiValid_ = newValid;
-        nmiLine_  = nmiValid_;
-        if (nmiLine_) {
-            nmiHold_ = true;  // Hold for one poll cycle (4 clocks)
-        }
+  // Edge detection — fire on change
+  if (newValid != nmiValid_) {
+    nmiValid_ = newValid;
+    nmiLine_ = nmiValid_;
+    if (nmiLine_) {
+      nmiHold_ = true; // Hold for one poll cycle (4 clocks)
     }
+  }
 }
 
-// IRQ poll — matches bsnes CPU::irqPoll()
+// Timer IRQ polling
 //
 // Logic:
 //   1. Clear irqHold (it only lasts one poll cycle).
@@ -101,46 +100,44 @@ void IrqController::nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp) {
 //   3. Check composite IRQ condition (with 10-clock delay).
 //      On false→true (rising edge): set irqLine and irqHold.
 
-void IrqController::irqPoll(uint16_t h, uint16_t v, uint16_t hperiod) {
-    // Step 1: always clear hold
-    irqHold_ = false;
+void IrqController::PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t vperiod) {
+  // Step 1: always clear hold
+  irqHold_ = false;
 
-    // Step 2: if IRQ line already active and IRQ enabled → keep transition set
-    if (irqLine_ && irqEnable_) {
-        irqTransition_ = true;
-    }
+  // Step 2: if IRQ line already active and IRQ enabled → keep transition set
+  if (irqLine_ && irqEnable_) {
+    irqTransition_ = true;
+  }
 
-    // Step 3: evaluate composite IRQ condition with 10-clock communication delay
-    //
-    // hcounter(10): H counter from 10 master clocks ago
-    // vcounter(10): V counter from 10 master clocks ago
-    uint16_t hd = (h >= 10) ? static_cast<uint16_t>(h - 10)
-                             : static_cast<uint16_t>(h + hperiod - 10);
-    uint16_t vd = (h >= 10) ? v
-                             : (v > 0 ? static_cast<uint16_t>(v - 1) : uint16_t(0));
+  // Step 3: evaluate composite IRQ condition with 10-clock communication delay
+  //
+  // hcounter(10): H counter from 10 master clocks ago
+  // vcounter(10): V counter from 10 master clocks ago
+  uint16_t hd = (h >= 10) ? static_cast<uint16_t>(h - 10) : static_cast<uint16_t>(h + hperiod - 10);
+  const uint16_t previousV = v > 0 ? v - 1 : vperiod - 1;
+  uint16_t vd = (h >= 10) ? v : previousV;
+  const uint16_t guardH = h >= 6 ? h - 6 : h + hperiod - 6;
+  const uint16_t guardV = h >= 6 ? v : previousV;
 
-    // The condition: irqEnable AND (V matches if virq) AND (H matches if hirq)
-    // AND not the very last dot of the frame (vcounter(6) || hcounter(6))
-    bool active = irqEnable_
-        && (!virqEnable_ || vd == vtime_)
-        && (!hirqEnable_ || hd == htimeMc_)
-        && (vd > 0 || hd > 0);  // Not V=0, H=0 (last-dot guard)
+  // The condition: irqEnable AND (V matches if virq) AND (H matches if hirq)
+  // AND not the very last dot of the frame (vcounter(6) || hcounter(6))
+  bool active = irqEnable_ && (!virqEnable_ || vd == vtime_) && (!hirqEnable_ || hd == htimeMc_) &&
+                (guardV != 0 || guardH != 0);
 
-    // Rising edge detection → new assertion
-    if (active && !irqValid_) {
-        irqValid_ = true;
-        irqLine_  = true;
-        irqHold_  = true;
-    }
-    // Falling edge — clear valid (but don't clear irqLine; that's done by Timeup)
-    if (!active && irqValid_) {
-        irqValid_ = false;
-    }
+  // Rising edge detection → new assertion
+  if (active && !irqValid_) {
+    irqValid_ = true;
+    irqLine_ = true;
+    irqHold_ = true;
+  }
+  // Falling edge — clear valid (but don't clear irqLine; that's done by Timeup)
+  if (!active && irqValid_) {
+    irqValid_ = false;
+  }
 }
 
 // NmitimenUpdate — called when $4200 is written
 //
-// Matches bsnes CPU::nmitimenUpdate().
 
 void IrqController::NmitimenUpdate(uint8_t data) {
     bool oldNmiEnable = nmiEnable_;
@@ -156,7 +153,7 @@ void IrqController::NmitimenUpdate(uint8_t data) {
         nmiTransition_ = true;
     }
 
-    // IRQ mode changes (matches bsnes)
+    // IRQ mode changes
     if (virqEnable_ && !hirqEnable_ && irqLine_) {
         irqTransition_ = true;
     } else if (!irqEnable_) {

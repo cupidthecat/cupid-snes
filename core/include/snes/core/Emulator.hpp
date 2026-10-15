@@ -174,6 +174,7 @@ private:
     std::array<int16_t, kAudioBufSamples * 2> audioBuf_{};
     std::vector<int16_t> audioOverflow_;
     bool collectingAudio_ = false;
+    uint64_t nextSmpMasterClock_ = 0;
     AudioBuffer audioOutputBuffer_;
     VideoFrame videoOutputFrame_;
 
