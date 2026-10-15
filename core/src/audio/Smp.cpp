@@ -7,7 +7,6 @@
 // Provides the SPC700's bus interface: 64KB RAM, IPL ROM overlay,
 // I/O registers ($00F0-$00FF), and bidirectional CPU communication ports.
 //
-// Reference: bsnes sfc/smp/io.cpp, sfc/smp/memory.cpp, sfc/smp/smp.cpp
 
 #include "snes/core/Smp.hpp"
 #include "snes/core/Dsp.hpp"
@@ -112,6 +111,7 @@ void Smp::Power() {
     timer1_ = {};
     timer2_ = {};
     busWait_ = {};
+    hardwareClocks_ = 0;
 }
 
 // Bus interface — Spc700 overrides
@@ -163,11 +163,15 @@ void Smp::tickDsp() {
 // Batch execution — stop exactly at the requested 1.024 MHz clock deadline.
 
 void Smp::RunUntil(uint64_t targetCycles) {
-    // StepCycle can pause an instruction inside a stretched access, keeping
-    // timers and DSP on the same clock deadline even while the CPU is halted.
-    while (cycles_ < targetCycles) {
-        StepCycle();
-    }
+  RunUntilHardwareClock(targetCycles * 2);
+}
+
+void Smp::RunUntilHardwareClock(uint64_t targetClocks) {
+  // StepCycle can pause an instruction inside a stretched access, keeping
+  // timers and DSP on the same clock deadline even while the CPU is halted.
+  while (hardwareClocks_ < targetClocks) {
+    StepCycle();
+  }
 }
 
 bool Smp::ExecuteBusCycle(const PendingCycle& cycle) {
@@ -179,7 +183,7 @@ bool Smp::ClockBusCycle(const PendingCycle& cycle, BusWait& wait) {
         // TEST divides internal and external accesses independently. This
         // deterministic model uses the regular ratios; some S-SMP revisions
         // have much longer internal waits or lock up at the slowest settings.
-        static constexpr uint8_t durations[]{1, 2, 5, 10};
+        static constexpr uint8_t durations[]{2, 4, 10, 20};
         static constexpr uint8_t timerTicks[]{2, 4, 8, 16};
         const bool internal = cycle.kind == PendingCycleKind::Idle ||
             (cycle.address & 0xfff0) == 0x00f0 ||
@@ -191,13 +195,15 @@ bool Smp::ClockBusCycle(const PendingCycle& cycle, BusWait& wait) {
 
     const unsigned previousTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
     ++wait.elapsed;
-    ++cycles_;
+    ++hardwareClocks_;
+    cycles_ = hardwareClocks_ / 2;
     const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
     StepTimers(nextTicks - previousTicks);
-    tickDsp();
+    if ((hardwareClocks_ & 1) == 0)
+      tickDsp();
 
     // Model the communication input latch at the midpoint and hold it through
-    // completion. Sub-clock sampling and collisions are not represented.
+    // completion, including accesses whose midpoint falls between full cycles.
     const bool inputPort = cycle.kind == PendingCycleKind::Read &&
                            (cycle.address & 0xfffc) == 0x00f4;
     if (inputPort && !wait.sampled && 2 * wait.elapsed >= wait.duration) {
@@ -249,7 +255,7 @@ uint8_t Smp::readRam(uint16_t address) const {
         return iplRom_[address & 0x3F];
     }
     if (io_.ramDisable) {
-        return 0x5A;  // RAM disabled returns $5A (bsnes behavior)
+      return 0x5A; // RAM disabled returns $5A.
     }
     return ram_[address];
 }
@@ -328,19 +334,20 @@ uint8_t Smp::readIO(uint16_t address) {
 void Smp::writeIO(uint16_t address, uint8_t data) {
     switch (address) {
     case 0x00F0:  // TEST
-        // Writes only valid when P flag is clear (bsnes behavior)
-        if (r.p.p) break;
-        io_.timersDisable      = (data & 0x01) != 0;
-        io_.ramWritable        = (data & 0x02) != 0;
-        io_.ramDisable         = (data & 0x04) != 0;
-        io_.timersEnable       = (data & 0x08) != 0;
-        io_.externalWaitStates = (data >> 4) & 0x03;
-        io_.internalWaitStates = (data >> 6) & 0x03;
-        // Re-evaluate timer gate signals immediately
-        timer0_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
-        timer1_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
-        timer2_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
+      // Writes only valid when P flag is clear.
+      if (r.p.p)
         break;
+      io_.timersDisable = (data & 0x01) != 0;
+      io_.ramWritable = (data & 0x02) != 0;
+      io_.ramDisable = (data & 0x04) != 0;
+      io_.timersEnable = (data & 0x08) != 0;
+      io_.externalWaitStates = (data >> 4) & 0x03;
+      io_.internalWaitStates = (data >> 6) & 0x03;
+      // Re-evaluate timer gate signals immediately
+      timer0_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
+      timer1_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
+      timer2_.SynchronizeStage1(io_.timersEnable, io_.timersDisable);
+      break;
 
     case 0x00F1:  // CONTROL
         // Bits 4-5: clear input ports (CPU→SMP latches)
@@ -356,8 +363,8 @@ void Smp::writeIO(uint16_t address, uint8_t data) {
         // Bit 7: IPL ROM enable/disable
         io_.iplRomEnable = (data & 0x80) != 0;
 
-        // Bits 0-2: Timer enable with 0→1 edge detection
-        // Rising edge (newly enabled) resets stage2 and stage3
+        // Timers 0 and 1 reset on enable; timer 2 retains its counters on
+        // that transition and resets them on every other CONTROL write.
         {
             bool wasEnabled0 = timer0_.enable;
             timer0_.enable = (data & 0x01) != 0;
@@ -375,9 +382,9 @@ void Smp::writeIO(uint16_t address, uint8_t data) {
 
             bool wasEnabled2 = timer2_.enable;
             timer2_.enable = (data & 0x04) != 0;
-            if (!wasEnabled2 && timer2_.enable) {
-                timer2_.stage2 = 0;
-                timer2_.stage3 = 0;
+            if (wasEnabled2 || !timer2_.enable) {
+              timer2_.stage2 = 0;
+              timer2_.stage3 = 0;
             }
         }
         break;

@@ -5,9 +5,6 @@
 // Spc700.cpp — Sony SPC700 Audio Processor Core Implementation
 //
 // All 256 opcodes, ALU algorithms, and addressing mode instruction helpers.
-//
-// Reference: bsnes processor/spc700/
-//   - algorithms.cpp, memory.cpp, instruction.cpp, instructions.cpp
 
 #include "snes/core/Spc700.hpp"
 #include <cstring>
@@ -845,9 +842,9 @@ Spc700::Routine Spc700::InstrDivide() {
         r.a = static_cast<uint8_t>(ya / x);
         r.y = static_cast<uint8_t>(ya % x);
     } else {
-        // Overflow case — match bsnes behavior
-        r.a = static_cast<uint8_t>(255 - (ya - (static_cast<uint16_t>(x) << 9)) / (256 - x));
-        r.y = static_cast<uint8_t>(x + (ya - (static_cast<uint16_t>(x) << 9)) % (256 - x));
+      // Overflow case.
+      r.a = static_cast<uint8_t>(255 - (ya - (static_cast<uint16_t>(x) << 9)) / (256 - x));
+      r.y = static_cast<uint8_t>(x + (ya - (static_cast<uint16_t>(x) << 9)) % (256 - x));
     }
 
     r.p.z = r.a == 0;
@@ -890,15 +887,15 @@ Spc700::Routine Spc700::InstrNoOperation() {
 }
 
 Spc700::Routine Spc700::InstrSleep() {
-    co_await WaitCycle();
-    co_await WaitCycle();
     r.wait = true;
+    (void)co_await ReadCycleAt(r.pc);
+    co_await WaitCycle();
 }
 
 Spc700::Routine Spc700::InstrStop() {
-    co_await WaitCycle();
-    co_await WaitCycle();
     r.stop = true;
+    (void)co_await ReadCycleAt(r.pc);
+    co_await WaitCycle();
 }
 
 // Step — cycle-resumable opcode dispatch (all 256 opcodes)
@@ -981,9 +978,10 @@ void Spc700::Step() {
 Spc700::Routine Spc700::ExecuteInstructions() {
     for (;;) {
         if (r.wait || r.stop) {
-            co_await WaitCycle();
-            co_await InstructionBoundary{this};
-            continue;
+          (void)co_await ReadCycleAt(r.pc);
+          co_await WaitCycle();
+          co_await InstructionBoundary{this};
+          continue;
         }
 
         uint8_t opcode = co_await Fetch();

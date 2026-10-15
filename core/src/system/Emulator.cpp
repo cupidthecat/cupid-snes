@@ -637,11 +637,16 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
     // changes until that clock edge, so avoid repeating the conversion there.
     if (elapsed < nextSmpMasterClock_)
       return;
-    const auto smpTarget = elapsed * Smp::kClockFrequency / timing_.MasterClockHz();
-    nextSmpMasterClock_ = ((smpTarget + 1) * timing_.MasterClockHz() + Smp::kClockFrequency - 1) /
-                          Smp::kClockFrequency;
+    const uint64_t masterHz = timing_.MasterClockHz();
+    constexpr uint64_t soundHz = Smp::kHardwareClockFrequency;
+    // Split whole seconds from the remainder so long sessions cannot overflow
+    // an elapsed-master-clocks times sound-frequency product.
+    const auto fractionalClocks = (elapsed % masterHz) * soundHz;
+    const auto smpTarget = (elapsed / masterHz) * soundHz + fractionalClocks / masterHz;
+    const auto phase = fractionalClocks % masterHz;
+    nextSmpMasterClock_ = elapsed + (masterHz - phase + soundHz - 1) / soundHz;
     const int firstSample = dsp_.SamplesWritten();
-    smp_.RunUntil(smpTarget);
+    smp_.RunUntilHardwareClock(smpTarget);
     if (msu1_) {
         // Mix before this bus phase completes: later volume or track writes
         // must not change PCM that has already played. Use the DSP's sample
