@@ -159,9 +159,15 @@ void Ppu::UpdateObjectOverflow(uint16_t line) {
 
 void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO& before) {
     if (currentLine_ == 0 || currentLine_ >= VDisp()) return;
-    if (currentHClock_ < 88 || currentHClock_ >= 1096) return;
+    const bool screenClock = type == RasterEventType::Display || type == RasterEventType::Mode7;
+    const unsigned firstClock = screenClock ? 58 : 88;
+    const unsigned lastClock = screenClock ? 1082 : 1096;
+    if (currentHClock_ < firstClock || currentHClock_ >= lastClock)
+      return;
 
-    const int x = static_cast<int>(currentHClock_ / 4) - 22;
+    // Screen pixels and Mode 7 samples occur every four clocks, starting at H=58.
+    const int x = screenClock ? (currentHClock_ - firstClock + 3) / 4
+                              : static_cast<int>(currentHClock_ / 4) - 22;
     if (x <= 0 || x >= 256) return;
 
     RasterEvent event;
@@ -171,136 +177,200 @@ void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO& befor
     event.index = index;
     event.before = before;
     event.after = io_;
-    rasterEvents_[currentLine_].push_back(std::move(event));
+    auto& events = rasterEvents_[currentLine_];
+    const auto next = std::upper_bound(events.begin(), events.end(), event.x,
+                                       [](uint16_t x, const RasterEvent& queued) {
+                                         return x < queued.x;
+                                       });
+    events.insert(next, std::move(event));
 }
 
-void Ppu::ApplyRasterEvent(IO& state, const RasterEvent& event, bool after) {
-    const IO& value = after ? event.after : event.before;
-    auto copyLayerSelection = [](WindowLayer& dst, const WindowLayer& src) {
-        dst.oneEnable = src.oneEnable;
-        dst.oneInvert = src.oneInvert;
-        dst.twoEnable = src.twoEnable;
-        dst.twoInvert = src.twoInvert;
-    };
-    auto copyColorSelection = [](WindowColor& dst, const WindowColor& src) {
-        dst.oneEnable = src.oneEnable;
-        dst.oneInvert = src.oneInvert;
-        dst.twoEnable = src.twoEnable;
-        dst.twoInvert = src.twoInvert;
-    };
+void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
+  const IO &value = after ? event.after : event.before;
+  auto copyLayerSelection = [](WindowLayer &dst, const WindowLayer &src) {
+    dst.oneEnable = src.oneEnable;
+    dst.oneInvert = src.oneInvert;
+    dst.twoEnable = src.twoEnable;
+    dst.twoInvert = src.twoInvert;
+  };
+  auto copyColorSelection = [](WindowColor &dst, const WindowColor &src) {
+    dst.oneEnable = src.oneEnable;
+    dst.oneInvert = src.oneInvert;
+    dst.twoEnable = src.twoEnable;
+    dst.twoInvert = src.twoInvert;
+  };
 
-    switch (event.type) {
-    case RasterEventType::Display:
-        state.displayDisable = value.displayDisable;
-        state.displayBrightness = value.displayBrightness;
-        break;
-    case RasterEventType::Mosaic:
-        state.mosaic = value.mosaic;
-        state.bg1.mosaicEnable = value.bg1.mosaicEnable;
-        state.bg2.mosaicEnable = value.bg2.mosaicEnable;
-        state.bg3.mosaicEnable = value.bg3.mosaicEnable;
-        state.bg4.mosaicEnable = value.bg4.mosaicEnable;
-        break;
-    case RasterEventType::Scroll: {
-        Background* bg = nullptr;
-        switch (event.index >> 1) {
-        case 0: bg = &state.bg1; break;
-        case 1: bg = &state.bg2; break;
-        case 2: bg = &state.bg3; break;
-        case 3: bg = &state.bg4; break;
-        default: break;
-        }
-        if (!bg) break;
-        const Background* sourceBg = nullptr;
-        switch (event.index >> 1) {
-        case 0: sourceBg = &value.bg1; break;
-        case 1: sourceBg = &value.bg2; break;
-        case 2: sourceBg = &value.bg3; break;
-        case 3: sourceBg = &value.bg4; break;
-        default: break;
-        }
-        if (!sourceBg) break;
-        if (event.index & 1) bg->voffset = sourceBg->voffset;
-        else bg->hoffset = sourceBg->hoffset;
-        if (event.index == 0) state.mode7.hoffset = value.mode7.hoffset;
-        if (event.index == 1) state.mode7.voffset = value.mode7.voffset;
-        break;
+  switch (event.type) {
+  case RasterEventType::Display:
+    state.displayDisable = value.displayDisable;
+    state.displayBrightness = value.displayBrightness;
+    break;
+  case RasterEventType::Mode7:
+    switch (event.index) {
+    case 0x1a:
+      state.mode7.hflip = value.mode7.hflip;
+      state.mode7.vflip = value.mode7.vflip;
+      state.mode7.repeat = value.mode7.repeat;
+      break;
+    case 0x1b:
+      state.mode7.a = value.mode7.a;
+      break;
+    case 0x1c:
+      state.mode7.b = value.mode7.b;
+      break;
+    case 0x1d:
+      state.mode7.c = value.mode7.c;
+      break;
+    case 0x1e:
+      state.mode7.d = value.mode7.d;
+      break;
+    case 0x1f:
+      state.mode7.x = value.mode7.x;
+      break;
+    case 0x20:
+      state.mode7.y = value.mode7.y;
+      break;
     }
-    case RasterEventType::WindowSelect:
-        if (event.index == 0) {
-            copyLayerSelection(state.bg1.window, value.bg1.window);
-            copyLayerSelection(state.bg2.window, value.bg2.window);
-        } else if (event.index == 1) {
-            copyLayerSelection(state.bg3.window, value.bg3.window);
-            copyLayerSelection(state.bg4.window, value.bg4.window);
-        } else {
-            copyLayerSelection(state.obj.window, value.obj.window);
-            copyColorSelection(state.col.window, value.col.window);
-        }
-        break;
-    case RasterEventType::Composition:
-        switch (event.index) {
-        case 0x26: state.window.oneLeft = value.window.oneLeft; break;
-        case 0x27: state.window.oneRight = value.window.oneRight; break;
-        case 0x28: state.window.twoLeft = value.window.twoLeft; break;
-        case 0x29: state.window.twoRight = value.window.twoRight; break;
-        case 0x2a:
-            state.bg1.window.mask = value.bg1.window.mask;
-            state.bg2.window.mask = value.bg2.window.mask;
-            state.bg3.window.mask = value.bg3.window.mask;
-            state.bg4.window.mask = value.bg4.window.mask;
-            break;
-        case 0x2b:
-            state.obj.window.mask = value.obj.window.mask;
-            state.col.window.mask = value.col.window.mask;
-            break;
-        case 0x2c:
-            state.bg1.aboveEnable = value.bg1.aboveEnable;
-            state.bg2.aboveEnable = value.bg2.aboveEnable;
-            state.bg3.aboveEnable = value.bg3.aboveEnable;
-            state.bg4.aboveEnable = value.bg4.aboveEnable;
-            state.obj.aboveEnable = value.obj.aboveEnable;
-            break;
-        case 0x2d:
-            state.bg1.belowEnable = value.bg1.belowEnable;
-            state.bg2.belowEnable = value.bg2.belowEnable;
-            state.bg3.belowEnable = value.bg3.belowEnable;
-            state.bg4.belowEnable = value.bg4.belowEnable;
-            state.obj.belowEnable = value.obj.belowEnable;
-            break;
-        case 0x2e:
-            state.bg1.window.aboveEnable = value.bg1.window.aboveEnable;
-            state.bg2.window.aboveEnable = value.bg2.window.aboveEnable;
-            state.bg3.window.aboveEnable = value.bg3.window.aboveEnable;
-            state.bg4.window.aboveEnable = value.bg4.window.aboveEnable;
-            state.obj.window.aboveEnable = value.obj.window.aboveEnable;
-            break;
-        case 0x2f:
-            state.bg1.window.belowEnable = value.bg1.window.belowEnable;
-            state.bg2.window.belowEnable = value.bg2.window.belowEnable;
-            state.bg3.window.belowEnable = value.bg3.window.belowEnable;
-            state.bg4.window.belowEnable = value.bg4.window.belowEnable;
-            state.obj.window.belowEnable = value.obj.window.belowEnable;
-            break;
-        case 0x30:
-            state.col.directColor = value.col.directColor;
-            state.col.blendMode = value.col.blendMode;
-            state.col.window.belowMask = value.col.window.belowMask;
-            state.col.window.aboveMask = value.col.window.aboveMask;
-            break;
-        case 0x31:
-            std::copy_n(value.col.enable, SourceCount, state.col.enable);
-            state.col.halve = value.col.halve;
-            state.col.mathMode = value.col.mathMode;
-            break;
-        case 0x32:
-            state.col.fixedColor = value.col.fixedColor;
-            break;
-        default:
-            break;
-        }
-        break;
+    break;
+  case RasterEventType::Mosaic:
+    state.mosaic = value.mosaic;
+    state.bg1.mosaicEnable = value.bg1.mosaicEnable;
+    state.bg2.mosaicEnable = value.bg2.mosaicEnable;
+    state.bg3.mosaicEnable = value.bg3.mosaicEnable;
+    state.bg4.mosaicEnable = value.bg4.mosaicEnable;
+    break;
+  case RasterEventType::Scroll: {
+    Background *bg = nullptr;
+    switch (event.index >> 1) {
+    case 0:
+      bg = &state.bg1;
+      break;
+    case 1:
+      bg = &state.bg2;
+      break;
+    case 2:
+      bg = &state.bg3;
+      break;
+    case 3:
+      bg = &state.bg4;
+      break;
+    default:
+      break;
     }
+    if (!bg)
+      break;
+    const Background *sourceBg = nullptr;
+    switch (event.index >> 1) {
+    case 0:
+      sourceBg = &value.bg1;
+      break;
+    case 1:
+      sourceBg = &value.bg2;
+      break;
+    case 2:
+      sourceBg = &value.bg3;
+      break;
+    case 3:
+      sourceBg = &value.bg4;
+      break;
+    default:
+      break;
+    }
+    if (!sourceBg)
+      break;
+    if (event.index & 1)
+      bg->voffset = sourceBg->voffset;
+    else
+      bg->hoffset = sourceBg->hoffset;
+    if (event.index == 0)
+      state.mode7.hoffset = value.mode7.hoffset;
+    if (event.index == 1)
+      state.mode7.voffset = value.mode7.voffset;
+    break;
+  }
+  case RasterEventType::WindowSelect:
+    if (event.index == 0) {
+      copyLayerSelection(state.bg1.window, value.bg1.window);
+      copyLayerSelection(state.bg2.window, value.bg2.window);
+    } else if (event.index == 1) {
+      copyLayerSelection(state.bg3.window, value.bg3.window);
+      copyLayerSelection(state.bg4.window, value.bg4.window);
+    } else {
+      copyLayerSelection(state.obj.window, value.obj.window);
+      copyColorSelection(state.col.window, value.col.window);
+    }
+    break;
+  case RasterEventType::Composition:
+    switch (event.index) {
+    case 0x26:
+      state.window.oneLeft = value.window.oneLeft;
+      break;
+    case 0x27:
+      state.window.oneRight = value.window.oneRight;
+      break;
+    case 0x28:
+      state.window.twoLeft = value.window.twoLeft;
+      break;
+    case 0x29:
+      state.window.twoRight = value.window.twoRight;
+      break;
+    case 0x2a:
+      state.bg1.window.mask = value.bg1.window.mask;
+      state.bg2.window.mask = value.bg2.window.mask;
+      state.bg3.window.mask = value.bg3.window.mask;
+      state.bg4.window.mask = value.bg4.window.mask;
+      break;
+    case 0x2b:
+      state.obj.window.mask = value.obj.window.mask;
+      state.col.window.mask = value.col.window.mask;
+      break;
+    case 0x2c:
+      state.bg1.aboveEnable = value.bg1.aboveEnable;
+      state.bg2.aboveEnable = value.bg2.aboveEnable;
+      state.bg3.aboveEnable = value.bg3.aboveEnable;
+      state.bg4.aboveEnable = value.bg4.aboveEnable;
+      state.obj.aboveEnable = value.obj.aboveEnable;
+      break;
+    case 0x2d:
+      state.bg1.belowEnable = value.bg1.belowEnable;
+      state.bg2.belowEnable = value.bg2.belowEnable;
+      state.bg3.belowEnable = value.bg3.belowEnable;
+      state.bg4.belowEnable = value.bg4.belowEnable;
+      state.obj.belowEnable = value.obj.belowEnable;
+      break;
+    case 0x2e:
+      state.bg1.window.aboveEnable = value.bg1.window.aboveEnable;
+      state.bg2.window.aboveEnable = value.bg2.window.aboveEnable;
+      state.bg3.window.aboveEnable = value.bg3.window.aboveEnable;
+      state.bg4.window.aboveEnable = value.bg4.window.aboveEnable;
+      state.obj.window.aboveEnable = value.obj.window.aboveEnable;
+      break;
+    case 0x2f:
+      state.bg1.window.belowEnable = value.bg1.window.belowEnable;
+      state.bg2.window.belowEnable = value.bg2.window.belowEnable;
+      state.bg3.window.belowEnable = value.bg3.window.belowEnable;
+      state.bg4.window.belowEnable = value.bg4.window.belowEnable;
+      state.obj.window.belowEnable = value.obj.window.belowEnable;
+      break;
+    case 0x30:
+      state.col.directColor = value.col.directColor;
+      state.col.blendMode = value.col.blendMode;
+      state.col.window.belowMask = value.col.window.belowMask;
+      state.col.window.aboveMask = value.col.window.aboveMask;
+      break;
+    case 0x31:
+      std::copy_n(value.col.enable, SourceCount, state.col.enable);
+      state.col.halve = value.col.halve;
+      state.col.mathMode = value.col.mathMode;
+      break;
+    case 0x32:
+      state.col.fixedColor = value.col.fixedColor;
+      break;
+    default:
+      break;
+    }
+    break;
+  }
 }
 
 void Ppu::ScanlineBegin(uint16_t line) {
@@ -950,52 +1020,66 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
     // $211A - M7SEL (Mode 7 settings)
     case 0x211A: {
-        io_.mode7.hflip  = (data >> 0) & 1;
-        io_.mode7.vflip  = (data >> 1) & 1;
-        io_.mode7.repeat = (data >> 6) & 3;
-        return;
+      const IO before = io_;
+      io_.mode7.hflip = (data >> 0) & 1;
+      io_.mode7.vflip = (data >> 1) & 1;
+      io_.mode7.repeat = (data >> 6) & 3;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1a, before);
+      return;
     }
 
     // $211B - M7A
     case 0x211B: {
-        io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1b, before);
+      return;
     }
 
     // $211C - M7B
     case 0x211C: {
-        io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1c, before);
+      return;
     }
 
     // $211D - M7C
     case 0x211D: {
-        io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1d, before);
+      return;
     }
 
     // $211E - M7D
     case 0x211E: {
-        io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1e, before);
+      return;
     }
 
     // $211F - M7X
     case 0x211F: {
-        io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x1f, before);
+      return;
     }
 
     // $2120 - M7Y
     case 0x2120: {
-        io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        return;
+      const IO before = io_;
+      io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      RecordRasterEvent(RasterEventType::Mode7, 0x20, before);
+      return;
     }
 
     // $2121 - CGADD (CGRAM address)

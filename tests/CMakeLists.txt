@@ -32,6 +32,18 @@ add_executable(snes_console_reset_tests test_console_reset.cpp)
 target_link_libraries(snes_console_reset_tests PRIVATE snes_core)
 add_test(NAME snes_console_reset_tests COMMAND snes_console_reset_tests)
 
+add_executable(snes_upd_dsp_tests test_upd_dsp.cpp)
+target_link_libraries(snes_upd_dsp_tests PRIVATE snes_core)
+add_test(NAME snes_upd_dsp_tests COMMAND snes_upd_dsp_tests)
+
+add_executable(snes_nec_dsp_tests test_nec_dsp.cpp)
+target_link_libraries(snes_nec_dsp_tests PRIVATE snes_core)
+add_test(NAME snes_nec_dsp_tests COMMAND snes_nec_dsp_tests)
+
+add_executable(snes_firmware_asset_tests test_firmware_assets.cpp)
+target_link_libraries(snes_firmware_asset_tests PRIVATE snes_core)
+add_test(NAME snes_firmware_asset_tests COMMAND snes_firmware_asset_tests)
+
 add_executable(snes_execution_context_tests test_execution_context.cpp)
 target_link_libraries(snes_execution_context_tests PRIVATE snes_core)
 add_test(NAME snes_execution_context_tests COMMAND snes_execution_context_tests)

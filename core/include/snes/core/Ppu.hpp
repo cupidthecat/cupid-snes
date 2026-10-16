@@ -382,22 +382,23 @@ public:
     int CachedLineCount() const noexcept { return lineCount_; }
 
 private:
-    enum class RasterEventType : uint8_t {
-        Display,
-        Mosaic,
-        Scroll,
-        WindowSelect,
-        Composition,
-    };
+  enum class RasterEventType : uint8_t {
+    Display,
+    Mosaic,
+    Scroll,
+    WindowSelect,
+    Composition,
+    Mode7,
+  };
 
-    struct RasterEvent {
-        uint16_t hclock = 0;
-        uint16_t x = 0;
-        RasterEventType type = RasterEventType::Display;
-        uint8_t index = 0;
-        IO before{};
-        IO after{};
-    };
+  struct RasterEvent {
+    uint16_t hclock = 0;
+    uint16_t x = 0;
+    RasterEventType type = RasterEventType::Display;
+    uint8_t index = 0;
+    IO before{};
+    IO after{};
+  };
 
     // Internal VRAM / OAM / CGRAM helpers
 

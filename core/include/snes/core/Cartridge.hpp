@@ -4,16 +4,17 @@
 
 #pragma once
 
-#include "snes/core/St010.hpp"
-#include "snes/core/Spc7110.hpp"
-#include "snes/core/Sa1.hpp"
-#include "snes/core/SuperFx.hpp"
-#include "snes/core/Cx4.hpp"
-#include "snes/core/SetaProtocol.hpp"
 #include "snes/core/Bsx.hpp"
+#include "snes/core/NecDsp.hpp"
+#include "snes/core/Cx4.hpp"
 #include "snes/core/Dsp3.hpp"
 #include "snes/core/Dsp4.hpp"
 #include "snes/core/Obc1.hpp"
+#include "snes/core/Sa1.hpp"
+#include "snes/core/SetaProtocol.hpp"
+#include "snes/core/Spc7110.hpp"
+#include "snes/core/St010.hpp"
+#include "snes/core/SuperFx.hpp"
 #include <memory>
 
 #include <cstddef>
@@ -108,50 +109,57 @@ private:
 
 class Cartridge {
 public:
-    static std::optional<Cartridge> FromRomImage(std::span<const uint8_t> romImage,
-                                                 RomNormalizationInfo* normalization,
-                                                 const CartridgeDatabase* database,
-                                                 std::string* error);
+  static std::optional<Cartridge> FromRomImage(std::span<const uint8_t> romImage,
+                                               RomNormalizationInfo *normalization,
+                                               const CartridgeDatabase *database,
+                                               std::string *error,
+                                               const CartridgeFirmware *firmware = nullptr);
 
-    static std::optional<Cartridge> FromSufamiTurbo(
-        std::span<const uint8_t> bios, std::span<const uint8_t> slotA,
-        std::span<const uint8_t> slotB, std::string* error = nullptr);
-    static std::optional<Cartridge> FromBroadcastCartridge(
-        std::span<const uint8_t> base, std::span<const uint8_t> pack,
-        std::string* error = nullptr);
+  static std::optional<Cartridge> FromSufamiTurbo(std::span<const uint8_t> bios,
+                                                  std::span<const uint8_t> slotA,
+                                                  std::span<const uint8_t> slotB,
+                                                  std::string *error = nullptr);
+  static std::optional<Cartridge> FromBroadcastCartridge(std::span<const uint8_t> base,
+                                                         std::span<const uint8_t> pack,
+                                                         std::string *error = nullptr);
 
-    const RomHeader& Header() const noexcept;
-    uint32_t RomCrc32() const noexcept;
+  const RomHeader &Header() const noexcept;
+  uint32_t RomCrc32() const noexcept;
 
-    // Reset device controls while retaining cartridge storage and clock data.
-    void Reset();
+  // Reset device controls while retaining cartridge storage and clock data.
+  void Reset();
 
-    void SetMemselFast(bool enabled) noexcept;
-    bool MemselFast() const noexcept;
+  void SetMemselFast(bool enabled) noexcept;
+  bool MemselFast() const noexcept;
 
-    uint8_t Read(uint32_t cpuAddress, uint8_t openBus = 0xff) const;
-    void Write(uint32_t cpuAddress, uint8_t value);
+  uint8_t Read(uint32_t cpuAddress, uint8_t openBus = 0xff) const;
+  void Write(uint32_t cpuAddress, uint8_t value);
 
-    std::vector<uint8_t> BeginDma(unsigned channel, uint32_t address,
-                                  uint16_t size, bool fixed, bool fromBBus);
-    void EndDma(unsigned channel);
+  std::vector<uint8_t> BeginDma(unsigned channel, uint32_t address, uint16_t size, bool fixed,
+                                bool fromBBus);
+  void EndDma(unsigned channel);
 
-    uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
-    void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0,
-                         bool cpuRefreshing = false);
-    void SetPal(bool pal);
-    bool CpuIrqPending() const noexcept;
+  uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
+  void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
+  void SetPal(bool pal);
+  bool CpuIrqPending() const noexcept;
+  bool HasSignalProcessor() const noexcept {
+    return bool(necDsp_);
+  }
+  bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
 
-    std::span<const uint8_t> RomData() const noexcept;
-    std::span<const uint8_t> SramData() const noexcept;
-    void LoadSram(std::span<const uint8_t> data);
-    std::span<const uint8_t> SlotSramData(unsigned slot) const noexcept;
-    void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);
-    std::span<const uint8_t> MemoryPackData() const noexcept;
-    bool LoadMemoryPack(std::span<const uint8_t> data);
-    bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data);
-    bool SetBroadcastTimeSource(std::function<BroadcastTime()> source);
-    std::vector<uint8_t> SaveRtc() { return spc7110_ ? spc7110_->SaveRtc() : std::vector<uint8_t>{}; }
+  std::span<const uint8_t> RomData() const noexcept;
+  std::span<const uint8_t> SramData() const noexcept;
+  void LoadSram(std::span<const uint8_t> data);
+  std::span<const uint8_t> SlotSramData(unsigned slot) const noexcept;
+  void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);
+  std::span<const uint8_t> MemoryPackData() const noexcept;
+  bool LoadMemoryPack(std::span<const uint8_t> data);
+  bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data);
+  bool SetBroadcastTimeSource(std::function<BroadcastTime()> source);
+  std::vector<uint8_t> SaveRtc() {
+    return spc7110_ ? spc7110_->SaveRtc() : std::vector<uint8_t>{};
+  }
     bool LoadRtc(std::span<const uint8_t> data) { return spc7110_ && spc7110_->LoadRtc(data); }
 
 private:
@@ -203,6 +211,7 @@ private:
     std::unique_ptr<Dsp3> dsp3_;
     std::unique_ptr<Dsp4> dsp4_;
     std::unique_ptr<Obc1> obc1_;
+    std::unique_ptr<NecDsp> necDsp_;
 };
 
 } // namespace snes::core

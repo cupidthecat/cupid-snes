@@ -165,6 +165,25 @@ bool HasDedicatedRomMapper(EnhancementChip chip) {
            chip == EnhancementChip::Spc7110Rtc;
 }
 
+std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
+  switch (header.chip) {
+  case EnhancementChip::Dsp1:
+    return header.title == "PILOTWINGS" ? FirmwareKind::Dsp1 : FirmwareKind::Dsp1b;
+  case EnhancementChip::Dsp2:
+    return FirmwareKind::Dsp2;
+  case EnhancementChip::Dsp3:
+    return FirmwareKind::Dsp3;
+  case EnhancementChip::Dsp4:
+    return FirmwareKind::Dsp4;
+  case EnhancementChip::St010:
+    return FirmwareKind::St010;
+  case EnhancementChip::St011:
+    return FirmwareKind::St011;
+  default:
+    return std::nullopt;
+  }
+}
+
 bool HasSignature(std::span<const uint8_t> bytes, size_t offset, std::string_view signature) {
     return offset <= bytes.size() && signature.size() <= bytes.size() - offset &&
         std::equal(signature.begin(), signature.end(), bytes.begin() + offset);
@@ -236,177 +255,227 @@ std::optional<DatabaseOverride> CartridgeDatabase::Find(uint32_t crc32) const {
 }
 
 std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romImage,
-                                                 RomNormalizationInfo* normalization,
-                                                 const CartridgeDatabase* database,
-                                                 std::string* error) {
-    if (error) error->clear();
-    bool removedHeader = false;
-    auto normalized = RemoveCopierHeader(romImage, &removedHeader);
+                                                 RomNormalizationInfo *normalization,
+                                                 const CartridgeDatabase *database,
+                                                 std::string *error,
+                                                 const CartridgeFirmware *firmware) {
+  if (error)
+    error->clear();
+  bool removedHeader = false;
+  auto normalized = RemoveCopierHeader(romImage, &removedHeader);
 
-    // Combined images reserve one MiB for the base and one MiB per slot.
-    if (HasSignature(normalized, 0, "BANDAI SFC-ADX") &&
-        HasSignature(normalized, 0x10, "SFC-ADX BACKUP") && normalized.size() > 0x40000) {
-        if (normalized.size() != 0x200000 && normalized.size() != 0x300000) {
-            if (error) *error = "Combined Sufami Turbo image must be 2 or 3 MiB";
-            return std::nullopt;
-        }
-        const auto image = std::span<const uint8_t>(normalized);
-        const auto slot = [&](size_t offset) -> std::span<const uint8_t> {
-            if (offset >= image.size()) return {};
-            const auto bytes = image.subspan(offset, 0x100000);
-            if (std::all_of(bytes.begin(), bytes.end(), [](uint8_t value) { return value == 0xff; }) ||
-                std::all_of(bytes.begin(), bytes.end(), [](uint8_t value) { return value == 0; })) return {};
-            return bytes;
-        };
-        auto combined = FromSufamiTurbo(image.first(0x40000), slot(0x100000), slot(0x200000), error);
-        if (combined) {
-            combined->romCrc32_ = ComputeCrc32(normalized);
-            if (normalization) *normalization = {removedHeader, false};
-        }
-        return combined;
+  // Combined images reserve one MiB for the base and one MiB per slot.
+  if (HasSignature(normalized, 0, "BANDAI SFC-ADX") &&
+      HasSignature(normalized, 0x10, "SFC-ADX BACKUP") && normalized.size() > 0x40000) {
+    if (normalized.size() != 0x200000 && normalized.size() != 0x300000) {
+      if (error)
+        *error = "Combined Sufami Turbo image must be 2 or 3 MiB";
+      return std::nullopt;
     }
+    const auto image = std::span<const uint8_t>(normalized);
+    const auto slot = [&](size_t offset) -> std::span<const uint8_t> {
+      if (offset >= image.size())
+        return {};
+      const auto bytes = image.subspan(offset, 0x100000);
+      if (std::all_of(bytes.begin(), bytes.end(), [](uint8_t value) { return value == 0xff; }) ||
+          std::all_of(bytes.begin(), bytes.end(), [](uint8_t value) { return value == 0; }))
+        return {};
+      return bytes;
+    };
+    auto combined = FromSufamiTurbo(image.first(0x40000), slot(0x100000), slot(0x200000), error);
+    if (combined) {
+      combined->romCrc32_ = ComputeCrc32(normalized);
+      if (normalization)
+        *normalization = {removedHeader, false};
+    }
+    return combined;
+  }
 
-    bool deinterleaved = false;
-    auto header = NormalizeRomLayout(normalized, deinterleaved);
-    if (!header.has_value()) {
-        if (error != nullptr) {
-            *error = "Unable to parse SNES header from ROM image";
-        }
-        return std::nullopt;
+  bool deinterleaved = false;
+  auto header = NormalizeRomLayout(normalized, deinterleaved);
+  if (!header.has_value()) {
+    if (error != nullptr) {
+      *error = "Unable to parse SNES header from ROM image";
     }
+    return std::nullopt;
+  }
 
-    Cartridge cart;
-    cart.rom_ = std::move(normalized);
-    cart.header_ = std::move(*header);
-    cart.romCrc32_ = ComputeCrc32(cart.rom_);
-    cart.memselFast_ = false;
+  Cartridge cart;
+  cart.rom_ = std::move(normalized);
+  cart.header_ = std::move(*header);
+  std::vector<uint8_t> embeddedFirmware;
+  if (const auto kind = SignalFirmware(cart.header_)) {
+    const size_t size = CartridgeFirmware::Size(*kind);
+    const size_t alignment = size == 0x2000 ? 0x8000 : 0x10000;
+    if (cart.rom_.size() > size && cart.rom_.size() % alignment == size % alignment) {
+      embeddedFirmware.assign(cart.rom_.end() - size, cart.rom_.end());
+      cart.rom_.resize(cart.rom_.size() - size);
+    }
+  }
+  cart.romCrc32_ = ComputeCrc32(cart.rom_);
+  cart.memselFast_ = false;
 
-    if (cart.header_.chip == EnhancementChip::Sdd1)
-        cart.header_.mapping = MappingType::Sdd1;
-    if (cart.header_.chip == EnhancementChip::St010)
-        cart.header_.mapping = MappingType::St010;
-    if (cart.header_.chip == EnhancementChip::Sa1)
-        cart.header_.mapping = MappingType::Sa1;
-    if (cart.header_.chip == EnhancementChip::SuperFx)
-        cart.header_.mapping = MappingType::SuperFx;
-    if (cart.header_.chip == EnhancementChip::St011)
-        cart.header_.mapping = MappingType::St011;
-    if (cart.rom_.size() == 0x100000 && HasSignature(cart.rom_, 0x7fc0, "Satellaview BS-X     ")) {
-        cart.header_.mapping = MappingType::Bsx;
-        cart.header_.chip = EnhancementChip::None;
-    }
-    if (cart.rom_.size() >= 0x800000 &&
-        (cart.header_.chip == EnhancementChip::Sdd1 ||
-         cart.header_.title == "STREET FIGHTER ALPHA2" ||
-         cart.header_.title == "STREET FIGHTER ZERO2" ||
-         cart.header_.title == "Star Ocean")) {
-        cart.header_.mapping = MappingType::DecompressedSdd1;
-        cart.header_.chip = EnhancementChip::None;
-    }
+  if (cart.header_.chip == EnhancementChip::Sdd1)
+    cart.header_.mapping = MappingType::Sdd1;
+  if (cart.header_.chip == EnhancementChip::St010)
+    cart.header_.mapping = MappingType::St010;
+  if (cart.header_.chip == EnhancementChip::Sa1)
+    cart.header_.mapping = MappingType::Sa1;
+  if (cart.header_.chip == EnhancementChip::SuperFx)
+    cart.header_.mapping = MappingType::SuperFx;
+  if (cart.header_.chip == EnhancementChip::St011)
+    cart.header_.mapping = MappingType::St011;
+  if (cart.rom_.size() == 0x100000 && HasSignature(cart.rom_, 0x7fc0, "Satellaview BS-X     ")) {
+    cart.header_.mapping = MappingType::Bsx;
+    cart.header_.chip = EnhancementChip::None;
+  }
+  if (cart.rom_.size() >= 0x800000 &&
+      (cart.header_.chip == EnhancementChip::Sdd1 ||
+       cart.header_.title == "STREET FIGHTER ALPHA2" ||
+       cart.header_.title == "STREET FIGHTER ZERO2" || cart.header_.title == "Star Ocean")) {
+    cart.header_.mapping = MappingType::DecompressedSdd1;
+    cart.header_.chip = EnhancementChip::None;
+  }
 
-    if (cart.rom_.size() == 0x40000 && HasSignature(cart.rom_, 0, "BANDAI SFC-ADX") &&
-        HasSignature(cart.rom_, 0x10, "SFC-ADX BACKUP")) {
-        cart.header_.mapping = MappingType::SufamiTurbo;
-        cart.header_.chip = EnhancementChip::None;
-    }
+  if (cart.rom_.size() == 0x40000 && HasSignature(cart.rom_, 0, "BANDAI SFC-ADX") &&
+      HasSignature(cart.rom_, 0x10, "SFC-ADX BACKUP")) {
+    cart.header_.mapping = MappingType::SufamiTurbo;
+    cart.header_.chip = EnhancementChip::None;
+  }
 
-    if (cart.header_.mapping == MappingType::LoRom) {
-        const auto& title = cart.header_.title;
-        if (title == "WANDERERS FROM YS") cart.header_.mapping = MappingType::LoRomNoMad1;
-        else if (title == "SOUND NOVEL-TCOOL" || title == "DERBY STALLION 96")
-            cart.header_.mapping = MappingType::LoRom24Mbit;
-        else if (title == "THOROUGHBRED BREEDER3" || title == "RPG-TCOOL 2")
-            cart.header_.mapping = MappingType::LoRomLargeSram;
-    }
+  if (cart.header_.mapping == MappingType::LoRom) {
+    const auto &title = cart.header_.title;
+    if (title == "WANDERERS FROM YS")
+      cart.header_.mapping = MappingType::LoRomNoMad1;
+    else if (title == "SOUND NOVEL-TCOOL" || title == "DERBY STALLION 96")
+      cart.header_.mapping = MappingType::LoRom24Mbit;
+    else if (title == "THOROUGHBRED BREEDER3" || title == "RPG-TCOOL 2")
+      cart.header_.mapping = MappingType::LoRomLargeSram;
+  }
 
-    std::optional<size_t> forcedSramSize;
-    if (database != nullptr) {
-        if (const auto overrideEntry = database->Find(cart.romCrc32_); overrideEntry.has_value()) {
-            if (overrideEntry->forceMapping.has_value()) {
-                cart.header_.mapping = *overrideEntry->forceMapping;
-            }
-            if (overrideEntry->forceSpeed.has_value()) {
-                cart.header_.speed = *overrideEntry->forceSpeed;
-            }
-            if (overrideEntry->forceTitle.has_value()) {
-                cart.header_.title = *overrideEntry->forceTitle;
-            }
-            if (overrideEntry->forceSramSize.has_value()) {
-                forcedSramSize = *overrideEntry->forceSramSize;
-            }
-        }
+  std::optional<size_t> forcedSramSize;
+  if (database != nullptr) {
+    if (const auto overrideEntry = database->Find(cart.romCrc32_); overrideEntry.has_value()) {
+      if (overrideEntry->forceMapping.has_value()) {
+        cart.header_.mapping = *overrideEntry->forceMapping;
+      }
+      if (overrideEntry->forceSpeed.has_value()) {
+        cart.header_.speed = *overrideEntry->forceSpeed;
+      }
+      if (overrideEntry->forceTitle.has_value()) {
+        cart.header_.title = *overrideEntry->forceTitle;
+      }
+      if (overrideEntry->forceSramSize.has_value()) {
+        forcedSramSize = *overrideEntry->forceSramSize;
+      }
     }
+  }
 
-    if (cart.header_.chip == EnhancementChip::SuperFx || cart.header_.mapping == MappingType::SuperFx) {
-        cart.header_.chip = EnhancementChip::SuperFx;
-        cart.header_.mapping = MappingType::SuperFx;
-        // Older GSU boards have 32 KiB of work RAM even when the ordinary
-        // SRAM field is zero. New headers store its size before the title.
-        cart.header_.sramSizeShift = cart.header_.maker == 0x33 ?
-            cart.rom_[cart.header_.headerOffset - 3] : 5;
-        cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0);
-        cart.superFx_ = std::make_unique<SuperFx>(cart.rom_, cart.sram_);
-    } else if (cart.header_.chip == EnhancementChip::St011 || cart.header_.mapping == MappingType::St011) {
-        cart.header_.chip = EnhancementChip::St011;
-        cart.header_.mapping = MappingType::St011;
-        cart.header_.sramSizeShift = 2;
-        cart.sram_.assign(0x1000, 0);
-        cart.st011_ = std::make_unique<St011>(cart.sram_);
-    } else if (cart.header_.chip == EnhancementChip::St018) {
-        cart.header_.sramSizeShift = 2;
-        cart.sram_.assign(0x1000, 0);
-        cart.st018_ = std::make_unique<St018>(cart.sram_);
-    } else if (cart.header_.chip == EnhancementChip::St010 || cart.header_.mapping == MappingType::St010) {
-        cart.header_.chip = EnhancementChip::St010;
-        cart.header_.mapping = MappingType::St010;
-        cart.header_.sramSizeShift = 2;
-        cart.sram_.assign(0x1000, 0);
-    } else {
-        cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0x00);
+  if (cart.header_.chip == EnhancementChip::SuperFx ||
+      cart.header_.mapping == MappingType::SuperFx) {
+    cart.header_.chip = EnhancementChip::SuperFx;
+    cart.header_.mapping = MappingType::SuperFx;
+    // Older GSU boards have 32 KiB of work RAM even when the ordinary
+    // SRAM field is zero. New headers store its size before the title.
+    cart.header_.sramSizeShift =
+        cart.header_.maker == 0x33 ? cart.rom_[cart.header_.headerOffset - 3] : 5;
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0);
+    cart.superFx_ = std::make_unique<SuperFx>(cart.rom_, cart.sram_);
+  } else if (cart.header_.chip == EnhancementChip::St011 ||
+             cart.header_.mapping == MappingType::St011) {
+    cart.header_.chip = EnhancementChip::St011;
+    cart.header_.mapping = MappingType::St011;
+    cart.header_.sramSizeShift = 2;
+    cart.sram_.assign(0x1000, 0);
+    cart.st011_ = std::make_unique<St011>(cart.sram_);
+  } else if (cart.header_.chip == EnhancementChip::St018) {
+    cart.header_.sramSizeShift = 2;
+    cart.sram_.assign(0x1000, 0);
+    cart.st018_ = std::make_unique<St018>(cart.sram_);
+  } else if (cart.header_.chip == EnhancementChip::St010 ||
+             cart.header_.mapping == MappingType::St010) {
+    cart.header_.chip = EnhancementChip::St010;
+    cart.header_.mapping = MappingType::St010;
+    cart.header_.sramSizeShift = 2;
+    cart.sram_.assign(0x1000, 0);
+  } else {
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0x00);
+  }
+  if (cart.header_.chip == EnhancementChip::Obc1) {
+    cart.sram_.assign(8192, 0xff);
+    cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
+  }
+  if (cart.header_.mapping == MappingType::DecompressedSdd1)
+    cart.sram_.clear();
+  if (cart.header_.chip == EnhancementChip::Cx4)
+    cart.cx4_ = std::make_unique<Cx4>(cart.rom_);
+  if (cart.header_.chip == EnhancementChip::Dsp3) {
+    cart.dsp3_ = std::make_unique<Dsp3>();
+    cart.dsp3_->Reset();
+  }
+  if (cart.header_.chip == EnhancementChip::Dsp4) {
+    cart.dsp4_ = std::make_unique<Dsp4>();
+    cart.dsp4_->Reset();
+  }
+  if (cart.header_.chip == EnhancementChip::Sa1 || cart.header_.mapping == MappingType::Sa1) {
+    cart.header_.chip = EnhancementChip::Sa1;
+    cart.header_.mapping = MappingType::Sa1;
+    cart.sa1_ = std::make_unique<Sa1>(cart.rom_, cart.sram_);
+    if (cart.header_.maker == 0x33 &&
+        (HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZX3J") ||
+         HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZBPJ"))) {
+      cart.header_.mapping = MappingType::BroadcastSa1;
+      cart.sa1_->SetExpansionRom({});
     }
-    if (cart.header_.chip == EnhancementChip::Obc1) {
-      cart.sram_.assign(8192, 0xff);
-      cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
+  }
+  if (cart.header_.chip == EnhancementChip::Spc7110 ||
+      cart.header_.chip == EnhancementChip::Spc7110Rtc ||
+      cart.header_.mapping == MappingType::Spc7110) {
+    if (cart.rom_.size() <= 0x100000) {
+      if (error)
+        *error = "SPC7110 image is missing its data ROM";
+      return std::nullopt;
     }
-    if (cart.header_.mapping == MappingType::DecompressedSdd1) cart.sram_.clear();
-    if (cart.header_.chip == EnhancementChip::Cx4) cart.cx4_ = std::make_unique<Cx4>(cart.rom_);
-    if (cart.header_.chip == EnhancementChip::Dsp3) {
-        cart.dsp3_ = std::make_unique<Dsp3>();
-        cart.dsp3_->Reset();
-    }
-    if (cart.header_.chip == EnhancementChip::Dsp4) {
-        cart.dsp4_ = std::make_unique<Dsp4>();
-        cart.dsp4_->Reset();
-    }
-    if (cart.header_.chip == EnhancementChip::Sa1 || cart.header_.mapping == MappingType::Sa1) {
-        cart.header_.chip = EnhancementChip::Sa1;
-        cart.header_.mapping = MappingType::Sa1;
-        cart.sa1_ = std::make_unique<Sa1>(cart.rom_, cart.sram_);
-        if (cart.header_.maker == 0x33 &&
-            (HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZX3J") ||
-             HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZBPJ"))) {
-            cart.header_.mapping = MappingType::BroadcastSa1;
-            cart.sa1_->SetExpansionRom({});
-        }
-    }
-    if (cart.header_.chip == EnhancementChip::Spc7110 || cart.header_.chip == EnhancementChip::Spc7110Rtc ||
-        cart.header_.mapping == MappingType::Spc7110) {
-        if (cart.rom_.size() <= 0x100000) {
-            if (error) *error = "SPC7110 image is missing its data ROM";
-            return std::nullopt;
-        }
-        cart.header_.mapping = MappingType::Spc7110;
-        if (cart.header_.chip != EnhancementChip::Spc7110Rtc) cart.header_.chip = EnhancementChip::Spc7110;
-        cart.spc7110_ = std::make_unique<Spc7110>(cart.rom_, cart.header_.chip == EnhancementChip::Spc7110Rtc);
-    }
-    if (cart.header_.mapping == MappingType::Bsx) cart.InitializeBroadcast();
+    cart.header_.mapping = MappingType::Spc7110;
+    if (cart.header_.chip != EnhancementChip::Spc7110Rtc)
+      cart.header_.chip = EnhancementChip::Spc7110;
+    cart.spc7110_ =
+        std::make_unique<Spc7110>(cart.rom_, cart.header_.chip == EnhancementChip::Spc7110Rtc);
+  }
+  if (cart.header_.mapping == MappingType::Bsx)
+    cart.InitializeBroadcast();
 
-    if (normalization != nullptr) {
-        normalization->hadCopierHeader = removedHeader;
-        normalization->hadInterleave = deinterleaved;
+  const auto firmwareKind = SignalFirmware(cart.header_);
+  const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
+                             : firmwareKind && firmware ? firmware->Find(*firmwareKind)
+                                                        : std::span<const uint8_t>{};
+  if (firmwareKind && !firmwareBytes.empty()) {
+    const bool seta =
+        cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
+    const auto board = seta                                         ? NecDsp::Board::Seta
+                       : cart.header_.mapping == MappingType::HiRom ? NecDsp::Board::HiRom
+                       : cart.sram_.empty()                         ? NecDsp::Board::LoRom
+                       : cart.rom_.size() <= 0x100000               ? NecDsp::Board::LoRomSmallRam
+                                                                    : NecDsp::Board::LoRomLargeRam;
+    cart.necDsp_ = std::make_unique<NecDsp>(*firmwareKind, board);
+    if (!cart.necDsp_->LoadFirmware(firmwareBytes)) {
+      if (error)
+        *error = "Invalid cartridge signal processor firmware";
+      return std::nullopt;
     }
+    cart.dsp3_.reset();
+    cart.dsp4_.reset();
+    cart.st011_.reset();
+    if (seta)
+      cart.sram_.clear();
+  }
 
-    return cart;
+  if (normalization != nullptr) {
+    normalization->hadCopierHeader = removedHeader;
+    normalization->hadInterleave = deinterleaved;
+  }
+
+  return cart;
 }
 
 std::optional<Cartridge> Cartridge::FromSufamiTurbo(
@@ -451,6 +520,8 @@ uint32_t Cartridge::RomCrc32() const noexcept {
 }
 
 void Cartridge::Reset() {
+  if (necDsp_)
+    necDsp_->Reset();
   memselFast_ = false;
   superFxClockRemainder_ = 0;
   flashProgram_ = flashVendor_ = flashExtendedStatus_ = flashStatus_ = false;
@@ -488,6 +559,15 @@ bool Cartridge::MemselFast() const noexcept {
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
+  if (necDsp_) {
+    if (necDsp_->SelectsDevice(cpuAddress))
+      return necDsp_->Read(cpuAddress);
+    if (const auto address = necDsp_->SramAddress(cpuAddress); address && !sram_.empty())
+      return sram_[MirrorOffset(*address, sram_.size())];
+    if (const auto address = necDsp_->RomAddress(cpuAddress); address && !rom_.empty())
+      return rom_[MirrorOffset(*address, rom_.size())];
+    return openBus;
+  }
   if (obc1_) {
     if (Obc1::Selects(cpuAddress))
       return obc1_->Read(static_cast<uint16_t>(cpuAddress));
@@ -535,6 +615,15 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 }
 
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
+  if (necDsp_) {
+    if (necDsp_->SelectsDevice(cpuAddress)) {
+      necDsp_->Write(cpuAddress, value);
+      return;
+    }
+    if (const auto address = necDsp_->SramAddress(cpuAddress); address && !sram_.empty())
+      sram_[MirrorOffset(*address, sram_.size())] = value;
+    return;
+  }
   if (obc1_) {
     if (Obc1::Selects(cpuAddress))
       obc1_->Write(static_cast<uint16_t>(cpuAddress), value);
@@ -604,6 +693,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (necDsp_)
+    necDsp_->Advance(masterClocks);
   if (sa1_)
     sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing);
   if (superFx_) {
@@ -614,6 +705,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (necDsp_)
+    necDsp_->SetPal(pal);
   masterClockHz_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
   superFxClockRemainder_ = 0;
   if (sa1_)
@@ -646,10 +739,16 @@ std::span<const uint8_t> Cartridge::RomData() const noexcept {
 }
 
 std::span<const uint8_t> Cartridge::SramData() const noexcept {
-    return sram_;
+  if (necDsp_ && necDsp_->HasSaveRam())
+    return necDsp_->SaveRam();
+  return sram_;
 }
 
 void Cartridge::LoadSram(std::span<const uint8_t> data) {
+  if (necDsp_ && necDsp_->HasSaveRam()) {
+    necDsp_->LoadRam(data);
+    return;
+  }
     if (sram_.empty()) {
         return;
     }
@@ -658,6 +757,13 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
     std::copy_n(data.begin(), bytes, sram_.begin());
     if (obc1_)
       obc1_->Reset();
+}
+
+bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
+  if (!necDsp_)
+    return false;
+  necDsp_->MapCpu(bus, slot);
+  return true;
 }
 
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {

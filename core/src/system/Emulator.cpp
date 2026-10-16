@@ -96,39 +96,40 @@ void Emulator::AddTraceSink(ITraceSink* sink) {
 // Cartridge loading
 
 bool Emulator::LoadCartridge(std::span<const uint8_t> romData, std::string* error) {
-    RomNormalizationInfo normalization;
-    auto cartridge = Cartridge::FromRomImage(romData, &normalization, &cartridgeDatabase_, error);
-    if (!cartridge.has_value()) {
-        Logger::Instance().Write(LogLevel::Error, "Failed to load cartridge image");
-        return false;
+  return LoadCartridgeWithFirmware(romData, config_.cartridgeFirmware.get(), error);
+}
+
+bool Emulator::LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
+                                         const CartridgeFirmware *firmware, std::string *error) {
+  RomNormalizationInfo normalization;
+  auto cartridge =
+      Cartridge::FromRomImage(romData, &normalization, &cartridgeDatabase_, error, firmware);
+  if (!cartridge.has_value()) {
+    Logger::Instance().Write(LogLevel::Error, "Failed to load cartridge image");
+    return false;
+  }
+
+  if (auto unsupported = UnsupportedChipName(cartridge->Header().chip); unsupported.has_value()) {
+    if (error != nullptr) {
+      *error = std::string("Unsupported enhancement chip: ") + *unsupported + " (cartridge type $" +
+               "0123456789ABCDEF"[(cartridge->Header().cartridgeType >> 4) & 0x0F] +
+               "0123456789ABCDEF"[(cartridge->Header().cartridgeType >> 0) & 0x0F] + ")";
     }
+    Logger::Instance().Write(LogLevel::Error, "Unsupported cartridge enhancement chip detected");
+    return false;
+  }
 
-    if (auto unsupported = UnsupportedChipName(cartridge->Header().chip);
-        unsupported.has_value()) {
-        if (error != nullptr) {
-            *error = std::string("Unsupported enhancement chip: ") + *unsupported
-                   + " (cartridge type $"
-                   + "0123456789ABCDEF"[(cartridge->Header().cartridgeType >> 4) & 0x0F]
-                   + "0123456789ABCDEF"[(cartridge->Header().cartridgeType >> 0) & 0x0F]
-                   + ")";
-        }
-        Logger::Instance().Write(LogLevel::Error,
-                                 "Unsupported cartridge enhancement chip detected");
-        return false;
-    }
+  StopFrameExecution();
+  cartridge_ = std::move(*cartridge);
+  Logger::Instance().Write(
+      LogLevel::Info, "Cartridge loaded: " + cartridge_->Header().title +
+                          (normalization.hadCopierHeader ? " [copier-header-normalized]" : "") +
+                          (normalization.hadInterleave ? " [deinterleaved]" : ""));
 
-    StopFrameExecution();
-    cartridge_ = std::move(*cartridge);
-    Logger::Instance().Write(
-        LogLevel::Info,
-        "Cartridge loaded: " + cartridge_->Header().title +
-            (normalization.hadCopierHeader ? " [copier-header-normalized]" : "") +
-            (normalization.hadInterleave ? " [deinterleaved]" : ""));
+  // Wire all subsystems now that we have a cartridge
+  InitSubsystems();
 
-    // Wire all subsystems now that we have a cartridge
-    InitSubsystems();
-
-    return true;
+  return true;
 }
 
 bool Emulator::LoadSufamiTurbo(std::span<const uint8_t> bios, std::span<const uint8_t> slotA,
@@ -142,19 +143,31 @@ bool Emulator::LoadSufamiTurbo(std::span<const uint8_t> bios, std::span<const ui
 }
 
 bool Emulator::LoadCartridgeFromFile(const std::string& path, std::string* error) {
-    const auto data = ReadImage(path, error);
-    if (!data || !LoadCartridge(*data, error)) return false;
+  const auto data = ReadImage(path, error);
+  if (!data)
+    return false;
+  CartridgeFirmware adjacentFirmware;
+  auto *firmware = config_.cartridgeFirmware.get();
+  const auto directory = std::filesystem::path(path).parent_path() / "firmware";
+  std::error_code fileError;
+  if (!firmware && std::filesystem::is_directory(directory, fileError)) {
+    if (!adjacentFirmware.LoadDirectory(directory, error))
+      return false;
+    firmware = &adjacentFirmware;
+  }
+  if (!LoadCartridgeWithFirmware(*data, firmware, error))
+    return false;
 
-    auto msu1 = std::make_unique<Msu1>();
-    if (msu1->Open(path)) {
-        msu1_ = std::move(msu1);
-        const auto slot = bus_.RegisterHandler(
-            [this](uint32_t address, uint8_t openBus) { return msu1_->Read(address, openBus); },
-            [this](uint32_t address, uint8_t value) { msu1_->Write(address, value); });
-        bus_.MapRange(0x00, 0x3f, 0x2000, 0x2007, slot);
-        bus_.MapRange(0x80, 0xbf, 0x2000, 0x2007, slot);
-        Logger::Instance().Write(LogLevel::Info, "MSU-1 data and PCM playback enabled");
-    }
+  auto msu1 = std::make_unique<Msu1>();
+  if (msu1->Open(path)) {
+    msu1_ = std::move(msu1);
+    const auto slot = bus_.RegisterHandler(
+        [this](uint32_t address, uint8_t openBus) { return msu1_->Read(address, openBus); },
+        [this](uint32_t address, uint8_t value) { msu1_->Write(address, value); });
+    bus_.MapRange(0x00, 0x3f, 0x2000, 0x2007, slot);
+    bus_.MapRange(0x80, 0xbf, 0x2000, 0x2007, slot);
+    Logger::Instance().Write(LogLevel::Info, "MSU-1 data and PCM playback enabled");
+  }
     return true;
 }
 
@@ -219,7 +232,8 @@ void Emulator::InitSubsystems() {
     dsp1_.reset();
     dsp2_.reset();
     srtc_.reset();
-    const auto chip = cartridge_->Header().chip;
+    const auto chip =
+        cartridge_->HasSignalProcessor() ? EnhancementChip::None : cartridge_->Header().chip;
     if (chip == EnhancementChip::Dsp1) {
         dsp1_ = std::make_unique<Dsp1>();
         auto* dsp1ptr = dsp1_.get();
