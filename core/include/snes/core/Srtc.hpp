@@ -5,33 +5,40 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <span>
 
 namespace snes::core {
-
 class Srtc {
 public:
-    using Clock = std::function<int64_t()>;
-    static constexpr size_t SaveSize = 24;
-    explicit Srtc(Clock clock = {});
-    void Reset();
-    uint8_t Read();
-    void Write(uint8_t value);
-    std::array<uint8_t, SaveSize> Save();
-    bool Load(std::span<const uint8_t> data);
+  using Clock = std::function<int64_t()>;
+  static constexpr size_t SaveSize = 24;
+  explicit Srtc(Clock clock = {});
+  void Reset();
+  void Advance(uint32_t masterClocks);
+  void SetPal(bool pal);
+  uint8_t Read();
+  void Write(uint8_t value);
+  std::array<uint8_t, SaveSize> Save();
+  bool Load(std::span<const uint8_t> data);
 
 private:
-    void Update();
-    void SetWeekday();
-    enum class Mode { Read, Command, Write, Idle };
-    Clock clock_;
-    std::array<uint8_t, 13> digits_{};
-    std::array<uint8_t, 13> latched_{};
-    int64_t timestamp_ = 0;
-    int index_ = -1;
-    Mode mode_ = Mode::Read;
+  enum Field { Second, Minute, Hour, Day, Month, Year, Weekday, FieldCount };
+  enum class Mode { Idle, Command, Read, Write };
+  Clock clock_;
+  std::array<uint32_t, FieldCount> calendar_{};
+  uint32_t masterFrequency_ = 21'477'272;
+  int64_t balance_ = 0;
+  int index_ = -1;
+  Mode mode_ = Mode::Read;
+  uint8_t Digit(unsigned index) const;
+  void Put(unsigned index, uint8_t value);
+  void SetWeekday();
+  void AdvanceSeconds(uint64_t count);
+  void AdvanceMinutes(uint64_t count);
+  void AdvanceHours(uint64_t count);
+  void AdvanceDays(uint64_t count);
 };
-
-}
+} // namespace snes::core

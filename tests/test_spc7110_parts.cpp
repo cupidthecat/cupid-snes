@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 void Check(bool value, const char *message) {
@@ -50,11 +51,22 @@ void RtcPorts() {
   Check(rtc.Read(1, 0) == 5, "Write mode returns the last accepted nibble");
   Check(rtc.Read(3, 0x5a) == 0x5a, "The unused RTC port preserves open bus");
 }
+void ColdRtc() {
+  snes::core::EpsonRtc rtc([] { return int64_t(1700000000); });
+  const auto saved = rtc.Save();
+  for (unsigned index = 0; index < 16; ++index)
+    Check(saved[index] == (index == 1 ? 8 : 0),
+          "A fresh RTC has cleared calendar and control storage with its battery-failure flag set");
+}
 } // namespace
-int main() {
+int main(int argc, char **argv) {
   try {
-    CodingRows();
-    RtcPorts();
+    if (argc == 1) {
+      CodingRows();
+      RtcPorts();
+    }
+    if (argc == 1 || std::string_view(argv[1]) == "cold")
+      ColdRtc();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

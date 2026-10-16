@@ -157,6 +157,7 @@ EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
   switch ((unsigned(type) << 8) | mode) {
   case 0x2530:
     return EnhancementChip::Obc1;
+  case 0x5525:
   case 0x5535:
     return EnhancementChip::Srtc;
   case 0x1320:
@@ -437,6 +438,8 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   } else {
     cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0x00);
   }
+  if (cart.header_.chip == EnhancementChip::Srtc)
+    std::fill(cart.sram_.begin(), cart.sram_.end(), 0xff);
   if (cart.header_.chip == EnhancementChip::Obc1) {
     cart.sram_.assign(8192, 0xff);
     cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));

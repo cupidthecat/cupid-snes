@@ -254,3 +254,11 @@ add_test(NAME snes_hg51b_tests COMMAND snes_hg51b_tests)
 add_executable(snes_cx4_processor_tests test_cx4_processor.cpp)
 target_link_libraries(snes_cx4_processor_tests PRIVATE snes_core)
 add_test(NAME snes_cx4_processor_tests COMMAND snes_cx4_processor_tests)
+
+add_executable(snes_srtc_tests test_srtc.cpp)
+target_link_libraries(snes_srtc_tests PRIVATE snes_core)
+add_test(NAME snes_srtc_tests COMMAND snes_srtc_tests)
+
+add_executable(snes_srtc_timing_tests test_srtc_timing.cpp)
+target_link_libraries(snes_srtc_timing_tests PRIVATE snes_core)
+add_test(NAME snes_srtc_timing_tests COMMAND snes_srtc_timing_tests)
