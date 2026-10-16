@@ -47,6 +47,10 @@ uint16_t RasterClock(int x) {
     return static_cast<uint16_t>(88 + x * 4);
 }
 
+uint16_t ScreenClock(int x) {
+  return static_cast<uint16_t>(58 + x * 4);
+}
+
 void Fill2bppTile(Ppu& ppu, uint16_t base, uint16_t tile, uint8_t color) {
     const uint16_t row = static_cast<uint16_t>(((color & 1) ? 0x00ff : 0) |
                                                ((color & 2) ? 0xff00 : 0));
@@ -419,7 +423,7 @@ void RasterSpanSampling() {
                     raster->WriteIO(0x2100, 15);
                     for (int i = 0; i < 11; ++i) {
                         if (i == 5) raster->ScanlineBegin(line);
-                        raster->SetCurrentHClock(RasterClock(boundaries[i]));
+                        raster->SetCurrentHClock(ScreenClock(boundaries[i]));
                         raster->WriteIO(0x2100, static_cast<uint8_t>((i * 7 + line) % 15 + 1));
                     }
                 }
@@ -605,6 +609,72 @@ void VramSnapshotLifetime() {
     }
 }
 
+void ScreenWriteClock() {
+  struct Edge {
+    uint16_t clock;
+    int pixel;
+  };
+  for (const auto edge : {Edge{58, 0}, Edge{60, 1}, Edge{62, 1}, Edge{124, 17}, Edge{660, 151},
+                          Edge{1076, 255}, Edge{1078, 255}, Edge{1080, 256}}) {
+    auto ppu = std::make_unique<Ppu>();
+    ppu->WriteIO(0x2100, 0x0f);
+    ppu->CgramData()[0] = 0x001f;
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    if (edge.clock >= 512)
+      ppu->ScanlineBegin(1);
+    ppu->SetCurrentHClock(edge.clock);
+    ppu->WriteIO(0x2100, 0x8f);
+    if (edge.clock < 512)
+      ppu->ScanlineBegin(1);
+    ppu->VBlankBegin();
+    for (int x = 0; x < 256; ++x)
+      Expect(Pixel(*ppu, x, 0) == (x < edge.pixel ? 0x001f : 0),
+             "Display writes take effect at the next screen pixel after the host clock");
+  }
+}
+
+void RasterStageOrdering() {
+  auto ppu = std::make_unique<Ppu>();
+  SetupBg1(*ppu);
+  for (int row = 0; row < 8; ++row) ppu->VramData()[0x1000 + row] = 0x55aa;
+  ppu->FrameBegin();
+  ppu->SetCurrentLine(1);
+  ppu->ScanlineBegin(1);
+  ppu->SetCurrentHClock(594);
+  ppu->WriteIO(0x2100, 7); // Screen pixel 134.
+  ppu->SetCurrentHClock(600);
+  ppu->WriteIO(0x2106, 0x31); // Background sample 128.
+  ppu->VBlankBegin();
+  for (int x = 128; x < 134; ++x)
+    Expect(Pixel(*ppu, x, 0) == 0x001f,
+           "Background and screen writes are applied in pixel order across pipeline stages");
+  Expect(Pixel(*ppu, 134, 0) == 14,
+         "A screen write retains its own pixel boundary after a later background write");
+}
+
+void Mode7WriteClock() {
+  auto ppu = std::make_unique<Ppu>();
+  ppu->WriteIO(0x2100, 0x0f);
+  ppu->WriteIO(0x2105, 7);
+  ppu->WriteIO(0x212c, 1);
+  Write16(*ppu, 0x211b, 0x0100);
+  Write16(*ppu, 0x211e, 0x0100);
+  for (int i = 0; i < 64; ++i)
+    ppu->VramData()[i] = static_cast<uint16_t>((i % 8 + 1) << 8);
+  for (int i = 1; i <= 8; ++i)
+    ppu->CgramData()[i] = i;
+  ppu->FrameBegin();
+  ppu->SetCurrentLine(1);
+  ppu->ScanlineBegin(1);
+  ppu->SetCurrentHClock(1020);
+  Write16(*ppu, 0x211b, 0x0200);
+  ppu->VBlankBegin();
+  for (int x = 0; x < 256; ++x)
+    Expect(Pixel(*ppu, x, 0) == ((x < 241 ? x : 2 * x) % 8 + 1),
+           "Late Mode 7 coefficient writes reach the remaining pixels of the scanline");
+}
+
 void RasterRegisterChanges() {
     {
         auto ppu = std::make_unique<Ppu>();
@@ -612,10 +682,10 @@ void RasterRegisterChanges() {
         ppu->CgramData()[0] = 0x001f;
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
-        ppu->SetCurrentHClock(RasterClock(64));
+        ppu->SetCurrentHClock(ScreenClock(64));
         ppu->WriteIO(0x2100, 0x07); // Before the H=512 line snapshot.
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(192));
+        ppu->SetCurrentHClock(ScreenClock(192));
         ppu->WriteIO(0x2100, 0x0f);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 32, 0) == 0x001f, "Raster brightness preserves the pre-write left span");
@@ -628,10 +698,10 @@ void RasterRegisterChanges() {
         ppu->CgramData()[0] = 0x03e0;
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
-        ppu->SetCurrentHClock(RasterClock(80));
+        ppu->SetCurrentHClock(ScreenClock(80));
         ppu->WriteIO(0x2100, 0x8f);
         ppu->ScanlineBegin(1); // Memory must still be cached while the sample is blanked.
-        ppu->SetCurrentHClock(RasterClock(160));
+        ppu->SetCurrentHClock(ScreenClock(160));
         ppu->WriteIO(0x2100, 0x0f);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 40, 0) == 0x03e0, "Forced blank keeps pixels before the write");
@@ -1103,7 +1173,7 @@ void HiresCompositingLatches() {
     ppu->FrameBegin();
     ppu->SetCurrentLine(1);
     ppu->ScanlineBegin(1);
-    ppu->SetCurrentHClock(RasterClock(128));
+    ppu->SetCurrentHClock(ScreenClock(128));
     ppu->WriteIO(0x2100, 0x0f);
     ppu->VBlankBegin();
     Expect(Pixel(*ppu, 254, 0) == 0 && Pixel(*ppu, 256, 0) == 0,
@@ -1119,12 +1189,12 @@ void HiresCompositingLatches() {
     ppu->FrameBegin();
     ppu->SetCurrentLine(1);
     ppu->ScanlineBegin(1);
-    ppu->SetCurrentHClock(RasterClock(64));
+    ppu->SetCurrentHClock(ScreenClock(64));
     ppu->WriteIO(0x2100, 0x8f);
     ppu->SetCurrentHClock(RasterClock(96));
     ppu->WriteIO(0x2131, 0);
     ppu->WriteIO(0x2132, 0x26);
-    ppu->SetCurrentHClock(RasterClock(128));
+    ppu->SetCurrentHClock(ScreenClock(128));
     ppu->WriteIO(0x2100, 0x0f);
     ppu->VBlankBegin();
     Expect(Pixel(*ppu, 255, 0) == 0 && Pixel(*ppu, 256, 0) == uint16_t((2 << 5) | 3),
@@ -1185,6 +1255,9 @@ int main() {
     MixedWidthsAndFields();
     RasterMemoryChanges();
     VramSnapshotLifetime();
+    ScreenWriteClock();
+    Mode7WriteClock();
+    RasterStageOrdering();
     RasterRegisterChanges();
     Mode7DirectColorAndExtbgMosaic();
     HiresAdjacentMathAndWindows();

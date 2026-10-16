@@ -2,7 +2,9 @@
 
 The loader distinguishes cartridge processors using the mapping byte, cartridge type, and, for DSP-3, maker code. An unsupported device produces an error with its name. A failed load leaves the current cartridge, RAM, and CPU bus intact. A successful load resets the machine and its frame counters.
 
-## DSP-2
+## DSP-2 command model
+
+With cartridge firmware, DSP-1 through DSP-4 and ST010/ST011 use [clocked signal processors](clocked-cartridge-processors.md). The following DSP-2 description applies to the fallback used without firmware.
 
 DSP-2 cartridges use data ports at $20-$3F/$A0-$BF:$6000-$6FFF and $8000-$BFFF. The ports share one command stream. Reads consume queued result bytes and return $FF when the result is exhausted. Addresses $C000-$FFFF retain ROM access.
 
@@ -12,9 +14,9 @@ DSP-1 remains available through its existing board windows. DSP-3 and DSP-4 have
 
 ## OBC1
 
-OBC1 has 8 KiB of RAM at $00-$3F/$80-$BF:$6000-$7FFF. Registers $7FF0-$7FF3 read and write the selected object's four bytes. Register $7FF4 reads its packed attribute byte and writes only the selected object's two bits. Registers $7FF5 and $7FF6 select the object table and object index. Writes also update the register locations in RAM.
+OBC1 has 8 KiB of RAM at $00-$3F/$80-$BF:$6000-$7FFF. Registers $7FF0-$7FF3 read and write the selected object's four bytes. Register $7FF4 reads its packed attribute byte and writes only the selected object's two bits. Registers $7FF5 and $7FF6 select the object table and object index. Selector writes update their physical RAM bytes. Indexed object and attribute writes update only the selected storage. Banks $70-$71/$F0-$F1 also expose mirrored OBC1 windows.
 
-RAM and selectors reset to $FF when a cartridge loads. [Super Scope input](light-guns-and-raster.md) is available separately. The object controller and gun protocol have synthetic tests, but games requiring both have not been tested.
+New cartridge RAM starts at $FF. Loading a save or resetting the console rebuilds selectors from retained RAM bytes $1FF5/$1FF6. [Super Scope input](light-guns-and-raster.md) is available separately. A Metal Combat boot capture exercised the object controller with a standard gamepad; Scope gameplay remains untested.
 
 ## S-RTC
 
@@ -66,4 +68,4 @@ Local 1,800-frame checks produced visible output and non-silent audio for Super 
 
 [Controllers and cartridge slots](controllers-and-slots.md) describes mouse, multitap, BS slot boards, and combined Sufami Turbo support. [S-DD1, DMA timing, and video output](dma-video-and-sdd1.md) covers decompression, bank switching, expanded ROM layouts, and video changes.
 
-[Original hardware support](original-hardware.md) covers SA-1, Super FX/FX2, DSP-3/4, Cx4, SPC7110 and its RTC, and BS-X. ST011 has a limited packet interface and ST018 has startup handshakes; neither has its internal program processor. Register and mapper coverage does not establish full system compatibility.
+[Original hardware support](original-hardware.md) covers SA-1, Super FX/FX2, DSP-3/4, Cx4, SPC7110 and its RTC, and BS-X. ST011 executes its internal program when firmware is supplied and otherwise retains a limited packet interface. ST018 has startup handshakes without an internal processor. Register and mapper coverage does not establish full system compatibility.

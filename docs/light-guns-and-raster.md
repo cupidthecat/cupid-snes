@@ -41,7 +41,7 @@ The renderer previously saved registers and palettes per scanline but read tile 
 
 Unchanged lines share an immutable VRAM snapshot. The renderer copies 64 KiB only when a visible line first uses a new VRAM revision, then reuses the allocated storage in later frames. A frame with no visible VRAM changes needs one tile-memory snapshot instead of 224. Forced-blank uploads still create a new snapshot, preserving earlier lines. A retained mutable `VramData()` pointer enables memory comparisons before sharing snapshots, including after reset. Worst-case storage remains roughly 15 MiB for a distinct revision on each overscan line.
 
-Raster register writes are kept in separate lists for each scanline. Rendering a line no longer searches every event in the frame or allocates a temporary event list. Event order and horizontal positions are unchanged.
+Raster register writes are kept in separate lists for each scanline. Rendering a line no longer searches every event in the frame or allocates a temporary event list. Writes are ordered by their pixel positions, preserving write order at a shared position. Screen and background effects use their respective sampling clocks.
 
 Palette access also used incompatible timing units: the scheduler supplied horizontal dots to comparisons expressed in master clocks. It now supplies master clocks, allowing CGRAM access during HBlank and redirecting active-display accesses through the rendering latch. The PPU setter names the clock unit explicitly.
 

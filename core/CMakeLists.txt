@@ -1,5 +1,7 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
+  src/cartridge/CartridgeFirmware.cpp
+  src/cartridge/NecDsp.cpp
   src/cartridge/Msu1.cpp
   src/cartridge/BroadcastCartridge.cpp
   src/cartridge/Sdd1.cpp
@@ -22,6 +24,7 @@ add_library(snes_core
   src/cartridge/Dsp4Sprites.cpp
   src/cpu/Cpu65816.cpp
   src/cpu/Processor65816.cpp
+  src/cpu/UpdDsp.cpp
   src/cpu/SnesCpu.cpp
   src/memory/MemoryBus.cpp
   src/ppu/Ppu.cpp

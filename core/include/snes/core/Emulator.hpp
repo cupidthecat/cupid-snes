@@ -66,6 +66,7 @@ public:
         uint32_t visibleWidth = 256;
         uint32_t visibleHeight = 224;
         uint64_t masterCyclesPerFrame = 357368;
+        std::shared_ptr<const CartridgeFirmware> cartridgeFirmware;
     };
 
     explicit Emulator();
@@ -137,6 +138,8 @@ private:
     /// Wire all subsystem callbacks and map the bus.
     /// Called from LoadCartridge() once the cartridge is ready.
     void InitSubsystems();
+    bool LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
+                                   const CartridgeFirmware *firmware, std::string *error);
     void ResetHardware(bool warm);
     void AdvanceClocks(uint32_t clocks);
     void SynchronizeDevices();

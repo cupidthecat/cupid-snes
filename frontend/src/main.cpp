@@ -34,8 +34,17 @@ int main(int argc, char* argv[]) {
     using snes::core::ControllerDevice;
     std::array devices{ControllerDevice::Gamepad, ControllerDevice::Gamepad};
     std::vector<std::string> arguments;
+    std::filesystem::path firmwareDirectory;
     for (int i = 1; i < argc; ++i) {
         const std::string_view value(argv[i]);
+        if (value.starts_with("--firmware-dir=")) {
+          firmwareDirectory = value.substr(15);
+          if (firmwareDirectory.empty()) {
+            std::cerr << "Firmware directory must not be empty\n";
+            return EXIT_FAILURE;
+          }
+          continue;
+        }
         if (value.starts_with("--port1=") || value.starts_with("--port2=")) {
             auto& device = devices[value[6] - '1'];
             const auto name = value.substr(8);
@@ -62,6 +71,7 @@ int main(int argc, char* argv[]) {
                   << "       snes_frontend [controller options] --sufami <bios.bin> <slot-a.st|-> [slot-b.st|-]\n"
                   << "       snes_frontend [controller options] --broadcast <base.sfc> <pack.bs|->\n";
         std::cerr << "       Port 2 also supports scope, justifier, justifiers, and rifle\n";
+        std::cerr << "       --firmware-dir=<directory> supplies cartridge processor firmware\n";
         return EXIT_FAILURE;
     }
     if (devices[0] == ControllerDevice::Mouse && devices[1] == ControllerDevice::Mouse) {
@@ -79,6 +89,17 @@ int main(int argc, char* argv[]) {
     const std::string romPath = arguments[sufami || broadcast ? 1 : 0];
     const std::array<std::string, 2> slotPaths{sufami ? arguments[2] : "",
                                              sufami && arguments.size() == 4 ? arguments[3] : ""};
+
+    snes::core::Emulator::Config emulatorConfig;
+    if (!firmwareDirectory.empty()) {
+      auto firmware = std::make_shared<snes::core::CartridgeFirmware>();
+      std::string error;
+      if (!firmware->LoadDirectory(firmwareDirectory, &error)) {
+        std::cerr << error << '\n';
+        return EXIT_FAILURE;
+      }
+      emulatorConfig.cartridgeFirmware = std::move(firmware);
+    }
 
     // 2. Initialise SDL (video + audio + events)
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -111,7 +132,7 @@ int main(int argc, char* argv[]) {
     }
 
     // 4. Create emulator & load ROM
-    auto emulator = std::make_unique<snes::core::Emulator>();
+    auto emulator = std::make_unique<snes::core::Emulator>(std::move(emulatorConfig));
 
     emulator->AttachVideoOutput(video.get());
     emulator->AttachAudioOutput(audio.get());
