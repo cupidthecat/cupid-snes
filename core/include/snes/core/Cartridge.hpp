@@ -5,15 +5,16 @@
 #pragma once
 
 #include "snes/core/Bsx.hpp"
-#include "snes/core/NecDsp.hpp"
 #include "snes/core/Cx4.hpp"
 #include "snes/core/Dsp3.hpp"
 #include "snes/core/Dsp4.hpp"
+#include "snes/core/NecDsp.hpp"
 #include "snes/core/Obc1.hpp"
 #include "snes/core/Sa1.hpp"
 #include "snes/core/SetaProtocol.hpp"
 #include "snes/core/Spc7110.hpp"
 #include "snes/core/St010.hpp"
+#include "snes/core/St018Processor.hpp"
 #include "snes/core/SuperFx.hpp"
 #include <memory>
 
@@ -146,6 +147,9 @@ public:
   bool HasSignalProcessor() const noexcept {
     return bool(necDsp_);
   }
+  bool HasArmProcessor() const noexcept {
+    return bool(armDsp_);
+  }
   bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
 
   std::span<const uint8_t> RomData() const noexcept;
@@ -207,6 +211,7 @@ private:
     std::unique_ptr<Cx4> cx4_;
     std::unique_ptr<St011> st011_;
     std::unique_ptr<St018> st018_;
+    std::unique_ptr<St018Processor> armDsp_;
     std::unique_ptr<Bsx> bsx_;
     std::unique_ptr<Dsp3> dsp3_;
     std::unique_ptr<Dsp4> dsp4_;

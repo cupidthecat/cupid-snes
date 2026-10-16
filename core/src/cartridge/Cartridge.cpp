@@ -179,6 +179,8 @@ std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
     return FirmwareKind::St010;
   case EnhancementChip::St011:
     return FirmwareKind::St011;
+  case EnhancementChip::St018:
+    return FirmwareKind::St018;
   default:
     return std::nullopt;
   }
@@ -389,8 +391,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.sram_.assign(0x1000, 0);
     cart.st011_ = std::make_unique<St011>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St018) {
-    cart.header_.sramSizeShift = 2;
-    cart.sram_.assign(0x1000, 0);
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0);
     cart.st018_ = std::make_unique<St018>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St010 ||
              cart.header_.mapping == MappingType::St010) {
@@ -449,7 +450,10 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
                              : firmwareKind && firmware ? firmware->Find(*firmwareKind)
                                                         : std::span<const uint8_t>{};
-  if (firmwareKind && !firmwareBytes.empty()) {
+  if (firmwareKind == FirmwareKind::St018 && !firmwareBytes.empty()) {
+    cart.armDsp_ = std::make_unique<St018Processor>(firmwareBytes);
+    cart.st018_.reset();
+  } else if (firmwareKind && !firmwareBytes.empty()) {
     const bool seta =
         cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
     const auto board = seta                                         ? NecDsp::Board::Seta
@@ -540,6 +544,8 @@ void Cartridge::Reset() {
     st011_->Reset();
   if (st018_)
     st018_->Reset();
+  if (armDsp_)
+    armDsp_->Reset();
   if (bsx_)
     bsx_->Reset();
   if (dsp3_)
@@ -582,6 +588,8 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
     return dsp4_->Read(uint16_t(cpuAddress));
   if (st011_ && St010::Selects(cpuAddress))
     return st011_->Read(cpuAddress);
+  if (armDsp_ && St018Processor::Selects(cpuAddress))
+    return armDsp_->Read(cpuAddress);
   if (st018_ && (cpuAddress & 0x40f000) == 0x003000)
     return st018_->Read(cpuAddress);
   if (cx4_ && Cx4::Selects(cpuAddress))
@@ -645,6 +653,10 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
     st011_->Write(cpuAddress, value);
     return;
   }
+  if (armDsp_ && St018Processor::Selects(cpuAddress)) {
+    armDsp_->Write(cpuAddress, value);
+    return;
+  }
   if (st018_ && (cpuAddress & 0x40f000) == 0x003000) {
     st018_->Write(cpuAddress, value);
     return;
@@ -693,6 +705,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (armDsp_)
+    armDsp_->Advance(masterClocks);
   if (necDsp_)
     necDsp_->Advance(masterClocks);
   if (sa1_)
@@ -705,6 +719,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (armDsp_)
+    armDsp_->SetPal(pal);
   if (necDsp_)
     necDsp_->SetPal(pal);
   masterClockHz_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
@@ -1105,8 +1121,9 @@ bool Cartridge::SelectsLoRomSram(uint32_t cpuAddress) const {
     }
     const unsigned bank = (cpuAddress >> 16) & 0xff;
     if (!((bank >= 0x70 && bank <= 0x7d) || (bank >= 0xf0 && !sram_.empty()))) return false;
-    return (cpuAddress & 0xffff) < 0x8000 || header_.mapping == MappingType::LoRomNoMad1 ||
-        (header_.romSizeShift <= 11 && sram_.size() <= 0x8000);
+    return (cpuAddress & 0xffff) < 0x8000 || header_.chip == EnhancementChip::St018 ||
+           header_.mapping == MappingType::LoRomNoMad1 ||
+           (header_.romSizeShift <= 11 && sram_.size() <= 0x8000);
 }
 
 std::optional<size_t> Cartridge::ResolveSramOffset(uint32_t cpuAddress) const {

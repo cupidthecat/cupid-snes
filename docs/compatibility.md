@@ -53,4 +53,4 @@ Timing covers each `StepFrame` call, including the tool's video and audio collec
 
 [ST010 cartridge support](st010.md) covers its board map, math commands, shared RAM, and command-level accuracy limits.
 
-[Original hardware support](original-hardware.md) covers the implemented SA-1 and Super FX processors, DSP-3/4 and Cx4 command engines, SPC7110 decompression and clock, BS-X controller and streams, and the limited ST011/ST018 protocols. It records the remaining processor, timing, broadcast, and game-validation gaps. A recognized chip or passing synthetic test is not a claim that every game using that chip works.
+[Original hardware support](original-hardware.md) covers the implemented SA-1 and Super FX processors, DSP-3/4 and Cx4 command engines, SPC7110 decompression and clock, BS-X controller and streams, and ST011/ST018 firmware execution with limited fallbacks when firmware is absent. It records the remaining processor, timing, broadcast, and game-validation gaps. A recognized chip or passing synthetic test is not a claim that every game using that chip works.

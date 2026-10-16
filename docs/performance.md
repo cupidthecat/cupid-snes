@@ -1,5 +1,13 @@
 # Performance checks
 
+## ST018 firmware replay, 2026-10-16
+
+A quiet, headless Hayazashi Nidan Morita Shougi 2 replay completed 6,000 fields at 84.20 fields/s. The sequence navigated the menus and selected the computer to make the opening move. Median field time was 11.813 ms, p95 was 12.716 ms, p99 was 13.729 ms, and the maximum was 20.101 ms.
+
+The Windows Release build used the supplied ST018 program and data firmware. Active processor mode and firmware bytes were checked before timing. Core audio generation remained enabled; video hashing and PCM capture were disabled, and other heavy validation was stopped. The run exceeded full speed for this sequence. It does not establish complete game compatibility.
+
+An earlier 300-field quiet run reached 56.21 fields/s. Batching independent ARM work between CPU bridge accesses raised the same short replay to 87.67 fields/s. Every bridge access still synchronizes firmware execution before reading or changing shared state.
+
 ## Clocked graphics pipeline, 2026-10-16
 
 A quiet, headless Kirby Super Star replay ran 3,600 fields at 61.96 fields/s after the palette-port changes. Median field time was 16.078 ms, p95 was 17.474 ms, p99 was 18.664 ms, and the maximum was 23.921 ms. The Windows Release build used GCC 15 on the same local workstation, with other heavy validation stopped during the run.
