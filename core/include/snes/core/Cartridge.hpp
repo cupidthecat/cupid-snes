@@ -128,7 +128,8 @@ public:
   const RomHeader &Header() const noexcept;
   uint32_t RomCrc32() const noexcept;
 
-  // Reset device controls while retaining cartridge storage and clock data.
+  // Reset device controls and internal work RAM as required. Retain battery RAM
+  // and clock data.
   void Reset();
 
   void SetMemselFast(bool enabled) noexcept;

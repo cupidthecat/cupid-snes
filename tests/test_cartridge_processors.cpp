@@ -169,7 +169,7 @@ void CoprocessorBusSynchronization() {
     bus.Write(0x301f, 0);
     for (unsigned cycle = 0; cycle < 100; ++cycle)
       machine->GetCpu()->idle();
-    Check(machine->LoadedCartridge()->SramData()[0x100] == 0 &&
+    Check(machine->LoadedCartridge()->SramData()[0x100] == 0xff &&
               !machine->LoadedCartridge()->CpuIrqPending(),
           "Idle cycles retain coprocessor clock debt until a CPU bus synchronization");
     if (write)
@@ -201,7 +201,7 @@ void SuperFxBufferedBus() {
     const uint64_t masterHz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
     const auto deadline = (4 * masterHz + SuperFx::ClockFrequency - 1) / SuperFx::ClockFrequency;
     cartridge->AdvanceHardware(static_cast<uint32_t>(deadline - 1));
-    Check(!cartridge->CpuIrqPending() && cartridge->SramData()[0x100] == 0,
+    Check(!cartridge->CpuIrqPending() && cartridge->SramData()[0x100] == 0xff,
           "The shared store stays buffered before STOP reaches its native step");
     cartridge->AdvanceHardware(1);
     Check(cartridge->CpuIrqPending() && cartridge->Read(0x700100) == 0xaa,

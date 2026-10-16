@@ -417,7 +417,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     // SRAM field is zero. New headers store its size before the title.
     cart.header_.sramSizeShift =
         cart.header_.maker == 0x33 ? cart.rom_[cart.header_.headerOffset - 3] : 5;
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0);
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
     cart.superFx_ = std::make_unique<SuperFx>(cart.rom_, cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St011 ||
              cart.header_.mapping == MappingType::St011) {
@@ -427,7 +427,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.sram_.assign(0x1000, 0);
     cart.st011_ = std::make_unique<St011>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St018) {
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0);
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
     cart.st018_ = std::make_unique<St018>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St010 ||
              cart.header_.mapping == MappingType::St010) {
@@ -436,10 +436,8 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.sramSizeShift = 2;
     cart.sram_.assign(0x1000, 0);
   } else {
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0x00);
+    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
   }
-  if (cart.header_.chip == EnhancementChip::Srtc)
-    std::fill(cart.sram_.begin(), cart.sram_.end(), 0xff);
   if (cart.header_.chip == EnhancementChip::Obc1) {
     cart.sram_.assign(8192, 0xff);
     cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
@@ -478,7 +476,6 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Spc7110;
     if (cart.header_.chip != EnhancementChip::Spc7110Rtc)
       cart.header_.chip = EnhancementChip::Spc7110;
-    std::fill(cart.sram_.begin(), cart.sram_.end(), 0xff);
     cart.spc7110_ = std::make_unique<Spc7110>(cart.rom_, cart.sram_,
                                               cart.header_.chip == EnhancementChip::Spc7110Rtc);
   }
@@ -547,7 +544,7 @@ std::optional<Cartridge> Cartridge::FromSufamiTurbo(
     cart->header_.mapping = MappingType::SufamiTurbo;
     cart->header_.chip = EnhancementChip::None;
     // A stable 16 KiB region per slot keeps saves independent of slot occupancy.
-    cart->sram_.assign(0x8000, 0);
+    cart->sram_.assign(0x8000, 0xff);
     for (unsigned i = 0; i < 2; ++i) {
         cart->slotOffset_[i] = cart->rom_.size();
         cart->slotSize_[i] = slots[i].size();
@@ -574,6 +571,8 @@ void Cartridge::Reset() {
   flashCommand_ = 0;
   sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
   st010_ = St010{};
+  if (header_.mapping == MappingType::St010 && !necDsp_)
+    std::fill(sram_.begin(), sram_.end(), 0);
   if (spc7110_)
     spc7110_->Reset();
   if (sa1_)

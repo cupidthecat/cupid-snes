@@ -2,6 +2,8 @@
 
 The loader distinguishes cartridge processors using the mapping byte, cartridge type, maker code, and extended processor subtype. An unsupported device produces an error with its name. A failed load leaves the current cartridge, RAM, and CPU bus intact. A successful load resets the machine and its frame counters.
 
+[Cartridge memory initialization](cartridge-memory.md) describes erased external RAM, processor work RAM, save loading, and reset retention.
+
 ## DSP-2 command model
 
 With cartridge firmware, DSP-1 through DSP-4 and ST010/ST011 use [clocked signal processors](clocked-cartridge-processors.md). The following DSP-2 description applies to the fallback used without firmware.

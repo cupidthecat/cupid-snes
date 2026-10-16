@@ -132,6 +132,32 @@ void ConsoleMailboxExchange() {
   Check(machine->GetBus().Read(0x003804) == 0x80,
         "Both processors consume their mailboxes during the console-driven exchange");
 }
+void WorkRamReset() {
+  auto image = Image();
+  image[0] = 0x80;
+  image[1] = 0xfe;
+  // Read a work RAM counter, increment it, and report it through the mailbox.
+  const uint32_t firmware[]{0xe3a0020e, 0xe5d01000, 0xe2811001, 0xe5c01000,
+                            0xe3a02101, 0xe5821000, 0xeafffffe};
+  for (unsigned i = 0; i < std::size(firmware); ++i)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+  auto machine = std::make_unique<Emulator>();
+  Check(machine->LoadCartridge(image), "The work RAM counter firmware loads");
+  auto &bus = machine->GetBus();
+  machine->StepFrame();
+  Check(bus.Read(0x3800) == 1, "Fresh ST018 work RAM starts cleared");
+  bus.Write(0x3804, 1);
+  machine->StepFrame();
+  bus.Write(0x3804, 0);
+  machine->StepFrame();
+  Check(bus.Read(0x3800) == 2, "Bridge reset retains processor work RAM");
+  bus.Write(0x700123, 0x63);
+  Check(machine->Reset(), "Console reset succeeds");
+  machine->StepFrame();
+  Check(bus.Read(0x3800) == 1 && bus.Read(0x700123) == 0x63,
+        "Console reset clears ST018 work RAM while retaining battery RAM");
+}
 } // namespace
 int main() {
   try {
@@ -141,6 +167,7 @@ int main() {
     FirmwareCatalogAndPartitioning();
     MappedFirmwarePorts();
     ConsoleMailboxExchange();
+    WorkRamReset();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
