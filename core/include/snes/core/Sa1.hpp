@@ -41,20 +41,13 @@ public:
     void WriteSa1(uint32_t address, uint8_t value);
     const Processor65816::Registers& CpuRegisters() const noexcept { return regs(); }
     uint64_t MasterClocks() const noexcept { return requestedClocks_; }
-    bool DmaActive() const noexcept { return dma_.active; }
+    bool DmaActive() const noexcept {
+      return dmaActive_;
+    }
 
 private:
     enum class Side { Cpu, Sa1 };
     static constexpr uint64_t AccumulatorMask = (uint64_t{1} << 40) - 1;
-
-    struct Transfer {
-        uint32_t source = 0;
-        uint32_t destination = 0;
-        uint32_t remaining = 0;
-        uint8_t sourceDevice = 0;
-        bool destinationBwram = false;
-        bool active = false;
-    };
 
     std::span<const uint8_t> rom_;
     std::span<const uint8_t> expansion_;
@@ -81,11 +74,8 @@ private:
     bool arithmeticOverflow_ = false;
     uint8_t bitOffset_ = 0;
 
-    Transfer dma_{};
+    bool dmaActive_ = false;
     bool conversionActive_ = false;
-    uint32_t conversionSource_ = 0;
-    uint16_t conversionDestination_ = 0;
-    uint32_t conversionTile_ = UINT32_MAX;
     uint8_t conversionRows_ = 0;
     uint8_t conversionBuffer_ = 0;
 

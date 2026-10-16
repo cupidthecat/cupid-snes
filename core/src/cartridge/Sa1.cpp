@@ -58,10 +58,8 @@ void Sa1::Reset() {
   arithmeticResult_ = 0;
   arithmeticOverflow_ = false;
   bitOffset_ = 0;
-  dma_ = {};
+  dmaActive_ = false;
   conversionActive_ = false;
-  conversionSource_ = conversionDestination_ = 0;
-  conversionTile_ = UINT32_MAX;
   conversionRows_ = conversionBuffer_ = 0;
 }
 
@@ -134,7 +132,7 @@ void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing
   if (!execution_) {
     execution_ = std::make_unique<detail::ExecutionContext>([this] {
       for (;;) {
-        if (dma_.active)
+        if (dmaActive_)
           StepDma();
         else
           StepProcessor();
@@ -535,17 +533,12 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
       hClocks_ = vCounter_ = 0;
       break;
     case 0x30:
-        if ((value & 0xb0) != 0xb0) conversionActive_ = false;
         if (!(value & 0x80)) {
-            dma_.active = conversionActive_ = false;
-            conversionRows_ = conversionBuffer_ = 0;
-        } else if (!(previous & 0x80) || ((value ^ previous) & 0x30)) {
             conversionRows_ = conversionBuffer_ = 0;
         }
         break;
     case 0x31:
         if (value & 0x80) conversionActive_ = false;
-        conversionTile_ = UINT32_MAX;
         break;
     case 0x36:
         if ((registers_[0x30] & 0xa4) == 0x80) StartDma();

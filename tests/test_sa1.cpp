@@ -813,6 +813,78 @@ void NativeDmaTiming() {
     }
 }
 
+void DmaLiveRegisters() {
+  {
+    Fixture f;
+    auto &c = f.chip;
+    f.rom[0x100] = 0x51;
+    f.rom[0x101] = 0x62;
+    f.rom[0x140] = 0x73;
+    ConfigureDma(c, 0x80, 0xc00100, 0x600, 2);
+    c.Advance(1);
+    c.WriteCpu(0x2232, 0x40);
+    c.WriteCpu(0x2235, 0x70);
+    c.Advance(4);
+    Check(c.ReadSa1(0x600) == 0x51 && c.ReadSa1(0x670) == 0x73 && c.ReadSa1(0x601) == 0,
+          "DMA latches the current byte and observes address writes for the following byte");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    for (unsigned i = 0; i < 4; ++i)
+      f.rom[0x100 + i] = static_cast<uint8_t>(0x51 + i);
+    ConfigureDma(c, 0x80, 0xc00100, 0x600, 2);
+    c.Advance(1);
+    c.WriteSa1(0x2238, 3);
+    c.Advance(8);
+    Check(Get(c, 0x600, 4) == 0x54535251 && !c.DmaActive(),
+          "An untimed count write during DMA controls the bytes after the current byte");
+    c.WriteSa1(0x220b, 0x20);
+    c.WriteSa1(0x2236, 6);
+    c.Advance(1);
+    Check(c.DmaActive() && !(c.ReadSa1(0x2301) & 0x20),
+          "Restarting without a count write uses the wrapped completion count");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    f.rom[0x801] = 0x73;
+    f.rom[1] = 0x24;
+    ConfigureDma(c, 0x86, 0x7ff, 0x1000, 2);
+    c.Advance(9);
+    c.WriteSa1(0x2230, 0x84);
+    c.WriteSa1(0x2234, 0xc0);
+    Set(c, 0x2238, 1);
+    c.WriteSa1(0x2237, 0);
+    c.Advance(8);
+    Check(f.ram[0x1002] == 0x73,
+          "A physical IRAM wrap retains the high bits of the DMA source cursor");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    f.rom[0x102] = 0x83;
+    ConfigureDma(c, 0x80, 0xc00100, 0x7fe, 2);
+    c.Advance(5);
+    c.WriteSa1(0x2230, 0x84);
+    Set(c, 0x2238, 1);
+    c.WriteSa1(0x2237, 0);
+    c.Advance(8);
+    Check(f.ram[0x800] == 0x83 && f.ram[0] == 0,
+          "A physical IRAM wrap retains the high bits of the DMA destination cursor");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    ConfigureDma(c, 0x80, 0xc00100, 0x600, 0);
+    c.WriteSa1(0x220b, 0x20);
+    c.WriteSa1(0x2236, 6);
+    c.Advance(1);
+    Check(c.DmaActive() && !(c.ReadSa1(0x2301) & 0x20),
+          "A zero-length DMA wraps its count before a subsequent trigger");
+  }
+}
+
 void Dma() {
     Fixture f;
     auto& c = f.chip;
@@ -854,11 +926,13 @@ void Dma() {
     c.Reset();
     ConfigureDma(c, 0x80, 0xc00100, 0x600, 4); c.Advance(1);
     c.WriteSa1(0x2230, 0); c.Advance(20);
-    Check(!c.DmaActive() && c.ReadSa1(0x600) == 0 && !(c.ReadSa1(0x2301) & 0x20), "Disabling DMA cancels an unfinished byte without a completion interrupt");
+    Check(!c.DmaActive() && c.ReadSa1(0x600) == 0x51 && (c.ReadSa1(0x2301) & 0x20),
+          "Disabling the DMA trigger retains an in-flight transfer and its completion interrupt");
     ConfigureDma(c, 0x82, 0, 0, 4);
-    Check(!c.DmaActive(), "Unsupported same-device transfer does not start");
+    Check(!c.DmaActive(), "An unselected DMA port pair completes without memory cycles");
     ConfigureDma(c, 0x80, 0xc00100, 0x600, 0);
-    Check(!c.DmaActive() && c.ReadSa1(0x600) == 0 && (c.ReadSa1(0x2301) & 0x20), "Zero-length DMA completes without copying or underflowing the byte count");
+    Check(!c.DmaActive() && c.ReadSa1(0x600) == 0x51 && (c.ReadSa1(0x2301) & 0x20),
+          "Zero-length DMA completes without copying memory");
 }
 
 std::vector<uint8_t> Planar(const std::array<uint8_t, 64>& pixels, unsigned depth) {
@@ -870,6 +944,47 @@ std::vector<uint8_t> Planar(const std::array<uint8_t, 64>& pixels, unsigned dept
             output[(plane & ~1u) * 8 + (pixel / 8) * 2 + (plane & 1)] |= static_cast<uint8_t>(0x80 >> (pixel & 7));
     }
     return output;
+}
+
+void CharacterConversionVisibility() {
+  for (unsigned mode = 0; mode < 4; ++mode)
+    for (unsigned widthCode : {5u, 6u, 7u}) {
+      Fixture f;
+      auto &c = f.chip;
+      const unsigned depth = mode < 2 ? 8 >> mode : 2;
+      const uint8_t firstPixels = static_cast<uint8_t>(0xff << (8 - 8 / depth));
+      c.WriteCpu(0x2229, 0xff);
+      for (unsigned address = 0; address < 2048; ++address)
+        c.WriteCpu(0x3000 + address, 0x5a);
+      f.ram[0x1000 + 32 * depth] = 0xff;
+      c.WriteSa1(0x2231, static_cast<uint8_t>(mode | (widthCode << 2)));
+      Set(c, 0x2232, 0x1000, 3);
+      Set(c, 0x2235, 0x703, 3);
+      c.WriteSa1(0x2230, 0xb0);
+      c.WriteSa1(0x2236, 7);
+      Check(c.ReadCpu(0x3703) == 0x5a && c.ReadCpu(0x401001) == 0x5a,
+            "Type-1 conversion waits for a character-boundary read before changing IRAM");
+      Check(c.ReadCpu(0x401000) == 0 && c.ReadCpu(0x3705) == firstPixels &&
+                c.ReadCpu(0x3702) == 0x5a,
+            "Conversion preserves an unaligned IRAM destination and clamps character width");
+      f.ram[0x1000] = 0xff;
+      Check(c.ReadCpu(0x401000) == firstPixels && c.ReadCpu(0x3703) == firstPixels,
+            "A repeated character-boundary read converts live bitmap data again");
+      Check(c.ReadCpu(0x401000 + depth * 8) == 0 && c.ReadCpu(0x3703) == 0 &&
+                c.ReadCpu(0x3703 + depth * 8) == 0x5a,
+            "Each converted character uses the programmed IRAM buffer");
+      c.WriteCpu(0x2235, 0x21);
+      Check(c.ReadCpu(0x401000) == firstPixels && c.ReadCpu(0x3721) == firstPixels,
+            "A partial destination write affects the next conversion");
+      c.WriteSa1(0x2230, 0);
+      f.ram[0x1000] = 0;
+      Check(c.ReadCpu(0x401000) == 0 && c.ReadCpu(0x3721) == 0,
+            "Disabling the conversion trigger retains its active read mapping");
+      c.WriteCpu(0x2231, 0x80);
+      f.ram[0x1000] = 0x37;
+      Check(c.ReadCpu(0x401000) == 0x37 && c.ReadCpu(0x3721) == 0,
+            "The conversion-end bit releases the read mapping without another IRAM write");
+    }
 }
 
 void CharacterConversion() {
@@ -1267,7 +1382,9 @@ int main() {
       NativeTimerEdges();
       Timers();
       NativeDmaTiming();
+      DmaLiveRegisters();
       Dma();
+      CharacterConversionVisibility();
       CharacterConversion();
       ExecutableProgram();
       Interrupts();
