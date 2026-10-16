@@ -30,6 +30,7 @@ bool IoBank(uint32_t address) { return (address & 0x400000) == 0; }
 struct SuperFx::Impl {
     enum class Port { None, Rom, Ram };
     struct Fetch;
+    struct FlushPixels;
 
     // A single suspended execution frame retains the instruction and its operands
     // across CPU clock slices, including slices ending in a cache fill or bus stall.
@@ -80,6 +81,7 @@ struct SuperFx::Impl {
     uint32_t waitRemaining = 0;
     Port waitPort = Port::None;
     Fetch *cacheFill = nullptr;
+    FlushPixels *pixelFlush = nullptr;
     enum class StepPhase { RomCountdown, RomAccess, RamCountdown, RamAccess, Clock };
     struct NativeStep {
       uint32_t clocks;
@@ -260,25 +262,44 @@ struct SuperFx::Impl {
         unsigned index;
         uint32_t address;
         unsigned depth;
+        unsigned plane = 0;
+        uint8_t data = 0;
+        bool reading = false;
         FlushPixels(Impl& value, unsigned row) : chip(value), index(row),
             address(value.PixelAddress(uint8_t(value.pixels[row].position * 8),
                                        uint8_t(value.pixels[row].position >> 5))), depth(value.Depth()) {}
         bool await_ready() const noexcept { return chip.pixels[index].pending == 0; }
-        void await_suspend(std::coroutine_handle<>) const noexcept {
-          chip.BeginWait(depth * chip.MemoryCost() * (chip.pixels[index].pending == 0xff ? 1 : 2),
-                         Port::Ram);
+        void BeginPlane() noexcept {
+          const auto &row = chip.pixels[index];
+          data = 0;
+          for (unsigned lane = 0; lane < 8; ++lane)
+            data |= uint8_t(((row.colors[lane] >> plane) & 1) << (7 - lane));
+          reading = row.pending != 0xff;
+          chip.BeginWait(chip.MemoryCost(), Port::Ram);
+        }
+        void await_suspend(std::coroutine_handle<>) noexcept {
+          chip.pixelFlush = this;
+          BeginPlane();
+        }
+        bool CompleteAccess() noexcept {
+          const auto target = address + PlaneOffset(plane);
+          if (reading) {
+            const auto mask = chip.pixels[index].pending;
+            data = uint8_t((data & mask) | (chip.RamByte(target) & ~mask));
+            reading = false;
+            chip.BeginWait(chip.MemoryCost(), Port::Ram);
+            return false;
+          }
+          chip.StoreRam(target, data);
+          if (++plane < depth) {
+            BeginPlane();
+            return false;
+          }
+          chip.pixelFlush = nullptr;
+          return true;
         }
         void await_resume() const noexcept {
-            auto& row = chip.pixels[index];
-            if (!row.pending) return;
-            for (unsigned plane = 0; plane < depth; ++plane) {
-                uint8_t packed = 0;
-                for (unsigned lane = 0; lane < 8; ++lane)
-                    packed |= uint8_t(((row.colors[lane] >> plane) & 1) << (7 - lane));
-                const auto target = address + PlaneOffset(plane);
-                chip.StoreRam(target, uint8_t((packed & row.pending) | (chip.RamByte(target) & ~row.pending)));
-            }
-            row.pending = 0;
+          chip.pixels[index].pending = 0;
         }
     };
 
@@ -365,6 +386,8 @@ struct SuperFx::Impl {
               continue;
             }
           }
+          if (pixelFlush && !pixelFlush->CompleteAccess())
+            continue;
           if (waitingForGo) {
             if (!Running()) {
               idleStep = true;
@@ -529,33 +552,34 @@ struct SuperFx::Impl {
                     break;
                 case 0x4c:
                     if (mode & 1) {
-                        co_await FlushPixels{*this, 1};
+                      const uint8_t x = uint8_t(r[1]), y = uint8_t(r[2]);
+                      co_await FlushPixels{*this, 1};
                         co_await FlushPixels{*this, 0};
                         uint16_t value = 0;
-                        const uint32_t address = PixelAddress(uint8_t(r[1]), uint8_t(r[2]));
-                        for (unsigned plane = 0; plane < Depth(); ++plane) {
-                          co_await Wait{*this, MemoryCost(), Port::Ram};
+                      const uint32_t address = PixelAddress(x, y);
+                      const unsigned depth = Depth();
+                      for (unsigned plane = 0; plane < depth; ++plane) {
+                        co_await Wait{*this, MemoryCost(), Port::Ram};
                           const uint8_t packed = RamByte(address + PlaneOffset(plane));
-                          value |= uint16_t(((packed >> (7 - (r[1] & 7))) & 1) << plane);
-                        }
+                        value |= uint16_t(((packed >> (7 - (x & 7))) & 1) << plane);
+                      }
                         SetRegister(destination, value);
                         ResultFlags(value);
                     } else {
                         const uint8_t x = uint8_t(r[1]), y = uint8_t(r[2]);
-                        ++r[1];
                         const bool transparent = !(plotOptions & 1) &&
                             (((screenMode & 3) != 3 || (plotOptions & 8)) ? !(color & 15) : !color);
                         if (!transparent) {
-                            const auto row = uint16_t(unsigned(y) * 32 + x / 8);
+                          uint8_t value = color;
+                          if ((plotOptions & 2) && (screenMode & 3) != 3)
+                            value = uint8_t((((x ^ y) & 1) ? value >> 4 : value) & 15);
+                          const auto row = uint16_t(unsigned(y) * 32 + x / 8);
                             if (pixels[0].position != row) {
                                 co_await FlushPixels{*this, 1};
                                 pixels[1] = pixels[0];
                                 pixels[0].position = row;
                                 pixels[0].pending = 0;
                             }
-                            uint8_t value = color;
-                            if ((plotOptions & 2) && (screenMode & 3) != 3)
-                                value = uint8_t((((x ^ y) & 1) ? value >> 4 : value) & 15);
                             pixels[0].colors[x & 7] = value;
                             pixels[0].pending |= uint8_t(0x80 >> (x & 7));
                             if (pixels[0].pending == 0xff) {
@@ -564,6 +588,7 @@ struct SuperFx::Impl {
                                 pixels[0].pending = 0;
                             }
                         }
+                        ++r[1];
                     }
                     break;
                 case 0x4d: case 0x4f: case 0x95: case 0x9e: case 0xc0: {

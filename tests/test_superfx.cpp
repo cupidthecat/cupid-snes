@@ -494,6 +494,62 @@ unsigned TileOffset(unsigned x, unsigned y, unsigned bpp, unsigned heightMode, u
     return base * 1024 + tile * bpp * 8 + 2 * (y % 8);
 }
 
+void PixelPlaneWriteTimes() {
+  Fixture f;
+  std::fill(f.ram.begin(), f.ram.end(), 0xff);
+  f.chip.WriteCpu(0x3039, 1);
+  f.Reg(0, 1);
+  f.Reg(1, 7);
+  f.Cache({0x3d, 0x4e, 0x4c, 0x3d, 0x4c, 0, 1}); // Opaque black PLOT, then RPIX.
+  f.Start(0);
+  f.chip.Advance(15);
+  Check(f.ram[0] == 0xff && f.ram[1] == 0xff,
+        "A partial pixel row waits for the first plane's read and write clocks");
+  f.chip.Advance(1);
+  Check(f.ram[0] == 0xfe && f.ram[1] == 0xff,
+        "The first pixel plane becomes visible before the second plane");
+  f.chip.Advance(10);
+  Check(f.ram[0] == 0xfe && f.ram[1] == 0xfe,
+        "The second pixel plane completes its separate memory transaction");
+}
+void PixelReadCoordinates() {
+  Fixture f;
+  std::fill(f.ram.begin(), f.ram.end(), 0xff);
+  f.ram[0x100] = 0x80;
+  f.ram[0x101] = 0;
+  f.chip.WriteCpu(0x3039, 1);
+  f.Reg(0, 1);
+  f.Reg(1, 7);
+  f.Cache({0x3d, 0x4e, 0x4c, 0x3d, 0x4c, 0, 1});
+  f.Start(0);
+  f.chip.Advance(8);
+  f.Reg(1, 0);
+  f.Reg(2, 8);
+  f.chip.Advance(100);
+  Check(f.Reg(0) == 1, "RPIX retains its coordinates while flushing queued pixels");
+
+  Fixture active;
+  active.ram[0] = active.ram[1] = 0x80;
+  active.chip.WriteCpu(0x3039, 1);
+  active.Cache({0x3d, 0x4c, 0, 1});
+  active.Start(0);
+  active.chip.Advance(6);
+  active.Reg(1, 1);
+  active.chip.Advance(100);
+  Check(active.Reg(0) == 3, "RPIX retains its bit position across individual plane reads");
+}
+void PlotRegisterWriteTime() {
+  Fixture f;
+  f.chip.WriteCpu(0x3039, 1);
+  f.Reg(0, 1);
+  f.Cache({0x3d, 0x4e, 0x4c, 0x4c, 0x4c, 0x4c, 0x4c, 0x4c, 0x4c, 0x4c, 0x4c, 0, 1});
+  f.Start(0);
+  f.chip.Advance(14);
+  Check(f.Reg(1) == 8, "PLOT waits for queued pixel writes before incrementing R1");
+  f.Reg(1, 0x20);
+  f.chip.Advance(100);
+  Check(f.Reg(1) == 0x21, "PLOT increments the live R1 value after its memory accesses");
+}
 void PixelsAndScreenModes() {
     for (unsigned depthMode = 0; depthMode < 4; ++depthMode) {
         for (unsigned height = 0; height < 4; ++height) {
@@ -708,6 +764,9 @@ int main() {
       RamInstructions();
       RomBufferInstructions();
       PixelsAndScreenModes();
+      PixelPlaneWriteTimes();
+      PixelReadCoordinates();
+      PlotRegisterWriteTime();
       CacheAndSynchronization();
       CacheBoundaryAndClockModes();
     } catch (const std::exception& error) {
