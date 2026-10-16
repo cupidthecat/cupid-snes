@@ -174,8 +174,10 @@ EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
   case 0x4332:
   case 0x4532:
     return EnhancementChip::Sdd1;
+  case 0xf52a:
   case 0xf53a:
     return EnhancementChip::Spc7110;
+  case 0xf92a:
   case 0xf93a:
     return EnhancementChip::Spc7110Rtc;
   case 0xf320:
@@ -473,8 +475,9 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Spc7110;
     if (cart.header_.chip != EnhancementChip::Spc7110Rtc)
       cart.header_.chip = EnhancementChip::Spc7110;
-    cart.spc7110_ =
-        std::make_unique<Spc7110>(cart.rom_, cart.header_.chip == EnhancementChip::Spc7110Rtc);
+    std::fill(cart.sram_.begin(), cart.sram_.end(), 0xff);
+    cart.spc7110_ = std::make_unique<Spc7110>(cart.rom_, cart.sram_,
+                                              cart.header_.chip == EnhancementChip::Spc7110Rtc);
   }
   if (cart.header_.mapping == MappingType::Bsx)
     cart.InitializeBroadcast();
@@ -569,7 +572,7 @@ void Cartridge::Reset() {
   sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
   st010_ = St010{};
   if (spc7110_)
-    spc7110_->reset();
+    spc7110_->Reset();
   if (sa1_)
     sa1_->Reset();
   if (superFx_)
@@ -638,12 +641,8 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
     return sa1_->ReadCpu(cpuAddress, openBus);
   if (superFx_)
     return superFx_->ReadCpu(cpuAddress, openBus);
-  if (spc7110_) {
-    if ((cpuAddress & 0x40ff00) == 0x4800)
-      return spc7110_->mmio_read(cpuAddress, openBus);
-    if ((cpuAddress >> 16) == 0x50)
-      return spc7110_->mmio_read(0x4800, openBus);
-  }
+  if (spc7110_)
+    return spc7110_->Read(cpuAddress, openBus);
   if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress))
     return st010_.Read(cpuAddress, sram_);
   if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800)
@@ -718,12 +717,8 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
     return;
   }
   if (spc7110_) {
-    if ((cpuAddress & 0x40ff00) == 0x4800) {
-      spc7110_->mmio_write(cpuAddress, value);
-      return;
-    }
-    if (!(spc7110_->r4830 & 0x80))
-      return;
+    spc7110_->Write(cpuAddress, value);
+    return;
   }
   if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress)) {
     st010_.Write(cpuAddress, value, sram_);
@@ -749,6 +744,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (spc7110_)
+    spc7110_->Advance(masterClocks);
   if (cx4Processor_)
     cx4Processor_->Advance(masterClocks);
   if (armDsp_)
@@ -765,6 +762,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (spc7110_)
+    spc7110_->SetPal(pal);
   if (cx4Processor_)
     cx4Processor_->SetPal(pal);
   if (armDsp_)
@@ -827,6 +826,13 @@ bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
   if (!necDsp_)
     return false;
   necDsp_->MapCpu(bus, slot);
+  return true;
+}
+
+bool Cartridge::MapSpc7110(MemoryBus &bus, uint8_t slot) const {
+  if (!spc7110_)
+    return false;
+  spc7110_->MapCpu(bus, slot);
   return true;
 }
 
@@ -1035,15 +1041,6 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
 
     switch (header_.mapping) {
     case MappingType::Spc7110:
-        if (bank >= 0xd0) {
-            const uint8_t page = bank < 0xe0 ? spc7110_->r4831 : bank < 0xf0 ? spc7110_->r4832 : spc7110_->r4833;
-            return spc7110_->datarom_addr((unsigned(page & 7) << 20) | (cpuAddress & 0xfffff));
-        }
-        if ((bank <= 0x0f || (bank >= 0x80 && bank <= 0x8f)) && addr >= 0x8000)
-            return MirrorOffset(cpuAddress & 0xfffff, rom_.size());
-        if (bank >= 0xc0 && bank <= 0xcf) return cpuAddress & 0xfffff;
-        if (bank >= 0x40 && bank <= 0x4f && header_.romSizeShift >= 13)
-            return MirrorOffset(0x600000 | (cpuAddress & 0xfffff), rom_.size());
         return std::nullopt;
     case MappingType::St011:
     case MappingType::St010:

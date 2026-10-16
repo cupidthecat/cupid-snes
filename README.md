@@ -97,3 +97,5 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 [Clocked cartridge processors](docs/clocked-cartridge-processors.md) covers DSP and ST firmware files, processor clocks, board maps, and saves. [ST010 cartridge support](docs/st010.md) describes the fallback math commands. [ST018 firmware execution](docs/st018.md) covers the ARM processor and CPU bridge.
 
 [Cx4 processor execution](docs/cx4.md) covers data firmware, instruction caches, DMA, ROM ownership, and CPU IRQ controls.
+
+[SPC7110 and cartridge RTC](docs/spc7110.md) covers decompression, arithmetic timing, data ports, memory maps, and clock saves.

@@ -45,6 +45,13 @@ jobs:
           core/src/cpu/Hg51b.cpp core/src/cpu/Hg51bHost.cpp tests/test_hg51b.cpp -o hg51b-tests
       - name: Test HG51B processor
         run: ./hg51b-tests
+      - name: Build SPC7110 coding and RTC tests
+        run: >-
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include
+          core/src/cartridge/Spc7110Decoder.cpp core/src/cartridge/Spc7110Rtc.cpp
+          tests/test_spc7110_parts.cpp -o spc7110-parts-tests
+      - name: Test SPC7110 coding and RTC
+        run: ./spc7110-parts-tests
   windows:
     runs-on: windows-2022
     timeout-minutes: 20
