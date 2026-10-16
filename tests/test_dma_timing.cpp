@@ -2,6 +2,7 @@
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -53,6 +54,39 @@ void ClockedTransfers() {
     Check(ch.sourceBank == 0x7e && ch.sourceAddress == 0x100, "DMA wraps within the source bank");
     Check(emu->GetCpu()->regs().pc == cpuPc, "DMA stalls CPU execution");
     Check(emu->GetSmp().CycleCount() > 0, "APU advances during DMA");
+}
+
+void CoprocessorHandoff() {
+  for (unsigned cycle : {6u, 8u, 12u})
+    for (unsigned phase : {0u, 2u, 4u, 6u})
+      for (bool reverse : {false, true}) {
+        auto bus = std::make_unique<MemoryBus>();
+        bus->MapWram();
+        DmaController dma;
+        dma.SetBus(bus.get());
+        uint64_t elapsed = phase;
+        uint32_t address = 0xc00000;
+        uint8_t data = 0;
+        std::vector<std::array<uint64_t, 2>> observed;
+        dma.SetCpuCycleClocks(cycle);
+        dma.SetCpuBusLatches(address, data);
+        dma.SetClockQuery([&] { return elapsed; });
+        dma.SetClockCallback([&](uint32_t clocks) { elapsed += clocks; });
+        dma.SetCoprocessorSyncCallback([&] { observed.push_back({elapsed, address}); });
+        auto &channel = dma.Channel(0);
+        channel.writeControl(reverse ? 0x80 : 0);
+        channel.sourceBank = 0x7e;
+        channel.sourceAddress = 0x100;
+        channel.targetAddress = 0x10;
+        channel.transferSize = 1;
+        dma.EnableDma(1);
+        dma.RunDma();
+        const auto resumedAt = 32 + cycle - (32 - phase) % cycle;
+        const std::vector<std::array<uint64_t, 2>> expected{
+            {8, 0xc00000}, {28, 0x7e0100}, {32, 0x7e0100}, {resumedAt, 0x7e0100}};
+        Check(observed == expected,
+              "DMA synchronizes cartridge work at alignment, both bus phases and CPU handoff");
+      }
 }
 
 void PaletteClockUnits() {
@@ -238,7 +272,18 @@ void FieldTimingAndPresentation() {
 }
 }
 int main() {
-    try { ClockedTransfers(); PaletteClockUnits(); HdmaInterruptsDma(); LongDmaAudio(); DividerAlignment(); TimingBatchInvariance(); FieldTimingAndPresentation(); }
-    catch (const std::exception& e) { std::fprintf(stderr, "%s\n", e.what()); return 1; }
-    std::puts("DMA timing, HDMA interruption, and field presentation checks passed");
+  try {
+    CoprocessorHandoff();
+    ClockedTransfers();
+    PaletteClockUnits();
+    HdmaInterruptsDma();
+    LongDmaAudio();
+    DividerAlignment();
+    TimingBatchInvariance();
+    FieldTimingAndPresentation();
+  } catch (const std::exception &e) {
+    std::fprintf(stderr, "%s\n", e.what());
+    return 1;
+  }
+  std::puts("DMA timing, HDMA interruption, and field presentation checks passed");
 }

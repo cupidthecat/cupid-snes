@@ -121,6 +121,50 @@ void DmaAcrossFields() {
   }
 }
 
+void CartridgeAtScanlineBoundary() {
+  for (bool pal : {false, true}) {
+    for (bool crossingCycle : {false, true}) {
+      auto rom = Rom(pal);
+      rom[0x7fd5] = 0x23;
+      rom[0x7fd6] = 0x35;
+      auto machine = std::make_unique<Emulator>();
+      std::string error;
+      Check(machine->LoadCartridge(rom, &error), "The scanline cartridge fixture loads");
+      machine->GetCpu()->Step();
+      machine->GetCpu()->Step();
+      Check(machine->GetCpu()->regs().stp, "The console stops before releasing the cartridge CPU");
+      auto &bus = machine->GetBus();
+      bus.Write(0x2229, 0xff);
+      const std::vector<uint8_t> program =
+          crossingCycle
+              ? std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0x8d, 0, 0x30, 0xdb}
+              : std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb};
+      for (unsigned index = 0; index < program.size(); ++index)
+        bus.Write(0x3100 + index, program[index]);
+      bus.Write(0x2203, 0);
+      bus.Write(0x2204, 1);
+      auto &timing = machine->GetTiming();
+      if (crossingCycle) {
+        timing.onDramRefresh = nullptr;
+        timing.Tick(timing.HPeriod() - timing.HCounter() - 26);
+        machine->GetCpu()->write(0x2200, 0);
+        Check(timing.HCounter() == timing.HPeriod() - 20,
+              "The worker starts twenty clocks before the scanline edge");
+        for (unsigned cycle = 0; cycle < 4; ++cycle)
+          machine->GetCpu()->idle();
+        Check(timing.HCounter() == 4 && bus.ReadCpu(0x3000) == 0xff,
+              "Scanline synchronization includes the clocks of the CPU cycle crossing the edge");
+      } else {
+        bus.Write(0x2200, 0);
+        Check(bus.ReadCpu(0x3000) == 0, "The worker has not run before the scanline edge");
+        timing.Tick(timing.HPeriod() - timing.HCounter());
+        Check(timing.HCounter() == 0 && bus.ReadCpu(0x3000) == 0x5a,
+              "A scanline edge synchronizes cartridge work while the console is stopped");
+      }
+    }
+  }
+}
+
 void ReloadAndDebuggerOperations() {
   unsigned writes = 0;
   auto machine = Machine();
@@ -205,6 +249,7 @@ int main() {
   try {
     BoundaryDelivery();
     DmaAcrossFields();
+    CartridgeAtScanlineBoundary();
     ReloadAndDebuggerOperations();
     ManualClocksAtDisplayEvent();
   } catch (const std::exception &error) {

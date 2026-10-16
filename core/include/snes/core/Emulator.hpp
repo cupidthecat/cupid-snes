@@ -185,6 +185,7 @@ private:
     bool collectingAudio_ = false;
     uint64_t nextSmpMasterClock_ = 0;
     uint64_t coprocessorsSyncedClock_ = 0;
+    uint64_t coprocessorClockTarget_ = 0;
     AudioBuffer audioOutputBuffer_;
     VideoFrame videoOutputFrame_;
 

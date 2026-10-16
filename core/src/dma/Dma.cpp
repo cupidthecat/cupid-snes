@@ -46,7 +46,7 @@ uint32_t DmaController::AlignToDma() {
   if (!clockQuery_)
     return 0;
   const auto clocks = uint32_t(8 - (clockQuery_() & 7));
-  Clock(clocks);
+  Clock(clocks, true);
   return clocks;
 }
 
@@ -58,6 +58,8 @@ uint32_t DmaController::ResumeCpu() {
   // transfer counter. An interrupted operation can synchronize again on exit.
   if (onClock_)
     onClock_(clocks);
+  if (onCoprocessorSync_)
+    onCoprocessorSync_();
   return clocks;
 }
 

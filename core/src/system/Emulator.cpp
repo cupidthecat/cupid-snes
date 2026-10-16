@@ -381,6 +381,7 @@ void Emulator::InitSubsystems() {
 
     // New scanline
     timing_.onScanline = [this](uint16_t v) {
+        SynchronizeCoprocessors();
         ppu_.SetCurrentLine(v);
         ppu_.SetCurrentHClock(0);
     };
@@ -487,6 +488,7 @@ void Emulator::InitSubsystems() {
     collectingAudio_ = false;
     nextSmpMasterClock_ = 0;
     coprocessorsSyncedClock_ = 0;
+    coprocessorClockTarget_ = 0;
 
     // Set up DSP audio output buffer
     dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
@@ -643,22 +645,26 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions& options) {
 }
 
 void Emulator::AdvanceClocks(uint32_t clocks) {
-    timing_.SetInterlace(ppu_.Interlace());
-    timing_.Tick(clocks);
-    // A penalty can trigger another refresh or HDMA event. Drain all of them
-    // before the CPU resumes, including events near the frame boundary.
-    while (pendingExtraClocks_ != 0) {
-        const auto extra = pendingExtraClocks_;
-        pendingExtraClocks_ = 0;
-        timing_.Tick(extra);
-    }
-    ppu_.SetCurrentHClock(timing_.HCounter());
-    SynchronizeDevices();
+  // Cartridge clocks include the whole bus interval when a scanline event
+  // interrupts the console partway through that interval.
+  coprocessorClockTarget_ = timing_.MasterClocksElapsed() + clocks;
+  timing_.SetInterlace(ppu_.Interlace());
+  timing_.Tick(clocks);
+  // A penalty can trigger another refresh or HDMA event. Drain all of them
+  // before the CPU resumes, including events near the frame boundary.
+  while (pendingExtraClocks_ != 0) {
+    const auto extra = pendingExtraClocks_;
+    pendingExtraClocks_ = 0;
+    coprocessorClockTarget_ = timing_.MasterClocksElapsed() + extra;
+    timing_.Tick(extra);
+  }
+  ppu_.SetCurrentHClock(timing_.HCounter());
+  SynchronizeDevices();
 }
 
 void Emulator::SynchronizeCoprocessors() {
-  const auto elapsed = timing_.MasterClocksElapsed();
-  auto delta = elapsed - coprocessorsSyncedClock_;
+  const auto elapsed = std::max(timing_.MasterClocksElapsed(), coprocessorClockTarget_);
+  auto delta = elapsed > coprocessorsSyncedClock_ ? elapsed - coprocessorsSyncedClock_ : 0;
   coprocessorsSyncedClock_ = elapsed;
   while (delta > std::numeric_limits<uint32_t>::max()) {
     cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max(), cpu_->regs().mar,
