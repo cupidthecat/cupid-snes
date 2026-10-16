@@ -24,4 +24,4 @@ Evaluation and fetching update the OAM bus address latch. Active-display CPU rea
 
 A local audit matched 4,194,304 screen samples and 16,384 status/address results across generated scenes. It includes all eight size settings, both fields, priority rotation, display enables, blanking, and changes to OAM, VRAM, and fetch controls during a line.
 
-These checks do not establish complete game compatibility or complete PPU memory-port arbitration. CGRAM bus-latch behavior and optical gun sensing still need separate validation.
+These checks do not establish complete game compatibility. [PPU memory ports](ppu-memory-ports.md) covers palette lookup ownership and CPU port behavior. Memory collisions within a clock and optical gun sensing still need separate validation.

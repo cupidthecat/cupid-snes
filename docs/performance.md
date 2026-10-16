@@ -1,6 +1,12 @@
 # Performance checks
 
-The September measurements below evaluated VRAM snapshot sharing and per-line raster event lists. The CPU bus fix and optional MSU-1 mixer were included in that comparison. Clocked background and object fetches have since replaced the full VRAM snapshots; raster event lists still retain screen-register changes for composition. These older measurements do not describe the current core's throughput.
+## Clocked graphics pipeline, 2026-10-16
+
+A quiet, headless Kirby Super Star replay ran 3,600 fields at 61.96 fields/s after the palette-port changes. Median field time was 16.078 ms, p95 was 17.474 ms, p99 was 18.664 ms, and the maximum was 23.921 ms. The Windows Release build used GCC 15 on the same local workstation, with other heavy validation stopped during the run.
+
+The replay exceeded the console's average field rate. Its slowest fields still exceeded a display deadline, and this result does not establish full speed for every game or measure presentation and audio-device latency. Video hashing and PCM-file capture were disabled for this timing run; separate capture checks validate output.
+
+The September measurements below evaluated VRAM snapshot sharing and per-line raster event lists. The CPU bus fix and optional MSU-1 mixer were included in that comparison. Clocked background and object fetches have since replaced the full VRAM snapshots; raster event lists still retain screen-register changes for composition. Those older measurements do not describe the current core's throughput.
 
 ## Local measurements, 2026-09-15
 

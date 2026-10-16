@@ -22,7 +22,7 @@ The horizontal timing counter uses master clocks. Beam-counter latching converts
 
 WRIO writes also update the PPU's latch-enable state. Tests check that clearing bit 7 blocks subsequent software latches, that setting it enables them again, and that $213F reports and clears the latch flag correctly.
 
-CGRAM reads and writes have separate low/high byte phases and share a palette address. Writing $2121 resets both phases. Tests interleave reads and writes, check address wrapping, and verify the open-bus bit on high-byte reads.
+CGRAM reads and writes share one low/high byte phase and a palette address. Writing $2121 resets the phase while retaining the low write-data latch. Tests interleave reads and writes, check address wrapping, and verify the open-bus bit on high-byte reads. [PPU memory ports](ppu-memory-ports.md) describes rendering ownership and prefetch behavior.
 
 OAM addresses $200-$3FF repeat the 32-byte high table at $200-$21F. Tests read and write every mirror, then cross the address wrap into the low table and check its paired-write behavior.
 

@@ -248,8 +248,7 @@ public:
 
         // $2121 CGRAM address
         uint8_t cgramAddress    = 0;
-        bool cgramReadLatch     = false;
-        bool cgramWriteLatch    = false;
+        bool cgramAddressLatch = false;
 
         // $2133 SETINI
         bool interlace          = false;

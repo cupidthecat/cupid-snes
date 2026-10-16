@@ -259,17 +259,19 @@ void PaletteReadWriteLatches() {
     auto ppu = std::make_unique<Ppu>();
     ppu->WriteIO(0x2100, 0x80);
     ppu->CgramData()[0] = 0x1234;
+    ppu->CgramData()[1] = 0x5566;
     ppu->WriteIO(0x2121, 0);
     ppu->WriteIO(0x2122, 0x56);
-    Check("CGRAM low read after low write", ppu->ReadIO(0x213b, 0), 0x34);
+    Check("CGRAM read consumes shared high phase and open bus", ppu->ReadIO(0x213b, 0), 0x92);
     ppu->WriteIO(0x2122, 0x07);
-    Check("CGRAM write pair survives intervening read", ppu->CgramData()[0], 0x0756);
+    Check("CGRAM next write begins a new pair", ppu->CgramData()[0], 0x1234);
 
     ppu->WriteIO(0x2121, 0);
-    Check("CGRAM first read", ppu->ReadIO(0x213b, 0), 0x56);
+    Check("CGRAM first read", ppu->ReadIO(0x213b, 0), 0x34);
     ppu->WriteIO(0x2122, 0xaa);
-    Check("CGRAM high read after low write", ppu->ReadIO(0x213b, 0) & 0x7f, 0x07);
-    // CGADD resets both phases even with a partially written color.
+    Check("CGRAM high write uses retained low latch", ppu->CgramData()[0], 0x2a07);
+    Check("CGRAM following read starts at the next color", ppu->ReadIO(0x213b, 0), 0x66);
+    // CGADD resets the shared phase even with an incomplete access.
     ppu->WriteIO(0x2121, 255);
     ppu->WriteIO(0x2122, 0xbc);
     ppu->WriteIO(0x2122, 0x9a);
