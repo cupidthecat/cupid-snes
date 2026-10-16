@@ -2,6 +2,8 @@
 
 DSP-1, DSP-1B, DSP-2, DSP-3, DSP-4, ST010, ST011, and ST018 can execute their cartridge firmware. The processor runs alongside the console CPU. Firmware instructions control data requests, status, arithmetic, and work RAM.
 
+Cx4 runs its program from the game ROM and uses a separate data ROM. [Cx4 processor execution](cx4.md) covers its caches, DMA, CPU bridge, and board maps.
+
 ## Supplying firmware
 
 Put firmware in a `firmware` folder beside the game, or select a directory explicitly:
@@ -20,8 +22,11 @@ Put firmware in a `firmware` folder beside the game, or select a directory expli
 | `st010.rom` | 53,248 | 11 MHz |
 | `st011.rom` | 53,248 | 15 MHz |
 | `st018.rom` | 163,840 | 21.44 MHz |
+| `cx4.data.rom` | 3,072 | 20 MHz |
 
 The seven DSP images contain little-endian 24-bit program words followed by little-endian 16-bit data words. The smaller files contain 6,144 program bytes and 2,048 data bytes. ST010 and ST011 contain 49,152 program bytes and 4,096 data bytes. ST018 contains 131,072 program bytes followed by 32,768 data bytes. [ST018 firmware execution](st018.md) describes its separate ARM memory map and CPU bridge. Firmware files are separate assets and are not included.
+
+The Cx4 file contains 1,024 little-endian 24-bit data words. Its executable program remains in the game ROM.
 
 A directory may contain any subset of these files. A present file with an incorrect size or a read error stops loading and preserves the running game. An explicit directory takes precedence over adjacent files. Automatically discovered files apply only to games in that directory.
 

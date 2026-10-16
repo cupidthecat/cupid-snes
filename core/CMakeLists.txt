@@ -14,6 +14,7 @@ add_library(snes_core
   src/cartridge/Sa1Dma.cpp
   src/cartridge/SuperFx.cpp
   src/cartridge/Cx4.cpp
+  src/cartridge/Cx4Processor.cpp
   src/cartridge/SetaProtocol.cpp
   src/cartridge/St018Processor.cpp
   src/cartridge/Bsx.cpp
@@ -25,6 +26,8 @@ add_library(snes_core
   src/cartridge/Dsp4Sprites.cpp
   src/cpu/Cpu65816.cpp
   src/cpu/Arm6.cpp
+  src/cpu/Hg51b.cpp
+  src/cpu/Hg51bHost.cpp
   src/cpu/Processor65816.cpp
   src/cpu/UpdDsp.cpp
   src/cpu/SnesCpu.cpp

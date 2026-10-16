@@ -10,7 +10,7 @@
 
 namespace snes::core {
 
-enum class FirmwareKind { Dsp1, Dsp1b, Dsp2, Dsp3, Dsp4, St010, St011, St018, Count };
+enum class FirmwareKind { Dsp1, Dsp1b, Dsp2, Dsp3, Dsp4, St010, St011, St018, Cx4, Count };
 
 class CartridgeFirmware {
 public:

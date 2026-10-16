@@ -134,29 +134,60 @@ bool IsFastRegion(uint32_t cpuAddress) {
     return false;
 }
 
-EnhancementChip DetectChip(const RomHeader& header) {
-    const auto mode = header.mapMode;
-    const auto type = header.cartridgeType;
-    if (type == 3) return mode == 0x30 ? EnhancementChip::Dsp4 : EnhancementChip::Dsp1;
-    if (type == 5) {
-        if (mode == 0x20) return EnhancementChip::Dsp2;
-        if (mode == 0x30 && header.maker == 0xb2) return EnhancementChip::Dsp3;
-        return EnhancementChip::Dsp1;
-    }
-    switch ((unsigned(type) << 8) | mode) {
-    case 0x2530: return EnhancementChip::Obc1;
-    case 0x5535: return EnhancementChip::Srtc;
-    case 0x1320: case 0x1420: case 0x1520: case 0x1a20:
-    case 0x1330: case 0x1430: case 0x1530: case 0x1a30: return EnhancementChip::SuperFx;
-    case 0x3423: case 0x3523: return EnhancementChip::Sa1;
-    case 0x4332: case 0x4532: return EnhancementChip::Sdd1;
-    case 0xf53a: return EnhancementChip::Spc7110;
-    case 0xf93a: return EnhancementChip::Spc7110Rtc;
-    case 0xf320: return EnhancementChip::Cx4;
-    case 0xf530: return EnhancementChip::St018;
-    case 0xf630: return header.romSizeShift == 9 ? EnhancementChip::St011 : EnhancementChip::St010;
-    default: return EnhancementChip::None;
-    }
+EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
+  const auto mode = header.mapMode;
+  const auto type = header.cartridgeType;
+  if (header.maker == 0x33 && (type >> 4) == 0x0f && (type & 15) >= 3) {
+    if (subtype == 1)
+      return header.title == "2DAN MORITA SHOUGI" ? EnhancementChip::St011 : EnhancementChip::St010;
+    if (subtype == 2)
+      return EnhancementChip::St018;
+    if (subtype == 0x10)
+      return EnhancementChip::Cx4;
+  }
+  if (type == 3)
+    return mode == 0x30 ? EnhancementChip::Dsp4 : EnhancementChip::Dsp1;
+  if (type == 5) {
+    if (mode == 0x20)
+      return EnhancementChip::Dsp2;
+    if (mode == 0x30 && header.maker == 0xb2)
+      return EnhancementChip::Dsp3;
+    return EnhancementChip::Dsp1;
+  }
+  switch ((unsigned(type) << 8) | mode) {
+  case 0x2530:
+    return EnhancementChip::Obc1;
+  case 0x5535:
+    return EnhancementChip::Srtc;
+  case 0x1320:
+  case 0x1420:
+  case 0x1520:
+  case 0x1a20:
+  case 0x1330:
+  case 0x1430:
+  case 0x1530:
+  case 0x1a30:
+    return EnhancementChip::SuperFx;
+  case 0x3423:
+  case 0x3523:
+    return EnhancementChip::Sa1;
+  case 0x4332:
+  case 0x4532:
+    return EnhancementChip::Sdd1;
+  case 0xf53a:
+    return EnhancementChip::Spc7110;
+  case 0xf93a:
+    return EnhancementChip::Spc7110Rtc;
+  case 0xf320:
+  case 0xf330:
+    return header.maker == 0x33 ? EnhancementChip::None : EnhancementChip::Cx4;
+  case 0xf530:
+    return EnhancementChip::St018;
+  case 0xf630:
+    return header.romSizeShift == 9 ? EnhancementChip::St011 : EnhancementChip::St010;
+  default:
+    return EnhancementChip::None;
+  }
 }
 
 bool HasDedicatedRomMapper(EnhancementChip chip) {
@@ -181,6 +212,8 @@ std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
     return FirmwareKind::St011;
   case EnhancementChip::St018:
     return FirmwareKind::St018;
+  case EnhancementChip::Cx4:
+    return FirmwareKind::Cx4;
   default:
     return std::nullopt;
   }
@@ -308,7 +341,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   std::vector<uint8_t> embeddedFirmware;
   if (const auto kind = SignalFirmware(cart.header_)) {
     const size_t size = CartridgeFirmware::Size(*kind);
-    const size_t alignment = size == 0x2000 ? 0x8000 : 0x10000;
+    const size_t alignment = size == 0x2000 || kind == FirmwareKind::Cx4 ? 0x8000 : 0x10000;
     if (cart.rom_.size() > size && cart.rom_.size() % alignment == size % alignment) {
       embeddedFirmware.assign(cart.rom_.end() - size, cart.rom_.end());
       cart.rom_.resize(cart.rom_.size() - size);
@@ -450,7 +483,10 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
                              : firmwareKind && firmware ? firmware->Find(*firmwareKind)
                                                         : std::span<const uint8_t>{};
-  if (firmwareKind == FirmwareKind::St018 && !firmwareBytes.empty()) {
+  if (firmwareKind == FirmwareKind::Cx4 && !firmwareBytes.empty()) {
+    cart.cx4Processor_ = std::make_unique<Cx4Processor>(cart.rom_, cart.sram_, firmwareBytes);
+    cart.cx4_.reset();
+  } else if (firmwareKind == FirmwareKind::St018 && !firmwareBytes.empty()) {
     cart.armDsp_ = std::make_unique<St018Processor>(firmwareBytes);
     cart.st018_.reset();
   } else if (firmwareKind && !firmwareBytes.empty()) {
@@ -540,6 +576,8 @@ void Cartridge::Reset() {
     superFx_->Reset();
   if (cx4_)
     cx4_->Reset();
+  if (cx4Processor_)
+    cx4Processor_->Reset();
   if (st011_)
     st011_->Reset();
   if (st018_)
@@ -565,6 +603,8 @@ bool Cartridge::MemselFast() const noexcept {
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
+  if (cx4Processor_)
+    return cx4Processor_->Read(cpuAddress, openBus);
   if (necDsp_) {
     if (necDsp_->SelectsDevice(cpuAddress))
       return necDsp_->Read(cpuAddress);
@@ -623,6 +663,10 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 }
 
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
+  if (cx4Processor_) {
+    cx4Processor_->Write(cpuAddress, value);
+    return;
+  }
   if (necDsp_) {
     if (necDsp_->SelectsDevice(cpuAddress)) {
       necDsp_->Write(cpuAddress, value);
@@ -705,6 +749,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (cx4Processor_)
+    cx4Processor_->Advance(masterClocks);
   if (armDsp_)
     armDsp_->Advance(masterClocks);
   if (necDsp_)
@@ -719,6 +765,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (cx4Processor_)
+    cx4Processor_->SetPal(pal);
   if (armDsp_)
     armDsp_->SetPal(pal);
   if (necDsp_)
@@ -730,8 +778,8 @@ void Cartridge::SetPal(bool pal) {
 }
 
 bool Cartridge::CpuIrqPending() const noexcept {
-    return (sa1_ && sa1_->CpuIrqPending()) || (superFx_ && superFx_->CpuIrqPending()) ||
-           (bsx_ && bsx_->CpuIrqPending());
+  return (cx4Processor_ && cx4Processor_->CpuIrqPending()) || (sa1_ && sa1_->CpuIrqPending()) ||
+         (superFx_ && superFx_->CpuIrqPending()) || (bsx_ && bsx_->CpuIrqPending());
 }
 
 std::vector<uint8_t> Cartridge::BeginDma(unsigned channel, uint32_t address,
@@ -782,6 +830,13 @@ bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
   return true;
 }
 
+bool Cartridge::MapCx4Processor(MemoryBus &bus, uint8_t slot) const {
+  if (!cx4Processor_)
+    return false;
+  cx4Processor_->MapCpu(bus, slot);
+  return true;
+}
+
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {
     if (header_.mapping != MappingType::SufamiTurbo || slot >= 2 || slotSize_[slot] == 0) return {};
     return std::span<const uint8_t>(sram_).subspan(slot * 0x4000, 0x4000);
@@ -829,7 +884,7 @@ std::optional<RomHeader> Cartridge::ParseHeaderAt(std::span<const uint8_t> rom, 
     candidate.checksumComplement = Read16(rom, base + 0x1C);
     candidate.checksum = Read16(rom, base + 0x1E);
     candidate.resetVector = Read16(rom, base + 0x3C);
-    candidate.chip = DetectChip(candidate);
+    candidate.chip = DetectChip(candidate, rom[base - 1]);
 
     // A bootable cartridge must supply a reset vector in cartridge space.
     if (candidate.resetVector < 0x8000) return std::nullopt;
