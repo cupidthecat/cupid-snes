@@ -3,10 +3,10 @@
 // CPU I/O register interface.
 
 #pragma once
-// CpuIoRegisters.hpp — SNES CPU I/O register state ($4200-$421F, $4016-$4017)
+// CpuIoRegisters.hpp - SNES CPU I/O register state ($4200-$421F, $4016-$4017)
 //
 // These are the CPU-internal I/O registers, separate from WRAM, DMA, PPU, and
-// APU.  Following bsnes's CPU::IO struct and readCPU/writeCPU in io.cpp.
+// APU. Read and Write retain each register's hardware side effects.
 //
 // This class owns only the register *state*.  It exposes Read/Write methods
 // that the MemoryBus maps to $00-3F,$80-BF:$4016-$4017,$4200-$421F.
@@ -15,7 +15,7 @@
 // MEMSEL toggling, DMA/HDMA enable, PPU counter latch, joypad latch/data).
 // These are set by the system integrator when wiring subsystems together.
 //
-// Reference: bsnes sfc/cpu/cpu.hpp (IO struct), sfc/cpu/io.cpp
+// Register state and bus-side effects are implemented together.
 
 #include <cstdint>
 #include <functional>
@@ -24,19 +24,19 @@ namespace snes::core {
 
 // Callback typedefs for cross-component interaction
 
-/// Called when $4200 (NMITIMEN) is written — passes the new data byte
+/// Called when $4200 (NMITIMEN) is written - passes the new data byte
 using NmitimenCallback = std::function<void(uint8_t data)>;
 
-/// Called when $420D (MEMSEL) is written — passes new fastROM flag
+/// Called when $420D (MEMSEL) is written - passes new fastROM flag
 using MemselCallback = std::function<void(bool fast)>;
 
-/// Called when $420B (MDMAEN) is written — passes the channel enable bitmask
+/// Called when $420B (MDMAEN) is written - passes the channel enable bitmask
 using DmaEnableCallback = std::function<void(uint8_t channels)>;
 
-/// Called when $420C (HDMAEN) is written — passes the channel enable bitmask
+/// Called when $420C (HDMAEN) is written - passes the channel enable bitmask
 using HdmaEnableCallback = std::function<void(uint8_t channels)>;
 
-/// Called when $4201 (WRIO) bit 7 falls — triggers PPU counter latch
+/// Called when $4201 (WRIO) bit 7 falls - triggers PPU counter latch
 using PpuLatchCallback = std::function<void()>;
 
 /// Called after every $4201 write with the new PIO value.
@@ -56,16 +56,16 @@ struct TimingQuery {
 };
 using TimingQueryCallback = std::function<TimingQuery()>;
 
-/// Called on $4210 RDNMI read — returns NMI flag (replaces simple flag)
+/// Called on $4210 RDNMI read - returns NMI flag (replaces simple flag)
 using RdnmiCallback = std::function<bool()>;
 
-/// Called on $4211 TIMEUP read — returns IRQ flag (replaces simple flag)
+/// Called on $4211 TIMEUP read - returns IRQ flag (replaces simple flag)
 using TimeupCallback = std::function<bool()>;
 
 /// Called when $4207-$420A H/V timer targets change
 using HVTimeChangeCallback = std::function<void(uint16_t htime, uint16_t vtime)>;
 
-// CpuIoRegisters — CPU-internal I/O register state
+// CpuIoRegisters - CPU-internal I/O register state
 class CpuIoRegisters {
 public:
     CpuIoRegisters();
@@ -74,7 +74,7 @@ public:
     /// Reset all registers to power-on state
     void Reset();
 
-    // Bus read/write — these are called by MemoryBus handlers
+    // Bus read/write - these are called by MemoryBus handlers
     // The openBus parameter is the shared CPU memory data latch.
 
     /// Read from CPU I/O register.  addr is the full 24-bit address;
@@ -84,7 +84,7 @@ public:
     /// Write to CPU I/O register.
     void Write(uint32_t addr, uint8_t data);
 
-    // Callback setters — called by system integrator
+    // Callback setters - called by system integrator
     void SetNmitimenCallback(NmitimenCallback cb)   { onNmitimen_ = std::move(cb); }
     void SetMemselCallback(MemselCallback cb)       { onMemsel_ = std::move(cb); }
     void SetDmaEnableCallback(DmaEnableCallback cb) { onDmaEnable_ = std::move(cb); }
@@ -122,20 +122,20 @@ public:
     uint16_t rddiv() const noexcept { return rddiv_; }
     uint16_t rdmpy() const noexcept { return rdmpy_; }
 
-    // $4218-$421F auto-joypad results — writable by the auto-joypad polling logic
+    // $4218-$421F auto-joypad results - writable by the auto-joypad polling logic
     void setJoy1(uint16_t v) noexcept { joy1_ = v; }
     void setJoy2(uint16_t v) noexcept { joy2_ = v; }
     void setJoy3(uint16_t v) noexcept { joy3_ = v; }
     void setJoy4(uint16_t v) noexcept { joy4_ = v; }
 
-    // NMI/IRQ flags — set by timing subsystem, read-and-clear by $4210/$4211
+    // NMI/IRQ flags - set by timing subsystem, read-and-clear by $4210/$4211
     void setNmiFlag(bool v) noexcept { nmiFlag_ = v; }
     bool nmiFlag() const noexcept { return nmiFlag_; }
 
     void setIrqFlag(bool v) noexcept { irqFlag_ = v; }
     bool irqFlag() const noexcept { return irqFlag_; }
 
-    // Auto-joypad busy counter — managed by timing subsystem
+    // Auto-joypad busy counter - managed by timing subsystem
     void setAutoJoypadCounter(uint8_t v) noexcept { autoJoypadCounter_ = v; }
     uint8_t autoJoypadCounter() const noexcept { return autoJoypadCounter_; }
 
@@ -148,7 +148,7 @@ public:
     void AluStep(bool writeCycle = false);
 
 private:
-    // Register state — following bsnes CPU::IO
+    // CPU I/O register state
 
     // $4200 NMITIMEN
     bool nmiEnable_      = false;
@@ -157,31 +157,31 @@ private:
     bool irqEnable_      = false; // hirq || virq
     bool autoJoypadPoll_ = false;
 
-    // $4201 WRIO — programmable I/O port
+    // $4201 WRIO - programmable I/O port
     uint8_t pio_ = 0xFF;
 
-    // $4202-$4203 — multiply operands
+    // $4202-$4203 - multiply operands
     uint8_t wrmpya_ = 0xFF;
     uint8_t wrmpyb_ = 0xFF;
 
-    // $4204-$4206 — divide operands
+    // $4204-$4206 - divide operands
     uint16_t wrdiva_ = 0xFFFF;
     uint8_t  wrdivb_ = 0xFF;
 
-    // $4207-$420A — H/V timer targets
-    // bsnes stores htime as ((9-bit value + 1) << 2) for dot comparison.
-    // We store the raw 9-bit values and convert when needed.
+    // $4207-$420A - H/V timer targets
+  // Timer comparisons convert each nine-bit target to master clocks.
+  // The registers retain the raw values.
     uint16_t htime_ = 0x1FF;
     uint16_t vtime_ = 0x1FF;
 
-    // $420D — MEMSEL (fast ROM)
+    // $420D - MEMSEL (fast ROM)
     bool fastRom_ = false;
 
-    // $4214-$4217 — multiply/divide results
+    // $4214-$4217 - multiply/divide results
     uint16_t rddiv_ = 0;
     uint16_t rdmpy_ = 0;
 
-    // $4218-$421F — auto-joypad read results
+    // $4218-$421F - auto-joypad read results
     uint16_t joy1_ = 0;
     uint16_t joy2_ = 0;
     uint16_t joy3_ = 0;

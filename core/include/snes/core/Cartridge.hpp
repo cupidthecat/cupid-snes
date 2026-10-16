@@ -133,7 +133,8 @@ public:
     void EndDma(unsigned channel);
 
     uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
-    void AdvanceHardware(uint32_t masterClocks);
+    void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0,
+                         bool cpuRefreshing = false);
     void SetPal(bool pal);
     bool CpuIrqPending() const noexcept;
 
@@ -174,6 +175,8 @@ private:
     RomHeader header_{};
     uint32_t romCrc32_ = 0;
     bool memselFast_ = false;
+    uint32_t masterClockHz_ = 21'477'272;
+    uint32_t superFxClockRemainder_ = 0;
     size_t slotSize_[2]{};
     size_t slotOffset_[2]{};
     std::vector<uint8_t> memoryPack_;

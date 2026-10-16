@@ -2,12 +2,12 @@
 // core/include/snes/core/Spc700.hpp
 // SPC700 processor interface.
 
-// Spc700.hpp — Sony SPC700 Audio Processor Core
+// Spc700.hpp - Sony SPC700 Audio Processor Core
 //
 // Pure processor implementation with virtual bus interface.
-// The SNES SMP wrapper (future) will inherit this and provide the bus.
+// The SMP wrapper provides memory access and sound hardware timing.
 //
-// Reference: bsnes processor/spc700/spc700.hpp
+// Instruction execution calls the virtual bus interface.
 
 #pragma once
 
@@ -26,23 +26,23 @@ public:
     Spc700();
     virtual ~Spc700() = default;
 
-    // Virtual bus interface — override in SMP wrapper
+    // Virtual bus interface - override in SMP wrapper
     virtual void    Idle()                          = 0;
     virtual uint8_t Read(uint16_t address)          = 0;
     virtual void    Write(uint16_t address, uint8_t data) = 0;
 
-    // PSW (Processor Status Word) — bit layout:
+    // PSW (Processor Status Word) - bit layout:
     //   7  6  5  4  3  2  1  0
     //   N  V  P  B  H  I  Z  C
     struct Flags {
-        bool c = false;  // bit 0 — Carry
-        bool z = false;  // bit 1 — Zero
-        bool i = false;  // bit 2 — Interrupt disable
-        bool h = false;  // bit 3 — Half-carry
-        bool b = false;  // bit 4 — Break
-        bool p = false;  // bit 5 — Direct page select (0=$0000, 1=$0100)
-        bool v = false;  // bit 6 — Overflow
-        bool n = false;  // bit 7 — Negative
+        bool c = false; // bit 0 - Carry
+      bool z = false; // bit 1 - Zero
+      bool i = false; // bit 2 - Interrupt disable
+      bool h = false; // bit 3 - Half-carry
+      bool b = false; // bit 4 - Break
+      bool p = false; // bit 5 - Direct page select (0=$0000, 1=$0100)
+      bool v = false; // bit 6 - Overflow
+      bool n = false; // bit 7 - Negative
 
         // Pack flags → byte
         [[nodiscard]] uint8_t Pack() const {
@@ -252,7 +252,7 @@ protected:
     ReadCycle  ReadCycleAt(uint16_t address) noexcept { return ReadCycle{this, address}; }
     WriteCycle WriteCycleAt(uint16_t address, uint8_t data) noexcept { return WriteCycle{this, address, data}; }
 
-    // ALU algorithms — 8-bit
+    // ALU algorithms - 8-bit
     uint8_t AlgADC(uint8_t x, uint8_t y);
     uint8_t AlgSBC(uint8_t x, uint8_t y);
     uint8_t AlgAND(uint8_t x, uint8_t y);
@@ -267,7 +267,7 @@ protected:
     uint8_t AlgDEC(uint8_t x);
     uint8_t AlgLD (uint8_t x, uint8_t y);   // returns y, sets Z/N
 
-    // ALU algorithms — 16-bit
+    // ALU algorithms - 16-bit
     uint16_t AlgADW(uint16_t x, uint16_t y);
     uint16_t AlgSBW(uint16_t x, uint16_t y);
     uint16_t AlgCPW(uint16_t x, uint16_t y);

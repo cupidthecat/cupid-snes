@@ -2,7 +2,7 @@
 // core/src/timing/Timing.cpp
 // Master clock, scanline, frame, and video-region timing.
 
-// Timing.cpp — SNES dot / scanline / frame timing implementation
+// Timing.cpp - SNES dot / scanline / frame timing implementation
 
 #include "snes/core/Timing.hpp"
 
@@ -80,8 +80,14 @@ void Timing::Tick(uint32_t clocks) {
 void Timing::tickOnce(uint8_t clocks) {
     masterClocksElapsed_ += clocks;
     hcounter_ += clocks;
+    const auto edge = masterClocksElapsed_;
     if (hcounter_ >= nextEventH_)
       dispatchScanlineEvents();
+
+    // A display callback can suspend while a debugger advances the hardware.
+    // Those calls already sampled their edges; do not sample the last one twice.
+    if (masterClocksElapsed_ != edge)
+      return;
 
     // Poll NMI and IRQ every four master clocks.
     // Fire after wrap so hcounter_ is valid (0..hperiod-1).
@@ -214,7 +220,11 @@ void Timing::tickScanline() {
 
     // VBlank start
     if (vcounter_ == vdisp_) {
-        if (onVBlankBegin) onVBlankBegin();
+      // The callback may retain this stack or cancel it during a CPU reset.
+      // Leave the event cache ready for clocks issued by the caller.
+      updateNextEvent();
+      if (onVBlankBegin)
+        onVBlankBegin();
     }
 }
 

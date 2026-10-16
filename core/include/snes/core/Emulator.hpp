@@ -3,7 +3,7 @@
 // Top-level emulator lifecycle and subsystem interface.
 
 #pragma once
-// Emulator.hpp — Top-level SNES system integration
+// Emulator.hpp - Top-level SNES system integration
 //
 // Owns every hardware subsystem and wires them together:
 //   CPU (65816)  ↔  MemoryBus  ↔  PPU / APU / DMA / Cartridge
@@ -12,9 +12,8 @@
 //   AutoJoypad → controller polling fed into CpuIoRegisters
 //   Smp + Dsp → APU audio generation
 //
-// StepFrame() runs one complete video frame (262 scanlines NTSC) by
-// executing CPU instructions, ticking the timing subsystem, synchronising
-// the SMP, and dispatching NMI/IRQ.
+// StepFrame() advances to the next display event, retaining an unfinished
+// CPU or DMA operation for the following call.
 
 #include "snes/core/Platform.hpp"
 #include "snes/core/Cartridge.hpp"
@@ -44,7 +43,10 @@
 
 namespace snes::core {
 
-class SnesCpu;  // forward — constructed after MemoryBus
+class SnesCpu; // forward - constructed after MemoryBus
+namespace detail {
+class ExecutionContext;
+}
 
 struct FrameStepOptions {
     bool emitCpuBusTrace = true;
@@ -134,6 +136,11 @@ private:
     /// Called from LoadCartridge() once the cartridge is ready.
     void InitSubsystems();
     void AdvanceClocks(uint32_t clocks);
+    void SynchronizeDevices();
+    void SynchronizeCoprocessors();
+    void StopFrameExecution();
+    uint32_t ResumeCpuInstruction();
+    void SuspendFrame();
     void ServicePendingHdma();
     void BeginCpuCycle(uint32_t clocks);
 
@@ -152,7 +159,7 @@ private:
     CartridgeDatabase cartridgeDatabase_{};
     std::optional<Cartridge> cartridge_{};
 
-    // Hardware subsystems (construction order matters — bus_ before cpu_)
+    // Hardware subsystems (construction order matters - bus_ before cpu_)
     Dsp             dsp_;
     Smp             smp_;
     Ppu             ppu_;
@@ -163,6 +170,8 @@ private:
     Timing          timing_;
     MemoryBus       bus_;
     std::unique_ptr<SnesCpu> cpu_;   // created in InitSubsystems()
+    std::unique_ptr<detail::ExecutionContext> execution_;
+    bool singleInstruction_ = false;
     std::unique_ptr<Dsp1> dsp1_;       // created if cartridge uses DSP-1
     std::unique_ptr<Dsp2> dsp2_;
     std::unique_ptr<Obc1> obc1_;
@@ -175,6 +184,8 @@ private:
     std::vector<int16_t> audioOverflow_;
     bool collectingAudio_ = false;
     uint64_t nextSmpMasterClock_ = 0;
+    uint64_t coprocessorsSyncedClock_ = 0;
+    uint64_t coprocessorClockTarget_ = 0;
     AudioBuffer audioOutputBuffer_;
     VideoFrame videoOutputFrame_;
 

@@ -3,7 +3,7 @@
 // Unified 24-bit address bus interface.
 
 #pragma once
-// MemoryBus.hpp — Unified 24-bit SNES address space dispatch
+// MemoryBus.hpp - Unified 24-bit SNES address space dispatch
 //
 // The SNES presents a flat 24-bit (16 MB) address space to the CPU.
 // Different hardware components (ROM, WRAM, PPU, APU, CPU I/O, DMA) are
@@ -11,7 +11,7 @@
 //
 // This class uses a 16 MB lookup table (one byte per address) to map each
 // address to a handler slot.  Each slot holds a pair of read/write callbacks.
-// This makes Read()/Write() O(1) with zero branching — just two array
+// This makes Read()/Write() O(1) with zero branching - just two array
 // lookups and one indirect call.
 //
 // The bus also owns the 128 KB WRAM, open-bus MDR, CPU I/O registers
@@ -38,7 +38,7 @@ class Smp;
 using BusReadHandler  = std::function<uint8_t(uint32_t addr, uint8_t openBus)>;
 using BusWriteHandler = std::function<void(uint32_t addr, uint8_t data)>;
 
-// MemoryBus — 24-bit address space with fast lookup dispatch
+// MemoryBus - 24-bit address space with fast lookup dispatch
 class MemoryBus : public ICpuBus {
 public:
     MemoryBus();
@@ -48,7 +48,7 @@ public:
     MemoryBus(const MemoryBus&) = delete;
     MemoryBus& operator=(const MemoryBus&) = delete;
 
-    // ICpuBus interface — these are what SnesCpu calls
+    // ICpuBus interface - these are what SnesCpu calls
     uint8_t Read(uint32_t address) override;
     uint8_t ReadCpu(uint32_t address) override;
     void    Write(uint32_t address, uint8_t value) override;
@@ -112,7 +112,7 @@ public:
     const uint8_t* WramData() const noexcept { return wram_.data(); }
     static constexpr size_t WramSize = 0x20000; // 128 KB
 
-    // CPU I/O state — MEMSEL (bus speed) flag
+    // CPU I/O state - MEMSEL (bus speed) flag
     void SetFastRom(bool enabled) noexcept { fastRom_ = enabled; }
     bool FastRom() const noexcept { return fastRom_; }
 
@@ -149,10 +149,10 @@ private:
     // WMDATA address auto-increment register
     uint32_t wmdataAddr_ = 0;
 
-    // Open bus — global Memory Data Register
+    // Open bus - global Memory Data Register
     uint8_t mdr_ = 0;
 
-    // CPU I/O: MEMSEL ($420D) bit 0 — ROM access speed toggle
+    // CPU I/O: MEMSEL ($420D) bit 0 - ROM access speed toggle
     bool fastRom_ = false;
 
     // Internal handler IDs cached for WRAM so we can re-map quickly
@@ -162,11 +162,11 @@ private:
 
     // Built-in handlers
 
-    // WRAM handlers — low mirror (8KB per bank, 0000-1FFF)
+    // WRAM handlers - low mirror (8KB per bank, 0000-1FFF)
     uint8_t readWramLow(uint32_t addr, uint8_t openBus);
     void    writeWramLow(uint32_t addr, uint8_t data);
 
-    // WRAM handlers — full 128KB banks ($7E-7F)
+    // WRAM handlers - full 128KB banks ($7E-7F)
     uint8_t readWramFull(uint32_t addr, uint8_t openBus);
     void    writeWramFull(uint32_t addr, uint8_t data);
 

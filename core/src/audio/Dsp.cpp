@@ -2,7 +2,7 @@
 // core/src/audio/Dsp.cpp
 // S-DSP voice mixing, envelopes, echo, and sample generation.
 
-// Dsp.cpp — SNES S-DSP Implementation
+// Dsp.cpp - SNES S-DSP Implementation
 //
 // Shared voice latches and echo RAM accesses advance on individual DSP clocks.
 
@@ -204,7 +204,7 @@ void Dsp::ramWriteWord(uint16_t addr, int16_t value) {
     ram_[(addr + 1) & 0xFFFF] = static_cast<uint8_t>(value >> 8);
 }
 
-// BRR decoding — decode 4 samples from 2 BRR data bytes
+// BRR decoding - decode 4 samples from 2 BRR data bytes
 //
 // header:    BRR block header byte (shift in bits 7-4, filter in bits 3-2)
 // brrByte1:  first data byte (high nybbles)
@@ -263,7 +263,7 @@ void Dsp::decodeBrr(Voice& v, int header, int brrByte1, int brrByte2) {
     }
 }
 
-// Gaussian interpolation — 4-point interpolation using half-Gaussian table
+// Gaussian interpolation - 4-point interpolation using half-Gaussian table
 
 int Dsp::interpolate(const Voice& v) const {
     int const* in = &v.buf[(v.interpPos >> 12) + v.bufPos];

@@ -2,7 +2,7 @@
 // core/src/audio/Spc700.cpp
 // The SPC700 instruction core and audio processor state.
 
-// Spc700.cpp — Sony SPC700 Audio Processor Core Implementation
+// Spc700.cpp - Sony SPC700 Audio Processor Core Implementation
 //
 // All 256 opcodes, ALU algorithms, and addressing mode instruction helpers.
 
@@ -91,7 +91,7 @@ Spc700::WriteCycle Spc700::Push(uint8_t data) {
     return WriteCycleAt(0x0100 | static_cast<uint16_t>(r.s--), data);
 }
 
-// ALU Algorithms — 8-bit
+// ALU Algorithms - 8-bit
 
 uint8_t Spc700::AlgADC(uint8_t x, uint8_t y) {
     int z = x + y + (r.p.c ? 1 : 0);
@@ -190,7 +190,7 @@ uint8_t Spc700::AlgLD(uint8_t /*x*/, uint8_t y) {
     return y;
 }
 
-// ALU Algorithms — 16-bit
+// ALU Algorithms - 16-bit
 
 uint16_t Spc700::AlgADW(uint16_t x, uint16_t y) {
     // Two chained ADC calls: low byte first, then high byte
@@ -227,7 +227,7 @@ uint16_t Spc700::AlgLDW(uint16_t /*x*/, uint16_t y) {
     return y;
 }
 
-// Instruction implementations — addressing mode groups
+// Instruction implementations - addressing mode groups
 
 // Immediate: op A, #imm
 Spc700::Routine Spc700::InstrImmediateRead(AlgOp op, uint8_t& target) {
@@ -412,7 +412,7 @@ Spc700::Routine Spc700::InstrIndirectXCompareIndirectY(AlgOp op) {
   co_await WaitCycle();
 }
 
-// op (X)=(Y) — e.g. ADC (X)=(Y), OR (X)=(Y)
+// op (X)=(Y) - e.g. ADC (X)=(Y), OR (X)=(Y)
 Spc700::Routine Spc700::InstrIndirectXWriteIndirectY(AlgOp op) {
   (void)co_await ReadCycleAt(r.pc);
   uint8_t yVal = co_await Load(r.y);
@@ -524,7 +524,7 @@ Spc700::Routine Spc700::InstrDirectWriteWord() {
 
 // Bit operations
 
-// Absolute bit modify — 8 sub-modes via opcode bits
+// Absolute bit modify - 8 sub-modes via opcode bits
 Spc700::Routine Spc700::InstrAbsoluteBitModify(uint8_t mode) {
     uint8_t lo = co_await Fetch();
     uint8_t hi = co_await Fetch();
@@ -615,7 +615,7 @@ Spc700::Routine Spc700::InstrBranchBit(uint8_t bit, bool match) {
     r.pc += static_cast<int8_t>(offset);
 }
 
-// CBNE dp, rel — compare A != mem, branch
+// CBNE dp, rel - compare A != mem, branch
 Spc700::Routine Spc700::InstrBranchNotDirect() {
     uint8_t dp = co_await Fetch();
     uint8_t val = co_await Load(dp);
@@ -640,7 +640,7 @@ Spc700::Routine Spc700::InstrBranchNotDirectIndexed(uint8_t index) {
     r.pc += static_cast<int8_t>(offset);
 }
 
-// DBNZ dp, rel — decrement mem, branch if non-zero
+// DBNZ dp, rel - decrement mem, branch if non-zero
 Spc700::Routine Spc700::InstrBranchNotDirectDecrement() {
     uint8_t dp = co_await Fetch();
     uint8_t val = co_await Load(dp);
@@ -689,7 +689,7 @@ Spc700::Routine Spc700::InstrCallPage() {
     r.pc = 0xFF00 | lo;
 }
 
-// TCALL n — vector at $FFDE - (n * 2)
+// TCALL n - vector at $FFDE - (n * 2)
 Spc700::Routine Spc700::InstrCallTable(uint8_t vector) {
   (void)co_await ReadCycleAt(r.pc);
   co_await WaitCycle();
@@ -821,7 +821,7 @@ Spc700::Routine Spc700::InstrImpliedModify(ModOp op, uint8_t& target) {
 
 // Special instructions
 
-// MUL YA — Y*A → YA (16-bit result), flags on Y
+// MUL YA - Y*A → YA (16-bit result), flags on Y
 Spc700::Routine Spc700::InstrMultiply() {
   (void)co_await ReadCycleAt(r.pc);
   for (int i = 0; i < 7; i++)
@@ -832,7 +832,7 @@ Spc700::Routine Spc700::InstrMultiply() {
   r.p.n = (r.y & 0x80) != 0;
 }
 
-// DIV YA,X — YA / X → A (quotient), Y (remainder)
+// DIV YA,X - YA / X → A (quotient), Y (remainder)
 Spc700::Routine Spc700::InstrDivide() {
   (void)co_await ReadCycleAt(r.pc);
   for (int i = 0; i < 10; i++)
@@ -859,7 +859,7 @@ Spc700::Routine Spc700::InstrDivide() {
     r.p.n = (r.a & 0x80) != 0;
 }
 
-// DAA — BCD adjust after addition
+// DAA - BCD adjust after addition
 Spc700::Routine Spc700::InstrDecimalAdjustAdd() {
   (void)co_await ReadCycleAt(r.pc);
   co_await WaitCycle();
@@ -872,7 +872,7 @@ Spc700::Routine Spc700::InstrDecimalAdjustAdd() {
     r.p.n = (r.a & 0x80) != 0;
 }
 
-// DAS — BCD adjust after subtraction
+// DAS - BCD adjust after subtraction
 Spc700::Routine Spc700::InstrDecimalAdjustSub() {
   (void)co_await ReadCycleAt(r.pc);
   co_await WaitCycle();
@@ -885,7 +885,7 @@ Spc700::Routine Spc700::InstrDecimalAdjustSub() {
     r.p.n = (r.a & 0x80) != 0;
 }
 
-// XCN — swap nibbles of A
+// XCN - swap nibbles of A
 Spc700::Routine Spc700::InstrExchangeNibble() {
   (void)co_await ReadCycleAt(r.pc);
   co_await WaitCycle();
@@ -912,7 +912,7 @@ Spc700::Routine Spc700::InstrStop() {
     co_await WaitCycle();
 }
 
-// Step — cycle-resumable opcode dispatch (all 256 opcodes)
+// Step - cycle-resumable opcode dispatch (all 256 opcodes)
 
 bool Spc700::InstructionInProgress() const noexcept {
     return static_cast<bool>(executor_) && !atInstructionBoundary_;

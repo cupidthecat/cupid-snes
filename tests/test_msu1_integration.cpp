@@ -269,7 +269,8 @@ void TimedAudioControls() {
         Audio audio;
         machine->AttachAudioOutput(&audio);
         machine->StepFrame();
-        Check(audio.samples.size() >= 1000, "A complete region-timed audio frame is delivered");
+        Check(audio.samples.size() == DspFrameCount(*machine) * 2,
+              "Audio reaches the first display event at its exact regional clock");
         std::vector<bool> transitions;
         for (size_t i = 0; i < audio.samples.size(); i += 2) {
             const bool playing = audio.samples[i] != 0;
@@ -357,10 +358,16 @@ void DmaAudioAcrossFrames() {
         bus.Write(reg + 5, 0); bus.Write(reg + 6, 0); // 65,536 bytes per channel.
     }
     bus.Write(0x420b, 0xff);
-    machine->StepFrame();
+    for (unsigned frame = 0; frame < 15; ++frame) {
+      machine->StepFrame();
+      Check(machine->GetTiming().FrameCount() == frame,
+            "Long DMA delivers each video field separately");
+      Check(audio.samples.size() == (DspFrameCount(*machine) - firstFrame) * 2,
+            "Each resumed DMA field delivers only its newly generated samples");
+    }
     const uint64_t dmaFrames = DspFrameCount(*machine) - firstFrame;
-    Check(machine->GetTiming().FrameCount() > 1 && dmaFrames >= 3 * 2048,
-          "Long DMA spans hardware frames and flushes at least three audio buffers");
+    Check(!machine->GetDma().AnyDmaEnabled() && dmaFrames >= 3 * 2048,
+          "All DMA channels complete while PCM advances across successive fields");
     Check(audio.samples.size() == dmaFrames * 2, "DMA delivers every DSP frame exactly once");
     CheckWaveform(audio.samples, 0, oracle);
 

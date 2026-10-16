@@ -3,7 +3,7 @@
 // DMA and HDMA controller interface.
 
 #pragma once
-// Dma.hpp — SNES DMA/HDMA controller (8 channels)
+// Dma.hpp - SNES DMA/HDMA controller (8 channels)
 //
 // The SNES has 8 DMA channels, each with its own set of registers at
 // $4300-$437F (16 bytes per channel, though only $43x0-$43xB + $43xF used).
@@ -23,25 +23,25 @@ namespace snes::core {
 
 class Cartridge;
 
-class MemoryBus; // forward — needed for DMA transfer engine
+class MemoryBus; // forward - needed for DMA transfer engine
 
-// DmaChannel — per-channel register state
+// DmaChannel - per-channel register state
 //
-//   $43x0  DMAPx    — control (direction, HDMA indirect, pattern, etc.)
-//   $43x1  BBADx    — B-bus target address (low byte of $21xx)
-//   $43x2  A1TxL    — A-bus source address low
-//   $43x3  A1TxH    — A-bus source address high
-//   $43x4  A1Bx     — A-bus source bank
-//   $43x5  DASxL    — transfer size low  (GP-DMA) / indirect addr low  (HDMA)
-//   $43x6  DASxH    — transfer size high (GP-DMA) / indirect addr high (HDMA)
-//   $43x7  DASBx    — HDMA indirect bank
-//   $43x8  A2AxL    — HDMA table address low
-//   $43x9  A2AxH    — HDMA table address high
-//   $43xA  NTRLx    — HDMA line counter
-//   $43xB  ???x     — unused / unknown register (readable/writable)
-//   $43xF           — mirror of $43xB
+//   $43x0  DMAPx    - control (direction, HDMA indirect, pattern, etc.)
+//   $43x1  BBADx    - B-bus target address (low byte of $21xx)
+//   $43x2  A1TxL    - A-bus source address low
+//   $43x3  A1TxH    - A-bus source address high
+//   $43x4  A1Bx     - A-bus source bank
+//   $43x5  DASxL    - transfer size low  (GP-DMA) / indirect addr low  (HDMA)
+//   $43x6  DASxH    - transfer size high (GP-DMA) / indirect addr high (HDMA)
+//   $43x7  DASBx    - HDMA indirect bank
+//   $43x8  A2AxL    - HDMA table address low
+//   $43x9  A2AxH    - HDMA table address high
+//   $43xA  NTRLx    - HDMA line counter
+//   $43xB  ???x     - unused / unknown register (readable/writable)
+//   $43xF           - mirror of $43xB
 struct DmaChannel {
-  // $43x0 DMAPx — control register
+  // $43x0 DMAPx - control register
   uint8_t transferMode = 7;    // bits 2-0: transfer pattern (0-7)
   bool fixedTransfer = true;   // bit 3: 1 = A-bus address not incremented
   bool reverseTransfer = true; // bit 4: 0 = increment, 1 = decrement (when not fixed)
@@ -49,16 +49,16 @@ struct DmaChannel {
   bool indirect = true;        // bit 6: HDMA indirect mode
   bool direction = true;       // bit 7: 0 = A→B (CPU→PPU), 1 = B→A (PPU→CPU)
 
-  // $43x1 BBADx — B-bus address (low byte; CPU reads/writes $2100|targetAddress)
+  // $43x1 BBADx - B-bus address (low byte; CPU reads/writes $2100|targetAddress)
   uint8_t targetAddress = 0xFF;
 
-  // $43x2-$43x3 A1TxL/H — A-bus source address (16-bit)
+  // $43x2-$43x3 A1TxL/H - A-bus source address (16-bit)
   uint16_t sourceAddress = 0xFFFF;
 
-  // $43x4 A1Bx — A-bus source bank
+  // $43x4 A1Bx - A-bus source bank
   uint8_t sourceBank = 0xFF;
 
-  // $43x5-$43x6 DASxL/H — byte count (GP-DMA) or indirect address (HDMA)
+  // $43x5-$43x6 DASxL/H - byte count (GP-DMA) or indirect address (HDMA)
   //
   // For GP-DMA: transferSize is the number of bytes to transfer (0 = 65536).
   // For HDMA:   indirectAddress is read from the HDMA table.
@@ -72,21 +72,21 @@ struct DmaChannel {
     transferSize = v;
   }
 
-  // $43x7 DASBx — HDMA indirect bank
+  // $43x7 DASBx - HDMA indirect bank
   uint8_t indirectBank = 0xFF;
 
-  // $43x8-$43x9 A2AxL/H — HDMA table current address
+  // $43x8-$43x9 A2AxL/H - HDMA table current address
   uint16_t hdmaAddress = 0xFFFF;
 
-  // $43xA NTRLx — HDMA line counter
+  // $43xA NTRLx - HDMA line counter
   //   bit 7: repeat flag
   //   bits 6-0: line count
   uint8_t lineCounter = 0xFF;
 
-  // $43xB / $43xF — unknown register (readable/writable, $43xF mirrors it)
+  // $43xB / $43xF - unknown register (readable/writable, $43xF mirrors it)
   uint8_t unknown = 0xFF;
 
-  // Non-register state — managed by $420B/$420C writes and transfer engine
+  // Non-register state - managed by $420B/$420C writes and transfer engine
   bool dmaEnable = false;  // set by $420B, cleared after transfer completes
   bool hdmaEnable = false; // set by $420C
 
@@ -127,7 +127,7 @@ struct DmaChannel {
   }
 };
 
-// DmaController — owns 8 DMA channels + register I/O + transfer engine
+// DmaController - owns 8 DMA channels + register I/O + transfer engine
 class DmaController {
 public:
   DmaController();
@@ -136,7 +136,7 @@ public:
   /// Reset all 8 channels to power-on state.
   void Reset();
 
-  // Bus connection — must be set before any transfers can occur.
+  // Bus connection - must be set before any transfers can occur.
   // The MemoryBus pointer is non-owning and must outlive this object.
   void SetBus(MemoryBus *bus) noexcept {
     bus_ = bus;
@@ -158,6 +158,10 @@ public:
   void SetClockCallback(std::function<void(uint32_t)> callback) {
     onClock_ = std::move(callback);
   }
+  // Both halves of a DMA read synchronize cartridge hardware; overhead does not.
+  void SetCoprocessorSyncCallback(std::function<void()> callback) {
+    onCoprocessorSync_ = std::move(callback);
+  }
   void SetClockQuery(std::function<uint64_t()> callback) {
     clockQuery_ = std::move(callback);
   }
@@ -174,7 +178,7 @@ public:
     return inHdma_;
   }
 
-  // Register read/write — $4300-$437F
+  // Register read/write - $4300-$437F
   //
   // These are mapped onto the bus by MemoryBus::MapDma().
   // The openBus parameter is the shared CPU memory data latch for unrecognized addresses.
@@ -194,7 +198,7 @@ public:
   bool AnyHdmaEnabled() const noexcept;
   bool AnyHdmaActive() const noexcept;
 
-  // $420B/$420C write helpers — called by CpuIoRegisters callbacks
+  // $420B/$420C write helpers - called by CpuIoRegisters callbacks
   void EnableDma(uint8_t channelMask);
   void EnableHdma(uint8_t channelMask);
 
@@ -213,20 +217,20 @@ public:
 
   // HDMA lifecycle
   //
-  // HDMA is horizontal-blank DMA — automatic per-scanline transfers
+  // HDMA is horizontal-blank DMA - automatic per-scanline transfers
   // driven by a table in A-bus memory.  The lifecycle is:
   //
   //   Frame start (V=0):
-  //     1. HdmaReset()  — clear completed/doTransfer flags
-  //     2. HdmaSetup()  — initialize table pointers, read first entry
+  //     1. HdmaReset()  - clear completed/doTransfer flags
+  //     2. HdmaSetup()  - initialize table pointers, read first entry
   //
   //   Each visible scanline (~H=1104):
-  //     3. HdmaRun()    — transfer data, then advance to next table entry
+  //     3. HdmaRun()    - transfer data, then advance to next table entry
   //
   // Each method returns the number of master clock cycles consumed.
   //
 
-  /// Called at frame start — clears hdmaCompleted and hdmaDoTransfer.
+  /// Called at frame start - clears hdmaCompleted and hdmaDoTransfer.
   /// No bus access; returns 0 cycles.
   void HdmaReset();
 
@@ -237,7 +241,7 @@ public:
   /// Returns master cycles consumed (8 overhead + per-channel reads).
   uint32_t HdmaSetup();
 
-  /// Called at each visible scanline — performs HDMA transfers and advances.
+  /// Called at each visible scanline - performs HDMA transfers and advances.
   /// For each active channel: transfers data bytes based on transfer mode,
   /// then decrements line counter, reloads table entry if count expired.
   /// A queued operation retains global overhead if enabled channels have completed.
@@ -263,6 +267,7 @@ private:
   uint32_t *cpuAddress_ = nullptr;
   uint8_t *cpuData_ = nullptr;
   std::function<void(uint32_t)> onClock_;
+  std::function<void()> onCoprocessorSync_;
   std::function<uint64_t()> clockQuery_;
   std::function<void()> onBoundary_;
   // DMA bus clocks since the last alignment, excluding CPU resumption stalls.
@@ -271,7 +276,7 @@ private:
   bool inDma_ = false;
   bool inHdma_ = false;
 
-  void Clock(uint32_t clocks);
+  void Clock(uint32_t clocks, bool synchronize = false);
   uint32_t AlignToDma();
   uint32_t ResumeCpu();
 
@@ -312,7 +317,7 @@ private:
   /// indirect addressing.  Returns cycles consumed.
   uint32_t HdmaTransfer(DmaChannel &ch);
 
-  /// Advance HDMA to next scanline — decrement line counter, set repeat
+  /// Advance HDMA to next scanline - decrement line counter, set repeat
   /// flag, reload table if needed.  Returns cycles consumed.
   uint32_t HdmaAdvance(DmaChannel &ch, int channelIdx);
 };

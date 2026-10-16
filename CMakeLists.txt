@@ -11,14 +11,14 @@ option(SNES_ENABLE_TESTS "Build tests" ON)
 add_compile_definitions(__PRFCHWINTRIN_H)
 
 # ============================================================================
-# SDL3 — fetched from GitHub if not already installed
+# SDL3 - fetched from GitHub if not already installed
 # ============================================================================
 include(FetchContent)
 
 # Try a local/system install first; fall back to FetchContent.
 find_package(SDL3 QUIET)
 if(NOT SDL3_FOUND)
-  message(STATUS "SDL3 not found locally — fetching via FetchContent")
+  message(STATUS "SDL3 not found locally - fetching via FetchContent")
   FetchContent_Declare(
     SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git

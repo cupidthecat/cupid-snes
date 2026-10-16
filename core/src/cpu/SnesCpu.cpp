@@ -2,7 +2,7 @@
 // core/src/cpu/SnesCpu.cpp
 // The SNES CPU wrapper and interrupt integration.
 
-// SnesCpu.cpp — SNES-specific CPU wrapper implementation
+// SnesCpu.cpp - SNES-specific CPU wrapper implementation
 //
 // Implements the Processor65816 virtual bus interface with SNES timing,
 // NMI/IRQ state machine, and cycle counting.
@@ -21,35 +21,39 @@ SnesCpu::SnesCpu(ICpuBus& bus)
 // Reset
 
 void SnesCpu::Reset() {
-    power();
+  if (discardStep_)
+    discardStep_();
+  power();
 
-    cycles_ = 0;
-    instructionClocks_ = 0;
+  cycles_ = 0;
+  instructionClocks_ = 0;
 
-    nmiLine_    = false;
-    nmiEdge_    = false;
-    nmiPending_ = false;
-    irqLine_    = false;
-    irqPending_ = false;
+  nmiLine_ = false;
+  nmiEdge_ = false;
+  nmiPending_ = false;
+  irqLine_ = false;
+  irqPending_ = false;
 
-    resetPending_ = true;
-    dramRefreshState_ = 0;
-    bus_.SetOpenBus(0);
+  resetPending_ = true;
+  dramRefreshState_ = 0;
+  bus_.SetOpenBus(0);
 }
 
-// Step — execute one instruction
+// Step - execute one instruction
 
 uint32_t SnesCpu::Step() {
-    instructionClocks_ = 0;
+  if (stepSuspended_ && resumeStep_)
+    return resumeStep_();
+  instructionClocks_ = 0;
 
-    if (resetPending_) {
-      resetPending_ = false;
-      // Hold the processor while the rest of the console continues clocking.
-      for (unsigned clocks = 0; clocks < 132; clocks += 6)
-        addClocks(6);
-      enterInterrupt(Interrupt::Reset);
-      return instructionClocks_;
-    }
+  if (resetPending_) {
+    resetPending_ = false;
+    // Hold the processor while the rest of the console continues clocking.
+    for (unsigned clocks = 0; clocks < 132; clocks += 6)
+      addClocks(6);
+    enterInterrupt(Interrupt::Reset);
+    return instructionClocks_;
+  }
 
     // Only reset releases STP. Keep the scheduler running without bus access.
     if (regs().stp) {
@@ -119,6 +123,8 @@ uint8_t SnesCpu::read(uint32_t address) {
       beforeCycle_(speed);
     regs().mar = address & 0x00ffffff;
     addClocks(speed - 4);
+    if (onCoprocessorSync_)
+      onCoprocessorSync_();
     if (onBusPhase_)
       onBusPhase_();
     uint8_t data = bus_.ReadCpu(address);
@@ -139,6 +145,8 @@ void SnesCpu::write(uint32_t address, uint8_t data) {
     if (beforeCycle_) beforeCycle_(speed);
     regs().mar = address & 0x00ffffff;
     addClocks(speed);
+    if (onCoprocessorSync_)
+      onCoprocessorSync_();
     if (onBusPhase_)
       onBusPhase_();
     bus_.Write(address, regs().mdr = data);
@@ -172,15 +180,15 @@ void SnesCpu::pollInterrupts() {
     irqPending_ = irqLine_ && !flagI();
 }
 
-// DRAM Refresh — 40-master-clock penalty per scanline
+// DRAM Refresh - 40-master-clock penalty per scanline
 //
 // Refresh consists of five (6 halt + 2 interleave) substeps, totaling 40 clocks.
 // Between each sub-step, the ALU pipeline (multiply/divide) is advanced.
 //
 // The refresh state identifies the current bus phase:
 //   0 = not refreshing
-//   1 = bus halted (6 clocks)  — coprocessors see the bus as unavailable
-//   2 = interleave  (2 clocks) — brief gap between halt phases
+//   1 = bus halted (6 clocks)  - coprocessors see the bus as unavailable
+//   2 = interleave  (2 clocks) - brief gap between halt phases
 
 void SnesCpu::ApplyDramRefreshPenalty() {
     for (int i = 0; i < 5; i++) {

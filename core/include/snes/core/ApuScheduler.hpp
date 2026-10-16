@@ -2,7 +2,7 @@
 // core/include/snes/core/ApuScheduler.hpp
 // CPU and APU clock synchronization.
 
-// ApuScheduler.hpp — CPU ↔ APU synchronization (single-threaded)
+// ApuScheduler.hpp - CPU ↔ APU synchronization (single-threaded)
 //
 // Converts CPU master clock cycles to SPC700 (SMP) cycles using a
 // Bresenham-style accumulator.  After each CPU instruction (or batch),
@@ -39,7 +39,7 @@ struct ApuScheduler {
     uint64_t accumulator    = 0;  // Fractional SMP-cycle remainder
     uint64_t smpTargetCycle = 0;  // Running total of SMP cycles owed
 
-    // Reset — call when power-cycling or loading a new game.
+    // Reset - call when power-cycling or loading a new game.
     // Also resets the SMP itself.
     void Reset(Smp& smp) {
         accumulator    = 0;
@@ -47,7 +47,7 @@ struct ApuScheduler {
         smp.Power();
     }
 
-    // Run — call after the CPU consumes `masterClocks` master clocks.
+    // Run - call after the CPU consumes `masterClocks` master clocks.
     //
     // Converts master clocks → SMP clocks with exact fractional tracking,
     // then runs the SMP until it catches up.
@@ -64,7 +64,7 @@ struct ApuScheduler {
         smp.RunUntil(smpTargetCycle);
     }
 
-    // Convenience — compute the SMP target without running.
+    // Convenience - compute the SMP target without running.
     // Useful for inspection / testing.
     uint64_t Advance(uint32_t masterClocks) {
         accumulator += static_cast<uint64_t>(masterClocks) * kSmpClockRate;

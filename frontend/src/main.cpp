@@ -2,7 +2,7 @@
 // frontend/src/main.cpp
 // SDL frontend entry point and save-file lifecycle.
 
-// main.cpp — SNES emulator SDL3 frontend
+// main.cpp - SNES emulator SDL3 frontend
 //
 // Usage:  snes_frontend <rom_file.smc>
 //

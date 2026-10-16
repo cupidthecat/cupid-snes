@@ -3,7 +3,7 @@
 // Interrupt timing and line state interface.
 
 #pragma once
-// IrqController.hpp — SNES NMI / IRQ dispatch state machine
+// IrqController.hpp - SNES NMI / IRQ dispatch state machine
 //
 // Evaluates the console NMI and timer IRQ signals:
 //
@@ -30,7 +30,7 @@
 //     - Set when NMITIMEN ($4200) is written
 //     - Prevents NMI/IRQ dispatch for one instruction (one lastCycle test)
 //
-// The IrqController is self-contained — it owns its own copies of all
+// The IrqController is self-contained - it owns its own copies of all
 // enable flags, timer targets, and state machines.  The integration layer
 // (Emulator) wires it to CpuIoRegisters, Timing, and SnesCpu.
 //
@@ -54,7 +54,7 @@ public:
     /// Reset all state to power-on defaults.
     void Reset();
 
-    // Periodic polling — called every 4 master clocks by the timing system
+    // Periodic polling - called every 4 master clocks by the timing system
 
     /// Evaluate NMI and IRQ conditions based on current counters.
     /// @param h       Current H counter (master clocks, 0..hperiod-1)
@@ -74,14 +74,14 @@ public:
     /// IRQ mode changes, irqLock).
     void NmitimenUpdate(uint8_t data);
 
-    // Register read hooks — called by CpuIoRegisters
+    // Register read hooks - called by CpuIoRegisters
 
-    /// $4210 RDNMI — returns true if NMI flag is set, then performs
+    /// $4210 RDNMI - returns true if NMI flag is set, then performs
     /// read-and-clear with hold protection (flag is NOT cleared if hold
     /// is still active).
     bool Rdnmi();
 
-    /// $4211 TIMEUP — returns true if IRQ flag is set, then performs
+    /// $4211 TIMEUP - returns true if IRQ flag is set, then performs
     /// read-and-clear with hold protection.
     bool Timeup();
 

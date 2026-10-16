@@ -2,7 +2,7 @@
 // core/src/memory/MemoryBus.cpp
 // Unified 24-bit address dispatch and open-bus behavior.
 
-// MemoryBus.cpp — Unified 24-bit SNES address space dispatch
+// MemoryBus.cpp - Unified 24-bit SNES address space dispatch
 //
 // 16 MB lookup table + handler-slot architecture.
 // Implements ICpuBus for SnesCpu, owns 128 KB WRAM, WMDATA register,
@@ -31,7 +31,7 @@ MemoryBus::MemoryBus()
     };
     writers_[0] = [](uint32_t /*addr*/, uint8_t /*data*/) {};
 
-    // Clear lookup table — everything starts as slot 0 (open bus)
+    // Clear lookup table - everything starts as slot 0 (open bus)
     std::memset(lookup_.get(), 0, kAddressSpace);
 }
 
@@ -91,7 +91,7 @@ uint8_t MemoryBus::Speed(uint32_t address) const {
     // Address mask $408000 selects the ROM-speed regions.
     // (banks $40-7D/$C0-FF full, or any bank $8000-$FFFF)
     if (address & 0x408000) {
-        // ROM region — 8 slow, or 6 if high banks + fastROM enabled
+        // ROM region - 8 slow, or 6 if high banks + fastROM enabled
         if ((address & 0x800000) && fastRom_) {
             return 6;
         }
@@ -99,7 +99,7 @@ uint8_t MemoryBus::Speed(uint32_t address) const {
     }
 
     // Not ROM.  We are in banks $00-3F or $80-BF with offset < $8000,
-    // or banks $7E-7F (offset < $8000 — but $7E-7F full is caught above).
+    // or banks $7E-7F (offset < $8000 - but $7E-7F full is caught above).
     if ((address + 0x6000) & 0x4000) {
         return 8; // slow: PPU/APU registers, SRAM area
     }
@@ -108,7 +108,7 @@ uint8_t MemoryBus::Speed(uint32_t address) const {
         return 6; // fast: CPU I/O and DMA registers
     }
 
-    // Remaining: $4000-$41FF — extra-slow (joypad, old NES-style I/O)
+    // Remaining: $4000-$41FF - extra-slow (joypad, old NES-style I/O)
     return 12;
 }
 
@@ -499,7 +499,7 @@ void MemoryBus::MapCartridge(Cartridge& cart) {
         break;
 
     default:
-        // Unknown mapping — just map upper halves
+        // Unknown mapping - just map upper halves
         MapRegions({
             {uint8_t(0x00), uint8_t(0x7D), uint16_t(0x8000), uint16_t(0xFFFF)},
             {uint8_t(0x80), uint8_t(0xFF), uint16_t(0x8000), uint16_t(0xFFFF)},
@@ -534,10 +534,10 @@ void MemoryBus::writeWramFull(uint32_t addr, uint8_t data) {
 
 // WMDATA register ($2180-$2183)
 //
-//   $2180 — WMDATA read/write  (reads/writes WRAM[wmdataAddr_], auto-increment)
-//   $2181 — WMADDL write       (low byte of WRAM address)
-//   $2182 — WMADDM write       (mid byte of WRAM address)
-//   $2183 — WMADDH write       (high bit of WRAM address, bit 0 only)
+//   $2180 - WMDATA read/write  (reads/writes WRAM[wmdataAddr_], auto-increment)
+//   $2181 - WMADDL write       (low byte of WRAM address)
+//   $2182 - WMADDM write       (mid byte of WRAM address)
+//   $2183 - WMADDH write       (high bit of WRAM address, bit 0 only)
 
 uint8_t MemoryBus::readWmdata(uint32_t addr, uint8_t openBus) {
     uint16_t offset = addr & 0xFFFF;

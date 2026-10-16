@@ -3,7 +3,7 @@
 // SDL input provider interface.
 
 #pragma once
-// SdlInputProvider.hpp — SDL3-based keyboard input for the SNES emulator
+// SdlInputProvider.hpp - SDL3-based keyboard input for the SNES emulator
 //
 // Reads the SDL keyboard state array each frame and maps scancodes to
 // SNES controller buttons.  Default layout (easily reconfigurable):

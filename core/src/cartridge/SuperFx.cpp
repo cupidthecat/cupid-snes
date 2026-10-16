@@ -8,6 +8,7 @@
 #include <coroutine>
 #include <exception>
 #include <utility>
+#include <vector>
 
 namespace snes::core {
 namespace {
@@ -28,6 +29,7 @@ bool IoBank(uint32_t address) { return (address & 0x400000) == 0; }
 
 struct SuperFx::Impl {
     enum class Port { None, Rom, Ram };
+    struct Fetch;
 
     // A single suspended execution frame retains the instruction and its operands
     // across CPU clock slices, including slices ending in a cache fill or bus stall.
@@ -77,10 +79,22 @@ struct SuperFx::Impl {
     uint8_t ramBuffer = 0;
     uint32_t waitRemaining = 0;
     Port waitPort = Port::None;
+    Fetch *cacheFill = nullptr;
+    enum class StepPhase { RomCountdown, RomAccess, RamCountdown, RamAccess, Clock };
+    struct NativeStep {
+      uint32_t clocks;
+      StepPhase phase = StepPhase::RomCountdown;
+      uint32_t address = 0;
+      uint8_t data = 0;
+    };
+    std::vector<NativeStep> steps;
+    bool idleStep = false;
+    bool waitingForGo = true;
     Execution execution;
 
     Impl(std::span<const uint8_t> image, std::span<uint8_t> memory) : rom(image), ram(memory) {
-        execution = Run();
+      steps.reserve(8);
+      execution = Run();
     }
 
     bool Running() const { return (status & Go) != 0; }
@@ -91,7 +105,8 @@ struct SuperFx::Impl {
     }
     static Port BankPort(uint8_t bank) {
         if (bank < 0x60) return Port::Rom;
-        if (bank >= 0x70 && bank <= 0x71) return Port::Ram;
+        if (bank >= 0x60 && bank <= 0x7f)
+          return Port::Ram;
         return Port::None;
     }
     uint8_t RamByte(uint32_t address) const {
@@ -155,8 +170,7 @@ struct SuperFx::Impl {
         Port port = Port::None;
         bool await_ready() const noexcept { return clocks == 0 && chip.Granted(port); }
         void await_suspend(std::coroutine_handle<>) const noexcept {
-            chip.waitRemaining = clocks;
-            chip.waitPort = port;
+          chip.BeginWait(clocks, port);
         }
         void await_resume() const noexcept {}
     };
@@ -167,25 +181,38 @@ struct SuperFx::Impl {
         uint8_t bank;
         uint16_t offset;
         bool cached, hit;
+        unsigned fillByte = 0;
         Fetch(Impl& value, uint16_t pc) : chip(value), address(pc), bank(value.programBank),
             offset(uint16_t(pc - value.cacheBase)), cached(offset < 512),
             hit(cached && (value.validLines & (uint32_t(1) << (offset / 16)))) {}
         bool await_ready() const noexcept { return false; }
-        void await_suspend(std::coroutine_handle<>) const noexcept {
-            const auto port = hit ? Port::None : BankPort(bank);
-            const unsigned conflict = hit ? 0 : port == Port::Rom ? chip.romRemaining :
-                                              port == Port::Ram ? chip.ramRemaining : 0;
-            chip.waitRemaining = conflict + (hit ? chip.CoreCost() : chip.MemoryCost() * (cached ? 16 : 1));
-            chip.waitPort = port;
+        void await_suspend(std::coroutine_handle<>) noexcept {
+          const auto port = hit ? Port::None : BankPort(bank);
+          if (cached && !hit) {
+            chip.cacheFill = this;
+            chip.BeginWait(chip.MemoryCost(), port);
+            return;
+          }
+          const unsigned conflict = cached              ? 0
+                                    : port == Port::Rom ? chip.romRemaining
+                                    : port == Port::Ram ? chip.ramRemaining
+                                                        : 0;
+          chip.BeginWait(conflict + (hit ? chip.CoreCost() : chip.MemoryCost()), port);
+        }
+        bool CompleteByte() noexcept {
+          const unsigned line = offset & 0x1f0;
+          const uint32_t base = (uint32_t(bank) << 16) | (address & 0xfff0);
+          chip.cache[line + fillByte] = chip.MemoryByte(base + fillByte);
+          if (++fillByte < 16) {
+            chip.BeginWait(chip.MemoryCost(), chip.waitPort);
+            return false;
+          }
+          chip.validLines |= uint32_t(1) << (offset / 16);
+          chip.cacheFill = nullptr;
+          return true;
         }
         uint8_t await_resume() const noexcept {
             if (!cached) return chip.MemoryByte((uint32_t(bank) << 16) | address);
-            if (!hit) {
-                const unsigned line = offset & 0x1f0;
-                const uint32_t base = (uint32_t(bank) << 16) | (address & 0xfff0);
-                for (unsigned i = 0; i < 16; ++i) chip.cache[line + i] = chip.MemoryByte(base + i);
-                chip.validLines |= uint32_t(1) << (offset / 16);
-            }
             return chip.cache[offset];
         }
     };
@@ -193,10 +220,11 @@ struct SuperFx::Impl {
     struct RamRead {
         Impl& chip;
         uint32_t address;
-        bool await_ready() const noexcept { return false; }
+        bool await_ready() const noexcept {
+          return chip.ramRemaining == 0 && chip.Granted(Port::Ram);
+        }
         void await_suspend(std::coroutine_handle<>) const noexcept {
-            chip.waitRemaining = chip.ramRemaining + chip.MemoryCost();
-            chip.waitPort = Port::Ram;
+          chip.BeginWait(chip.ramRemaining, Port::Ram);
         }
         uint8_t await_resume() const noexcept { return chip.RamByte(address); }
     };
@@ -205,10 +233,11 @@ struct SuperFx::Impl {
         Impl& chip;
         uint32_t address;
         uint8_t value;
-        bool await_ready() const noexcept { return chip.ramRemaining == 0 && chip.Granted(Port::Ram); }
+        bool await_ready() const noexcept {
+          return chip.ramRemaining == 0;
+        }
         void await_suspend(std::coroutine_handle<>) const noexcept {
-            chip.waitRemaining = chip.ramRemaining;
-            chip.waitPort = Port::Ram;
+          chip.BeginWait(chip.ramRemaining, Port::None);
         }
         void await_resume() const noexcept {
             chip.ramAddress = address;
@@ -221,8 +250,7 @@ struct SuperFx::Impl {
         Impl& chip;
         bool await_ready() const noexcept { return chip.romRemaining == 0; }
         void await_suspend(std::coroutine_handle<>) const noexcept {
-            chip.waitRemaining = chip.romRemaining;
-            chip.waitPort = BankPort(uint8_t(chip.romAddress >> 16));
+          chip.BeginWait(chip.romRemaining, Port::None);
         }
         uint8_t await_resume() const noexcept { return chip.romBuffer; }
     };
@@ -237,9 +265,8 @@ struct SuperFx::Impl {
                                        uint8_t(value.pixels[row].position >> 5))), depth(value.Depth()) {}
         bool await_ready() const noexcept { return chip.pixels[index].pending == 0; }
         void await_suspend(std::coroutine_handle<>) const noexcept {
-            chip.waitRemaining = chip.ramRemaining + depth * chip.MemoryCost() *
-                                 (chip.pixels[index].pending == 0xff ? 1 : 2);
-            chip.waitPort = Port::Ram;
+          chip.BeginWait(depth * chip.MemoryCost() * (chip.pixels[index].pending == 0xff ? 1 : 2),
+                         Port::Ram);
         }
         void await_resume() const noexcept {
             auto& row = chip.pixels[index];
@@ -255,51 +282,113 @@ struct SuperFx::Impl {
         }
     };
 
-    void TickBuffers(uint32_t clocks) {
-        if (romRemaining && Granted(BankPort(uint8_t(romAddress >> 16)))) {
-            romRemaining -= std::min(clocks, romRemaining);
-            if (!romRemaining) { romBuffer = MemoryByte(romAddress); status &= uint16_t(~RomBusy); }
+    void PrepareStep() {
+      // A native step settles buffered accesses before yielding its clocks.
+      // A denied access inserts six-clock polls and retains the interrupted
+      // step, including the ordering of simultaneous ROM and RAM completion.
+      for (;;) {
+        auto &step = steps.back();
+        switch (step.phase) {
+        case StepPhase::RomCountdown:
+          step.phase = StepPhase::RamCountdown;
+          if (romRemaining) {
+            romRemaining -= std::min(step.clocks, romRemaining);
+            if (!romRemaining) {
+              status &= uint16_t(~RomBusy);
+              step.address = romAddress;
+              step.phase = StepPhase::RomAccess;
+            }
+          }
+          break;
+        case StepPhase::RomAccess:
+          if (!Granted(BankPort(uint8_t(step.address >> 16)))) {
+            steps.push_back(NativeStep{6});
+          } else {
+            romBuffer = MemoryByte(step.address);
+            step.phase = StepPhase::RamCountdown;
+          }
+          break;
+        case StepPhase::RamCountdown:
+          step.phase = StepPhase::Clock;
+          if (ramRemaining) {
+            ramRemaining -= std::min(step.clocks, ramRemaining);
+            if (!ramRemaining) {
+              step.address = ramAddress;
+              step.data = ramBuffer;
+              step.phase = StepPhase::RamAccess;
+            }
+          }
+          break;
+        case StepPhase::RamAccess:
+          if (!Granted(Port::Ram)) {
+            steps.push_back(NativeStep{6});
+          } else {
+            StoreRam(step.address, step.data);
+            step.phase = StepPhase::Clock;
+          }
+          break;
+        case StepPhase::Clock:
+          waitRemaining = step.clocks;
+          return;
         }
-        if (ramRemaining && Granted(Port::Ram)) {
-            ramRemaining -= std::min(clocks, ramRemaining);
-            if (!ramRemaining) StoreRam(ramAddress, ramBuffer);
-        }
+      }
+    }
+
+    void BeginWait(uint32_t clocks, Port port) {
+      waitPort = port;
+      steps.push_back(NativeStep{clocks});
+      PrepareStep();
     }
 
     void Advance(uint64_t clocks) {
         if (!clocks) return;
         for (;;) {
-            // Resume at the exact completion boundary, even when this slice ends
-            // there. The next instruction will suspend before consuming more time.
-            while (Running() && waitRemaining == 0 && Granted(waitPort)) {
-                waitPort = Port::None;
-                execution.handle.resume();
+          if (!steps.empty()) {
+            if (waitRemaining > clocks) {
+              waitRemaining -= uint32_t(clocks);
+              return;
             }
-            if (!clocks) return;
-            uint64_t elapsed = std::min(clocks, uint64_t(0xffffffff));
-            const bool advancing = Running() && Granted(waitPort);
-            if (advancing && waitRemaining) elapsed = std::min(elapsed, uint64_t(waitRemaining));
-            if (romRemaining && Granted(BankPort(uint8_t(romAddress >> 16))))
-                elapsed = std::min(elapsed, uint64_t(romRemaining));
-            if (ramRemaining && Granted(Port::Ram)) elapsed = std::min(elapsed, uint64_t(ramRemaining));
-            TickBuffers(uint32_t(elapsed));
-            if (advancing) waitRemaining -= uint32_t(elapsed);
-            clocks -= elapsed;
+            clocks -= waitRemaining;
+            waitRemaining = 0;
+            steps.pop_back();
+            if (!steps.empty()) {
+              PrepareStep();
+              continue;
+            }
+            if (!Granted(waitPort)) {
+              BeginWait(6, waitPort);
+              continue;
+            }
+            if (idleStep) {
+              idleStep = false;
+            } else if (cacheFill && !cacheFill->CompleteByte()) {
+              continue;
+            }
+          }
+          if (waitingForGo) {
+            if (!Running()) {
+              idleStep = true;
+              BeginWait(6, Port::None);
+              continue;
+            }
+            waitingForGo = false;
+          }
+          execution.handle.resume();
         }
     }
 
     Execution Run() {
         for (;;) {
-            if (!Running()) co_await std::suspend_always{};
+          if (!Running()) {
+            waitingForGo = true;
+            co_await std::suspend_always{};
+          }
             const uint8_t opcode = pipeline;
             pipeline = co_await Fetch{*this, r[15]};
             pcWritten = r14Written = false;
             const unsigned mode = (status >> 8) & 3;
             const unsigned n = opcode & 15;
             const uint16_t input = r[source];
-            // Store-immediate instructions sample their register before consuming
-            // the address bytes; this also defines the otherwise unusual R15 case.
-            const uint16_t operandRegister = r[n];
             uint16_t immediate = 0;
             if ((opcode >= 0x05 && opcode <= 0x0f) || (opcode & 0xf0) == 0xa0 || opcode >= 0xf0) {
                 immediate = pipeline;
@@ -311,6 +400,7 @@ struct SuperFx::Impl {
                     pipeline = co_await Fetch{*this, r[15]};
                 }
             }
+            const uint16_t operandRegister = r[n];
             bool clearPrefix = true;
             if (opcode >= 0x05 && opcode <= 0x0f) {
                 const bool s = (status & Sign) != 0, v = (status & Overflow) != 0;
@@ -444,8 +534,9 @@ struct SuperFx::Impl {
                         uint16_t value = 0;
                         const uint32_t address = PixelAddress(uint8_t(r[1]), uint8_t(r[2]));
                         for (unsigned plane = 0; plane < Depth(); ++plane) {
-                            const uint8_t packed = co_await RamRead{*this, address + PlaneOffset(plane)};
-                            value |= uint16_t(((packed >> (7 - (r[1] & 7))) & 1) << plane);
+                          co_await Wait{*this, MemoryCost(), Port::Ram};
+                          const uint8_t packed = RamByte(address + PlaneOffset(plane));
+                          value |= uint16_t(((packed >> (7 - (r[1] & 7))) & 1) << plane);
                         }
                         SetRegister(destination, value);
                         ResultFlags(value);
@@ -671,9 +762,8 @@ void SuperFx::WriteCpu(uint32_t address, uint8_t value) {
     const auto low = uint16_t(address);
     if (IoBank(address) && low >= 0x3000 && low <= 0x32ff) { impl_->WriteIo(low, value); return; }
     uint32_t offset = 0;
-    if (impl_->CpuRamAddress(address, offset) && !impl_->ram.empty() &&
-        !(impl_->Running() && (impl_->screenMode & 8)))
-        impl_->ram[Mirror(offset, impl_->ram.size())] = value;
+    if (impl_->CpuRamAddress(address, offset) && !impl_->ram.empty())
+      impl_->ram[Mirror(offset, impl_->ram.size())] = value;
 }
 
 } // namespace snes::core

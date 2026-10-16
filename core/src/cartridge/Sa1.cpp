@@ -1,46 +1,67 @@
 // snes emulator
 // SA-1 bus, register file, and processor scheduling.
 #include "snes/core/Sa1.hpp"
+#include "snes/core/detail/ExecutionContext.hpp"
 
+#include <algorithm>
 #include <bit>
 
 namespace snes::core {
+
+namespace {
+bool RomAddress(uint32_t address) noexcept {
+  const auto bank = address >> 16;
+  return bank >= 0xc0 || (!(bank & 0x40) && (address & 0x8000));
+}
+bool BwramAddress(uint32_t address, uint8_t lastBank) noexcept {
+  const auto bank = address >> 16;
+  return (bank >= 0x40 && bank <= lastBank) || (!(bank & 0x40) && (address & 0xe000) == 0x6000);
+}
+bool IramAddress(uint32_t address) noexcept {
+  const auto offset = address & 0xffff;
+  return !(address & 0x400000) && (offset < 0x800 || (offset >= 0x3000 && offset < 0x3800));
+}
+} // namespace
 
 Sa1::Sa1(std::span<const uint8_t> rom, std::span<uint8_t> bwram)
     : rom_(rom), bwram_(bwram) {
     Reset();
 }
 
+Sa1::~Sa1() = default;
+
 void Sa1::Reset(std::span<const uint8_t> rom, std::span<uint8_t> bwram) {
-    rom_ = rom;
-    bwram_ = bwram;
-    expansion_ = {};
-    broadcastBoard_ = false;
-    Reset();
+  execution_.reset();
+  rom_ = rom;
+  bwram_ = bwram;
+  expansion_ = {};
+  broadcastBoard_ = false;
+  Reset();
 }
 
 void Sa1::Reset() {
-    power();
-    iram_.fill(0);
-    registers_.fill(0);
-    registers_[0x00] = 0x20;
-    for (uint8_t bank = 0; bank < 4; ++bank) registers_[0x20 + bank] = bank;
-    registers_[0x28] = 0x0f;
-    cpuFlags_ = sa1Flags_ = 0;
-    nmiServiced_ = sampledIrq_ = hardwareVector_ = false;
-    hardwareVectorAddress_ = hardwareVectorValue_ = 0;
-    requestedClocks_ = executedClocks_ = 0;
-    hClocks_ = vCounter_ = latchedH_ = latchedV_ = 0;
-    timerMatch_ = false;
-    arithmeticResult_ = arithmeticNext_ = 0;
-    arithmeticClocks_ = 0;
-    arithmeticOverflow_ = arithmeticNextOverflow_ = false;
-    bitAddress_ = bitResult_ = bitOffset_ = 0;
-    dma_ = {};
-    conversionActive_ = false;
-    conversionSource_ = conversionDestination_ = 0;
-    conversionTile_ = UINT32_MAX;
-    conversionRows_ = conversionBuffer_ = 0;
+  execution_.reset();
+  power();
+  iram_.fill(0);
+  registers_.fill(0);
+  registers_[0x00] = 0x20;
+  for (uint8_t bank = 0; bank < 4; ++bank)
+    registers_[0x20 + bank] = bank;
+  registers_[0x28] = 0x0f;
+  cpuFlags_ = sa1Flags_ = 0;
+  nmiServiced_ = sampledIrq_ = false;
+  requestedClocks_ = executedClocks_ = 0;
+  cpuAddress_ = 0;
+  cpuRefreshing_ = false;
+  hClocks_ = vCounter_ = latchedH_ = latchedV_ = 0;
+  arithmeticResult_ = 0;
+  arithmeticOverflow_ = false;
+  bitAddress_ = bitResult_ = bitOffset_ = 0;
+  dma_ = {};
+  conversionActive_ = false;
+  conversionSource_ = conversionDestination_ = 0;
+  conversionTile_ = UINT32_MAX;
+  conversionRows_ = conversionBuffer_ = 0;
 }
 
 void Sa1::SetPal(bool enabled) noexcept {
@@ -76,19 +97,25 @@ bool Sa1::Sa1NmiPending() const noexcept {
     return (sa1Flags_ & registers_[0x0a] & 0x10) && !nmiServiced_;
 }
 
-void Sa1::Advance(uint32_t masterClocks) {
-    requestedClocks_ += masterClocks;
-    // Processor65816 executes whole instructions. Carry any overshoot into the
-    // next call so small scheduler slices cannot make the chip run too fast.
-    while (executedClocks_ < requestedClocks_) {
-        if (dma_.active) {
-            StepDma();
-        } else if ((registers_[0x00] & 0x60) || regs().stp) {
-            Clock(static_cast<uint32_t>(requestedClocks_ - executedClocks_));
-        } else {
-            StepProcessor();
-        }
-    }
+void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  cpuAddress_ = cpuAddress & 0xffffff;
+  cpuRefreshing_ = cpuRefreshing;
+  requestedClocks_ += masterClocks;
+  if (executedClocks_ >= requestedClocks_)
+    return;
+  if (!execution_) {
+    execution_ = std::make_unique<detail::ExecutionContext>([this] {
+      for (;;) {
+        if (dma_.active)
+          StepDma();
+        else if ((registers_[0] & 0x60) || regs().stp)
+          Clock(2);
+        else
+          StepProcessor();
+      }
+    });
+  }
+  execution_->Resume();
 }
 
 void Sa1::StepProcessor() {
@@ -113,50 +140,87 @@ void Sa1::StepProcessor() {
 }
 
 void Sa1::ResetProcessor() {
-    power();
-    regs().pc = RegisterWord(0x03);
-    sampledIrq_ = false;
-    nmiServiced_ = false;
-    hardwareVector_ = false;
+  regs().pb = 0;
+  regs().pc = RegisterWord(0x03);
+  regs().db = 0;
+  regs().stp = false;
+  registers_[0x2a] = 0;
 }
 
 void Sa1::InterruptProcessor(Interrupt type) {
-    hardwareVector_ = true;
-    hardwareVectorAddress_ = vectorAddress(type);
-    hardwareVectorValue_ = RegisterWord(type == Interrupt::Nmi ? 0x05 : 0x07);
-    enterInterrupt(type);
-    hardwareVector_ = false;
+  auto &r = regs();
+  r.wai = false;
+  read((uint32_t(r.pb) << 16) | r.pc);
+  idle();
+  if (!r.e)
+    push(r.pb);
+  push(static_cast<uint8_t>(r.pc >> 8));
+  push(static_cast<uint8_t>(r.pc));
+  push(r.e ? (r.p & ~0x10) : r.p);
+  r.p = (r.p | FlagI) & ~FlagD;
+  // The vector is a register value; entry performs no vector-table reads.
+  r.vector = RegisterWord(type == Interrupt::Nmi ? 0x05 : 0x07);
+  r.pb = 0;
+  r.pc = r.vector;
 }
 
-uint8_t Sa1::AccessClocks(uint32_t address) const noexcept {
-    const uint8_t bank = static_cast<uint8_t>(address >> 16);
-    if ((bank >= 0x40 && bank <= (broadcastBoard_ ? 0x7d : 0x4f)) || (bank >= 0x60 && bank <= 0x6f) ||
-        ((address & 0x40e000) == 0x006000)) return 4;
-    return 2;
+bool Sa1::CpuRomConflict() const noexcept {
+  return RomAddress(cpuAddress_);
+}
+
+bool Sa1::CpuBwramConflict() const noexcept {
+  return BwramAddress(cpuAddress_, 0x4f);
+}
+
+bool Sa1::CpuIramConflict() const noexcept {
+  return (cpuAddress_ & 0x40f800) == 0x3000 && !cpuRefreshing_;
+}
+
+void Sa1::ClockAccess(uint32_t address) {
+  Clock(2);
+  if (RomAddress(address)) {
+    if (CpuRomConflict())
+      Clock(2);
+  } else if (BwramAddress(address, broadcastBoard_ ? 0x7d : 0x6f)) {
+    Clock(2);
+    for (unsigned phase = 0; phase < 2; ++phase)
+      if (CpuBwramConflict())
+        Clock(2);
+  } else if (IramAddress(address)) {
+    for (unsigned phase = 0; phase < 2; ++phase)
+      if (CpuIramConflict())
+        Clock(2);
+  }
 }
 
 void Sa1::idle() { Clock(2); }
 
+void Sa1::idleBranch() {
+  if (regs().pc & 1)
+    idleJump();
+}
+
+void Sa1::idleJump() {
+  const auto address = (uint32_t(regs().pb) << 16) | regs().pc;
+  if (RomAddress(address))
+    ClockAccess(address);
+}
+
 uint8_t Sa1::read(uint32_t address) {
     address &= 0xffffff;
-    Clock(AccessClocks(address));
-    uint8_t value;
-    if (hardwareVector_ && (address == hardwareVectorAddress_ || address == hardwareVectorAddress_ + 1u)) {
-        value = static_cast<uint8_t>(hardwareVectorValue_ >> ((address & 1) * 8));
-    } else {
-        value = ReadMemory(address, regs().mdr, Side::Sa1);
-    }
     regs().mar = address;
+    ClockAccess(address);
+    const uint8_t value = ReadMemory(address, regs().mdr, Side::Sa1);
     regs().mdr = value;
     return value;
 }
 
 void Sa1::write(uint32_t address, uint8_t value) {
     address &= 0xffffff;
-    Clock(AccessClocks(address));
-    WriteMemory(address, value, Side::Sa1);
     regs().mar = address;
     regs().mdr = value;
+    ClockAccess(address);
+    WriteMemory(address, value, Side::Sa1);
 }
 
 void Sa1::lastCycle() {
@@ -170,17 +234,15 @@ bool Sa1::interruptPending() const {
 }
 
 void Sa1::Clock(uint32_t masterClocks) {
-    executedClocks_ += masterClocks;
-    AdvanceTimer(masterClocks);
-    if (arithmeticClocks_) {
-        if (masterClocks >= arithmeticClocks_) {
-            arithmeticClocks_ = 0;
-            arithmeticResult_ = arithmeticNext_;
-            arithmeticOverflow_ = arithmeticNextOverflow_;
-        } else {
-            arithmeticClocks_ -= static_cast<uint8_t>(masterClocks);
-        }
-    }
+  while (masterClocks) {
+    const auto clocks = std::min(masterClocks, 2u);
+    executedClocks_ += clocks;
+    // Publish timer and bus effects only when this native step resumes.
+    if (executedClocks_ >= requestedClocks_)
+      execution_->Suspend();
+    AdvanceTimer(clocks);
+    masterClocks -= clocks;
+  }
 }
 
 uint16_t Sa1::RegisterWord(uint8_t offset) const noexcept {
@@ -299,10 +361,13 @@ uint8_t Sa1::ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io) {
     }
     if (side == Side::Sa1 && bank >= 0x60 && bank <= 0x6f)
         return ReadBitmap(address & 0xfffff, openBus);
-    if (bank >= 0x40 && bank <= (broadcastBoard_ ? 0x7d : 0x4f)) {
-        if (broadcastBoard_) address &= 0x1ffff;
-        if (side == Side::Cpu && conversionActive_) return ReadConverted(address & 0x3ffff);
-        return ReadBwram(address & 0x3ffff, openBus);
+    const auto lastLinearBank = broadcastBoard_ ? 0x7d : (side == Side::Sa1 ? 0x5f : 0x4f);
+    if (bank >= 0x40 && bank <= lastLinearBank) {
+      if (broadcastBoard_)
+        address &= 0x1ffff;
+      if (side == Side::Cpu && conversionActive_)
+        return ReadConverted(address & 0x3ffff);
+      return ReadBwram(address & 0x3ffff, openBus);
     }
     uint32_t romOffset;
     if (RomOffset(address, romOffset)) {
@@ -339,8 +404,8 @@ void Sa1::WriteMemory(uint32_t address, uint8_t value, Side side) {
         }
     }
     if (side == Side::Sa1 && bank >= 0x60 && bank <= 0x6f) WriteBitmap(address & 0xfffff, value);
-    else if (bank >= 0x40 && bank <= (broadcastBoard_ ? 0x7d : 0x4f))
-        WriteBwram(address & (broadcastBoard_ ? 0x1ffff : 0x3ffff), value, side);
+    else if (bank >= 0x40 && bank <= (broadcastBoard_ ? 0x7d : (side == Side::Sa1 ? 0x5f : 0x4f)))
+      WriteBwram(address & (broadcastBoard_ ? 0x1ffff : 0x3ffff), value, side);
 }
 
 bool Sa1::WritableRegister(uint16_t address, Side side) noexcept {
@@ -407,13 +472,9 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
         sa1Flags_ &= static_cast<uint8_t>(~(value & 0xf0));
         if (value & 0x10) nmiServiced_ = false;
         break;
-    case 0x10:
-        hClocks_ %= (value & 0x80) ? 2048 : 1364;
-        vCounter_ %= (value & 0x80) ? 512 : videoLines_;
-        timerMatch_ = false;
-        break;
-    case 0x11: hClocks_ = vCounter_ = 0; timerMatch_ = false; break;
-    case 0x12: case 0x13: case 0x14: case 0x15: timerMatch_ = false; break;
+    case 0x11:
+      hClocks_ = vCounter_ = 0;
+      break;
     case 0x30:
         if ((value & 0xb0) != 0xb0) conversionActive_ = false;
         if (!(value & 0x80)) {
@@ -436,12 +497,9 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
         if ((registers_[0x30] & 0xb0) == 0xa0) PushConversionRows();
         break;
     case 0x50:
-        if (value & 2) {
-            arithmeticResult_ = arithmeticNext_ = 0;
-            arithmeticClocks_ = 0;
-            arithmeticOverflow_ = arithmeticNextOverflow_ = false;
-        }
-        break;
+      if (value & 2)
+        arithmeticResult_ = 0;
+      break;
     case 0x54: StartArithmetic(); break;
     case 0x58: AdvanceBits(); break;
     case 0x5b:

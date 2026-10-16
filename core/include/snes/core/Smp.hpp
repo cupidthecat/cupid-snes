@@ -2,7 +2,7 @@
 // core/include/snes/core/Smp.hpp
 // SMP audio processor and timer interface.
 
-// Smp.hpp — SNES Sound Module Processor (Sony S-SMP / CXP1100Q-1)
+// Smp.hpp - SNES Sound Module Processor (Sony S-SMP / CXP1100Q-1)
 //
 // The SMP is the SNES APU wrapper that inherits the SPC700 processor core
 // and provides:
@@ -14,7 +14,7 @@
 // Port communication model (dual-latch architecture):
 //   CPU writes $2140-$2143 → sets apuInput_[0-3] → SMP reads $F4-$F7
 //   SMP writes $F4-$F7     → sets cpuOutput_[0-3] → CPU reads $2140-$2143
-//   Each direction has its own set of latches — no contention.
+//   Each direction has its own set of latches - no contention.
 //
 
 #pragma once
@@ -30,17 +30,17 @@ class Dsp;  // Forward declaration
 
 class Smp : public Spc700 {
 public:
-  // Timer — 4-stage pipeline.
+  // Timer - 4-stage pipeline.
   //
   // Template parameter Frequency: number of SMP clocks per stage0 overflow.
   //   T0, T1: Frequency=128 → ~8 kHz
   //   T2:     Frequency=16  → ~64 kHz
   //
-  // Stage 0: clock accumulator — counts up to Frequency
-  // Stage 1: pulse toggle — XOR'd with 1 each overflow → square wave
-  // Line:    edge-detection latch — falling-edge triggers stage 2
-  // Stage 2: 8-bit divider counter — counts to target, then resets
-  // Stage 3: 4-bit output counter — read-and-clear via $FD-$FF
+  // Stage 0: clock accumulator - counts up to Frequency
+  // Stage 1: pulse toggle - XOR'd with 1 each overflow → square wave
+  // Line:    edge-detection latch - falling-edge triggers stage 2
+  // Stage 2: 8-bit divider counter - counts to target, then resets
+  // Stage 3: 4-bit output counter - read-and-clear via $FD-$FF
   template <unsigned Frequency> struct Timer {
     uint8_t stage0 = 0;  // Clock accumulator
     uint8_t stage1 = 0;  // Pulse toggle (0 or 1)
@@ -65,14 +65,14 @@ public:
     uint8_t Read(uint16_t address) override;
     void    Write(uint16_t address, uint8_t data) override;
 
-    // CPU-side port access — called by MemoryBus for $2140-$2143
+    // CPU-side port access - called by MemoryBus for $2140-$2143
     //
     // portRead:  CPU reads $2140+n → returns what SMP wrote to $F4+n
     // portWrite: CPU writes $2140+n → sets data for SMP to read from $F4+n
     uint8_t PortRead(uint8_t port) const;
     void    PortWrite(uint8_t port, uint8_t data);
 
-    // Timer stepping — call after each SMP bus cycle to advance timers
+    // Timer stepping - call after each SMP bus cycle to advance timers
     // 'clocks' is the number of ideal timer ticks for this bus operation.
     // Default wait states: two timer ticks per complete-cycle clock.
     void StepTimers(unsigned clocks);
@@ -85,7 +85,7 @@ public:
     static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
     static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
 
-    // Batch execution — run SMP through exactly targetCycles.
+    // Batch execution - run SMP through exactly targetCycles.
     // Instructions may pause within stretched bus cycles at the deadline; Step()
     // remains available for callers that intentionally want a full instruction.
     // DSP samples and timers are ticked automatically during bus operations.
@@ -110,7 +110,7 @@ public:
 
     // I/O state (for testing / inspection)
     struct IO {
-        // $00F0 — TEST register (write-only, requires P=0)
+        // $00F0 - TEST register (write-only, requires P=0)
         bool    timersDisable      = false;
         bool    ramWritable        = true;
         bool    ramDisable         = false;
@@ -118,13 +118,13 @@ public:
         uint8_t externalWaitStates = 0;
         uint8_t internalWaitStates = 0;
 
-        // $00F1 — CONTROL
+        // $00F1 - CONTROL
         bool    iplRomEnable       = true;
 
-        // $00F2 — DSPADDR
+        // $00F2 - DSPADDR
         uint8_t dspAddr            = 0;
 
-        // $00F8-$00F9 — auxiliary I/O (RAM-backed, no special behavior)
+        // $00F8-$00F9 - auxiliary I/O (RAM-backed, no special behavior)
         uint8_t aux4               = 0;
         uint8_t aux5               = 0;
     };
@@ -179,7 +179,7 @@ private:
     // I/O register state
     IO io_{};
 
-    // Port latches — dual-latch architecture
+    // Port latches - dual-latch architecture
     // apuInput_[0-3]:  CPU→SMP direction (CPU writes, SMP reads $F4-$F7)
     // cpuOutput_[0-3]: SMP→CPU direction (SMP writes $F4-$F7, CPU reads)
     std::array<uint8_t, 4> apuInput_{};   // written by CPU portWrite()

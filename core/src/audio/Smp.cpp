@@ -2,7 +2,7 @@
 // core/src/audio/Smp.cpp
 // SMP memory, timers, ports, and synchronization with the DSP.
 
-// Smp.cpp — SNES Sound Module Processor Implementation
+// Smp.cpp - SNES Sound Module Processor Implementation
 //
 // Provides the SPC700's bus interface: 64KB RAM, IPL ROM overlay,
 // I/O registers ($00F0-$00FF), and bidirectional CPU communication ports.
@@ -27,7 +27,7 @@ bool SmpPortTraceEnabled() {
 }
 }
 
-// IPL boot ROM — 64 bytes loaded at $FFC0-$FFFF when enabled
+// IPL boot ROM - 64 bytes loaded at $FFC0-$FFFF when enabled
 // This is the standard SPC700 boot ROM that handles the initial CPU↔APU
 // handshake and data transfer protocol.
 static constexpr uint8_t kIplRom[64] = {
@@ -114,7 +114,7 @@ void Smp::Power() {
     hardwareClocks_ = 0;
 }
 
-// Bus interface — Spc700 overrides
+// Bus interface - Spc700 overrides
 
 void Smp::Idle() {
     BusWait wait;
@@ -160,7 +160,7 @@ void Smp::tickDsp() {
     if (dsp_) dsp_->Tick();
 }
 
-// Batch execution — stop exactly at the requested complete-cycle deadline.
+// Batch execution - stop exactly at the requested complete-cycle deadline.
 
 void Smp::RunUntil(uint64_t targetCycles) {
   RunUntilHardwareClock(targetCycles * 2);
@@ -227,7 +227,7 @@ bool Smp::ClockBusCycle(const PendingCycle& cycle, BusWait& wait) {
     return true;
 }
 
-// Timer stepping — advance all three timers by the given clock ticks
+// Timer stepping - advance all three timers by the given clock ticks
 
 void Smp::StepTimers(unsigned clocks) {
     timer0_.Step(clocks, io_.timersEnable, io_.timersDisable);
@@ -271,19 +271,19 @@ void Smp::writeRam(uint16_t address, uint8_t data) {
 
 uint8_t Smp::readIO(uint16_t address) {
     switch (address) {
-    case 0x00F0:  // TEST — write-only
+    case 0x00F0: // TEST - write-only
         return 0x00;
 
-    case 0x00F1:  // CONTROL — write-only
+    case 0x00F1: // CONTROL - write-only
         return 0x00;
 
     case 0x00F2:  // DSPADDR
         return io_.dspAddr;
 
-    case 0x00F3:  // DSPDATA — read DSP register at DSPADDR
+    case 0x00F3: // DSPDATA - read DSP register at DSPADDR
         return dsp_ ? dsp_->Read(io_.dspAddr & 0x7F) : 0x00;
 
-    case 0x00F4:  // CPUIO0 — reads what CPU wrote
+    case 0x00F4: // CPUIO0 - reads what CPU wrote
         return apuInput_[0];
 
     case 0x00F5:  // CPUIO1
@@ -301,24 +301,24 @@ uint8_t Smp::readIO(uint16_t address) {
     case 0x00F9:  // AUXIO5
         return io_.aux5;
 
-    case 0x00FA:  // T0TARGET — write-only
-    case 0x00FB:  // T1TARGET — write-only
-    case 0x00FC:  // T2TARGET — write-only
+    case 0x00FA: // T0TARGET - write-only
+    case 0x00FB: // T1TARGET - write-only
+    case 0x00FC: // T2TARGET - write-only
         return 0x00;
 
-    case 0x00FD: {  // T0OUT — read-and-clear (4-bit)
+    case 0x00FD: { // T0OUT - read-and-clear (4-bit)
         uint8_t val = timer0_.stage3;
         timer0_.stage3 = 0;
         return val;
     }
 
-    case 0x00FE: {  // T1OUT — read-and-clear (4-bit)
+    case 0x00FE: { // T1OUT - read-and-clear (4-bit)
         uint8_t val = timer1_.stage3;
         timer1_.stage3 = 0;
         return val;
     }
 
-    case 0x00FF: {  // T2OUT — read-and-clear (4-bit)
+    case 0x00FF: { // T2OUT - read-and-clear (4-bit)
         uint8_t val = timer2_.stage3;
         timer2_.stage3 = 0;
         return val;
@@ -393,12 +393,12 @@ void Smp::writeIO(uint16_t address, uint8_t data) {
         io_.dspAddr = data;
         break;
 
-    case 0x00F3:  // DSPDATA — write DSP register at DSPADDR
+    case 0x00F3:                         // DSPDATA - write DSP register at DSPADDR
         if (dsp_ && !(io_.dspAddr & 0x80))  // $80-$FF are read-only mirrors
             dsp_->Write(io_.dspAddr & 0x7F, data);
         break;
 
-    case 0x00F4:  // CPUIO0 — SMP writes output for CPU to read
+    case 0x00F4: // CPUIO0 - SMP writes output for CPU to read
     {
         static int port0WriteCount = 0;
         if (SmpPortTraceEnabled() && data != cpuOutput_[0] && ++port0WriteCount <= 200) {
@@ -442,9 +442,9 @@ void Smp::writeIO(uint16_t address, uint8_t data) {
         timer2_.target = data;
         break;
 
-    case 0x00FD:  // T0OUT — read-only
-    case 0x00FE:  // T1OUT — read-only
-    case 0x00FF:  // T2OUT — read-only
+    case 0x00FD: // T0OUT - read-only
+    case 0x00FE: // T1OUT - read-only
+    case 0x00FF: // T2OUT - read-only
         break;
     }
 }

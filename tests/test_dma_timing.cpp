@@ -2,6 +2,7 @@
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -53,6 +54,39 @@ void ClockedTransfers() {
     Check(ch.sourceBank == 0x7e && ch.sourceAddress == 0x100, "DMA wraps within the source bank");
     Check(emu->GetCpu()->regs().pc == cpuPc, "DMA stalls CPU execution");
     Check(emu->GetSmp().CycleCount() > 0, "APU advances during DMA");
+}
+
+void CoprocessorHandoff() {
+  for (unsigned cycle : {6u, 8u, 12u})
+    for (unsigned phase : {0u, 2u, 4u, 6u})
+      for (bool reverse : {false, true}) {
+        auto bus = std::make_unique<MemoryBus>();
+        bus->MapWram();
+        DmaController dma;
+        dma.SetBus(bus.get());
+        uint64_t elapsed = phase;
+        uint32_t address = 0xc00000;
+        uint8_t data = 0;
+        std::vector<std::array<uint64_t, 2>> observed;
+        dma.SetCpuCycleClocks(cycle);
+        dma.SetCpuBusLatches(address, data);
+        dma.SetClockQuery([&] { return elapsed; });
+        dma.SetClockCallback([&](uint32_t clocks) { elapsed += clocks; });
+        dma.SetCoprocessorSyncCallback([&] { observed.push_back({elapsed, address}); });
+        auto &channel = dma.Channel(0);
+        channel.writeControl(reverse ? 0x80 : 0);
+        channel.sourceBank = 0x7e;
+        channel.sourceAddress = 0x100;
+        channel.targetAddress = 0x10;
+        channel.transferSize = 1;
+        dma.EnableDma(1);
+        dma.RunDma();
+        const auto resumedAt = 32 + cycle - (32 - phase) % cycle;
+        const std::vector<std::array<uint64_t, 2>> expected{
+            {8, 0xc00000}, {28, 0x7e0100}, {32, 0x7e0100}, {resumedAt, 0x7e0100}};
+        Check(observed == expected,
+              "DMA synchronizes cartridge work at alignment, both bus phases and CPU handoff");
+      }
 }
 
 void PaletteClockUnits() {
@@ -132,19 +166,28 @@ void LongDmaAudio() {
         channel.targetAddress = 0x10; channel.transferSize = 0; // 65536 bytes.
     }
     dma.EnableDma(0xff);
-    emu->StepFrame();
+    uint64_t delivered = 0;
+    bool audible = false;
+    for (unsigned frame = 0; frame < 15; ++frame) {
+      emu->StepFrame();
+      const auto generated = (emu->GetSmp().CycleCount() + 4) / 32;
+      Check(output.calls == frame + 1 && output.last.sampleRate == AudioTiming::SampleRate &&
+                output.last.interleavedStereo.size() == (generated - delivered) * 2 &&
+                generated - delivered < 700,
+            "A suspended DMA delivers every DSP sample in its own field");
+      audible |=
+          std::any_of(output.last.interleavedStereo.begin(), output.last.interleavedStereo.end(),
+                      [](float sample) { return sample != 0.0f; });
+      delivered = generated;
+    }
     const auto before = emu->GetSmp().CycleCount();
     // Output occurs at phase 27, followed by one output every 32 SMP clocks.
     const auto generated = (before + 4) / 32;
-    Check(emu->GetTiming().FrameCount() > 1 && generated > 2048, "A maximal DMA crosses fields and exceeds one audio buffer");
-    Check(output.calls == 1 && output.last.sampleRate == AudioTiming::SampleRate &&
-              output.last.interleavedStereo.size() == generated * 2,
-          "Every DSP sample survives a DMA operation longer than the frame buffer");
-    Check(std::any_of(output.last.interleavedStereo.begin() + 4096, output.last.interleavedStereo.end(),
-                     [](float sample) { return sample != 0.0f; }), "Overflow blocks retain generated audio rather than padding silence");
+    Check(!dma.AnyDmaEnabled() && generated > 2048 && audible,
+          "Long DMA completes with audible samples preserved across its fields");
     emu->StepFrame();
     const auto next = (emu->GetSmp().CycleCount() + 4) / 32 - generated;
-    Check(output.calls == 2 && output.last.interleavedStereo.size() == next * 2 && next < 700,
+    Check(output.calls == 16 && output.last.interleavedStereo.size() == next * 2 && next < 700,
           "The next frame contains only newly generated samples, with no stale overflow");
 }
 
@@ -211,23 +254,41 @@ void FieldTimingAndPresentation() {
         emu->AttachVideoOutput(&video);
         for (unsigned frame = 1; frame <= 4; ++frame) {
             emu->StepFrame();
-            Check(timing.FrameCount() == frame, "StepFrame stops at the next field boundary");
-            Check(timing.VCounter() == 0 && timing.HCounter() < 8, "No partial scanline accumulates across frames");
-            Check(video.frame.width == 512 && video.frame.height == 448 && video.frame.pixels.size() == 512 * 448,
-                  "Presentation retains hires pixels and interlaced fields");
-            Check(timing.Interlace(), "SETINI reaches video timing");
-            const uint64_t pairs = frame / 2;
+            Check(timing.FrameCount() == frame - 1, "StepFrame stops at each display event");
+            Check(timing.VCounter() == 225 && timing.HCounter() == 0,
+                  "The display deadline is exact inside a CPU cycle");
+            const uint32_t height = frame == 1 ? 224 : 448;
+            Check(video.frame.width == 512 && video.frame.height == height &&
+                      video.frame.pixels.size() == 512 * height,
+                  "Presentation retains hires pixels and latches interlace at the frame edge");
+            Check(timing.Interlace() == (frame > 1),
+                  "The timing counter samples the frame's latched display mode");
+            const uint64_t completed = frame - 1;
             const uint64_t base = pal ? 312 : 262;
-            const uint64_t expected = pairs * ((base * 2 + 1) * 1364 + (pal ? 4 : 0)) +
-                (frame % 2 ? (base + 1) * 1364 : 0);
-            Check(timing.MasterClocksElapsed() >= expected && timing.MasterClocksElapsed() - expected < 8,
+            const uint64_t following = completed ? completed - 1 : 0;
+            const uint64_t expected = (completed ? base * 1364 : 0) +
+                                      (following / 2) * ((base * 2 + 1) * 1364 + (pal ? 4 : 0)) +
+                                      (following % 2 ? base * 1364 + (pal ? 4 : 0) : 0) +
+                                      225 * 1364;
+            Check(timing.MasterClocksElapsed() == expected,
                   "Interlaced long and short fields have correct duration");
         }
     }
 }
 }
 int main() {
-    try { ClockedTransfers(); PaletteClockUnits(); HdmaInterruptsDma(); LongDmaAudio(); DividerAlignment(); TimingBatchInvariance(); FieldTimingAndPresentation(); }
-    catch (const std::exception& e) { std::fprintf(stderr, "%s\n", e.what()); return 1; }
-    std::puts("DMA timing, HDMA interruption, and field presentation checks passed");
+  try {
+    CoprocessorHandoff();
+    ClockedTransfers();
+    PaletteClockUnits();
+    HdmaInterruptsDma();
+    LongDmaAudio();
+    DividerAlignment();
+    TimingBatchInvariance();
+    FieldTimingAndPresentation();
+  } catch (const std::exception &e) {
+    std::fprintf(stderr, "%s\n", e.what());
+    return 1;
+  }
+  std::puts("DMA timing, HDMA interruption, and field presentation checks passed");
 }

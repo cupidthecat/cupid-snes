@@ -2,10 +2,10 @@
 // core/src/io/CpuIoRegisters.cpp
 // CPU I/O registers, controller ports, interrupts, and DMA controls.
 
-// CpuIoRegisters.cpp — SNES CPU I/O register implementation
+// CpuIoRegisters.cpp - SNES CPU I/O register implementation
 //
 // Handles reads/writes to $4016-$4017 and $4200-$421F.
-// Reference: bsnes sfc/cpu/io.cpp (readCPU / writeCPU)
+// Register reads and writes retain their hardware side effects.
 
 #include "snes/core/CpuIoRegisters.hpp"
 
@@ -17,7 +17,7 @@ CpuIoRegisters::CpuIoRegisters() {
     Reset();
 }
 
-// Reset — power-on state matching bsnes cpu.cpp power()
+// Reset - CPU register power-on state
 
 void CpuIoRegisters::Reset() {
     // $4200 NMITIMEN
@@ -38,7 +38,7 @@ void CpuIoRegisters::Reset() {
     wrdiva_ = 0xFFFF;
     wrdivb_ = 0xFF;
 
-    // $4207-$420A  (bsnes stores htime as ((val+1)<<2), we store raw 9-bit)
+    // $4207-$420A - raw nine-bit timer targets
     htime_ = 0x1FF;
     vtime_ = 0x1FF;
 
@@ -66,7 +66,7 @@ void CpuIoRegisters::Reset() {
     joypadLatch_ = false;
 }
 
-// Read — $4016-$4017, $4200-$421F
+// Read - $4016-$4017, $4200-$421F
 //
 // The openBus parameter is the shared CPU memory data latch. Registers that
 // only drive some bits preserve the remaining open-bus bits.
@@ -77,7 +77,7 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
 
     switch (addr & 0xFFFF) {
 
-    // $4016 JOYSER0 — serial joypad port 0
+    // $4016 JOYSER0 - serial joypad port 0
     case 0x4016:
         data &= 0xFC;   // bits 7-2 = open bus
         if (onJoypadData_) {
@@ -85,7 +85,7 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         }
         return data;
 
-    // $4017 JOYSER1 — serial joypad port 1
+    // $4017 JOYSER1 - serial joypad port 1
     case 0x4017:
         data &= 0xE0;   // bits 7-5 = open bus
         data |= 0x1C;   // bits 4-2 = pulled high (GND pins)
@@ -94,7 +94,7 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         }
         return data;
 
-    // $4210 RDNMI — NMI flag + CPU version (read-and-clear NMI)
+    // $4210 RDNMI - NMI flag + CPU version (read-and-clear NMI)
     //   bit 7: NMI flag
     //   bits 6-4: open bus
     //   bits 3-0: CPU version (typically 2)
@@ -112,7 +112,7 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         return data;
     }
 
-    // $4211 TIMEUP — IRQ flag (read-and-clear)
+    // $4211 TIMEUP - IRQ flag (read-and-clear)
     //   bit 7: IRQ flag
     //   bits 6-0: open bus
     case 0x4211: {
@@ -128,7 +128,7 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         return data;
     }
 
-    // $4212 HVBJOY — H/V blank + auto-joypad busy status
+    // $4212 HVBJOY - H/V blank + auto-joypad busy status
     //   bit 7: VBlank flag
     //   bit 6: HBlank flag
     //   bits 5-1: open bus
@@ -148,19 +148,19 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         return data;
     }
 
-    // $4213 RDIO — WRIO outputs combined with external input levels.
+    // $4213 RDIO - WRIO outputs combined with external input levels.
     case 0x4213:
         return pio_ & (onPioInput_ ? onPioInput_() : 0xff);
 
-    // $4214-$4215 RDDIVL/RDDIVH — division result
+    // $4214-$4215 RDDIVL/RDDIVH - division result
     case 0x4214: return static_cast<uint8_t>(rddiv_ >> 0);
     case 0x4215: return static_cast<uint8_t>(rddiv_ >> 8);
 
-    // $4216-$4217 RDMPYL/RDMPYH — multiply result (or division remainder)
+    // $4216-$4217 RDMPYL/RDMPYH - multiply result (or division remainder)
     case 0x4216: return static_cast<uint8_t>(rdmpy_ >> 0);
     case 0x4217: return static_cast<uint8_t>(rdmpy_ >> 8);
 
-    // $4218-$421F — Auto-joypad read results
+    // $4218-$421F - Auto-joypad read results
     case 0x4218: return static_cast<uint8_t>(joy1_ >> 0);
     case 0x4219: return static_cast<uint8_t>(joy1_ >> 8);
     case 0x421A: return static_cast<uint8_t>(joy2_ >> 0);
@@ -174,13 +174,13 @@ uint8_t CpuIoRegisters::Read(uint32_t addr, uint8_t openBus) {
         break;
     }
 
-    // Unrecognized register — return open bus
+    // Unrecognized register - return open bus
     return data;
 }
 
-// Write — $4016, $4200-$421F
+// Write - $4016, $4200-$421F
 //
-// Following bsnes writeCPU().
+// Writes update the addressed register and its connected hardware.
 // $4017 writes are ignored (hardware behavior).
 
 void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
@@ -188,7 +188,7 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
     alu_.busyOnWrite = false;
     switch (addr & 0xFFFF) {
 
-    // $4016 JOYSER0 — joypad strobe
+    // $4016 JOYSER0 - joypad strobe
     //   bit 0 controls the latch line for both controller ports.
     //   $4017 writes are ignored.
     case 0x4016:
@@ -198,7 +198,7 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
         }
         return;
 
-    // $4200 NMITIMEN — NMI/IRQ enable, auto-joypad enable
+    // $4200 NMITIMEN - NMI/IRQ enable, auto-joypad enable
     //   bit 7: NMI enable
     //   bit 5: V-IRQ enable
     //   bit 4: H-IRQ enable
@@ -221,7 +221,7 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
         return;
     }
 
-    // $4201 WRIO — programmable I/O port
+    // $4201 WRIO - programmable I/O port
     //   When bit 7 transitions from 1→0, latch PPU counters.
     case 0x4201:
         if ((pio_ & 0x80) && !(data & 0x80)) {
@@ -231,12 +231,12 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
         if (onPio_) onPio_(pio_);
         return;
 
-    // $4202 WRMPYA — multiplicand
+    // $4202 WRMPYA - multiplicand
     case 0x4202:
         wrmpya_ = data;
         return;
 
-    // $4203 WRMPYB — multiplier (triggers multiplication)
+    // $4203 WRMPYB - multiplier (triggers multiplication)
     //
     // The result registers expose the shift/add operation over eight cycles.
     // A second trigger clears the accumulator but cannot restart a busy ALU.
@@ -251,17 +251,17 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
         alu_.shift = wrmpyb_;
         return;
 
-    // $4204 WRDIVL — dividend low
+    // $4204 WRDIVL - dividend low
     case 0x4204:
         wrdiva_ = (wrdiva_ & 0xFF00) | (static_cast<uint16_t>(data) << 0);
         return;
 
-    // $4205 WRDIVH — dividend high
+    // $4205 WRDIVH - dividend high
     case 0x4205:
         wrdiva_ = (wrdiva_ & 0x00FF) | (static_cast<uint16_t>(data) << 8);
         return;
 
-    // $4206 WRDIVB — divisor (triggers division)
+    // $4206 WRDIVB - divisor (triggers division)
     //
     // Division exposes its quotient and remainder over sixteen cycles.
     case 0x4206:
@@ -274,43 +274,43 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
         alu_.shift = static_cast<uint32_t>(wrdivb_) << 16;
         return;
 
-    // $4207 HTIMEL — H-counter IRQ target (low 8 bits of 9-bit value)
+    // $4207 HTIMEL - H-counter IRQ target (low 8 bits of 9-bit value)
     case 0x4207:
         htime_ = (htime_ & 0x100) | data;
         if (onHVTimeChange_) onHVTimeChange_(htime_, vtime_);
         return;
 
-    // $4208 HTIMEH — H-counter IRQ target (bit 8)
+    // $4208 HTIMEH - H-counter IRQ target (bit 8)
     case 0x4208:
         htime_ = (htime_ & 0x0FF) | (static_cast<uint16_t>(data & 1) << 8);
         if (onHVTimeChange_) onHVTimeChange_(htime_, vtime_);
         return;
 
-    // $4209 VTIMEL — V-counter IRQ target (low 8 bits)
+    // $4209 VTIMEL - V-counter IRQ target (low 8 bits)
     case 0x4209:
         vtime_ = (vtime_ & 0x100) | data;
         if (onHVTimeChange_) onHVTimeChange_(htime_, vtime_);
         return;
 
-    // $420A VTIMEH — V-counter IRQ target (bit 8)
+    // $420A VTIMEH - V-counter IRQ target (bit 8)
     case 0x420A:
         vtime_ = (vtime_ & 0x0FF) | (static_cast<uint16_t>(data & 1) << 8);
         if (onHVTimeChange_) onHVTimeChange_(htime_, vtime_);
         return;
 
-    // $420B MDMAEN — General DMA enable
+    // $420B MDMAEN - General DMA enable
     //   Each bit enables one of 8 DMA channels.
     case 0x420B:
         if (onDmaEnable_) onDmaEnable_(data);
         return;
 
-    // $420C HDMAEN — HDMA enable
+    // $420C HDMAEN - HDMA enable
     //   Each bit enables one of 8 HDMA channels.
     case 0x420C:
         if (onHdmaEnable_) onHdmaEnable_(data);
         return;
 
-    // $420D MEMSEL — ROM access speed
+    // $420D MEMSEL - ROM access speed
     //   bit 0: 0 = 2.68 MHz (slow), 1 = 3.58 MHz (fast) for $80-FF:8000-FFFF
     case 0x420D:
         fastRom_ = (data & 1) != 0;
@@ -324,7 +324,7 @@ void CpuIoRegisters::Write(uint32_t addr, uint8_t data) {
     // Writes to $4017, $4208-$420F (unused), $4210-$421F (read-only) are ignored
 }
 
-// AluStep — advance multiply/divide by one cycle
+// AluStep - advance multiply/divide by one cycle
 //
 // Reads and idle cycles clock the ALU after the access; writes clock it before
 // the access. Refresh contributes five more edges while ordinary DMA pauses it.

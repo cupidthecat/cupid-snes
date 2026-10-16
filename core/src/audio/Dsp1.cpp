@@ -2,9 +2,9 @@
 // core/src/audio/Dsp1.cpp
 // DSP-1 command processing and geometry operations.
 
-// Dsp1.cpp — DSP-1 (uPD77C25) coprocessor HLE implementation
+// Dsp1.cpp - DSP-1 (uPD77C25) coprocessor HLE implementation
 //
-// Ported from bsnes dsp1emu.cpp.
+// Command processing uses the DSP-1 fixed-point math model.
 // Original research by Overload, The Dumper, Neviksti, Andreas Naive.
 
 #include "snes/core/Dsp1.hpp"

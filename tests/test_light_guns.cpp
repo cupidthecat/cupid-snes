@@ -173,6 +173,7 @@ void AutomaticPolling() {
     auto& bus = emu->GetBus();
     bus.Write(0x4200, 1);
     emu->StepFrame();
+    emu->StepFrame(); // Automatic polling completes after the first display event.
     Check(bus.Read(0x421a) == 0xff && bus.Read(0x421b) == 0x80, "Automatic polling reads Scope's eight bits then ones");
     Check((bus.Read(0x4017) & 1) == 1, "Manual reader continues after automatic clocks");
 }

@@ -3,7 +3,7 @@
 // SNES CPU wrapper interface.
 
 #pragma once
-// SnesCpu.hpp — SNES-specific CPU wrapper
+// SnesCpu.hpp - SNES-specific CPU wrapper
 //
 // Inherits the pure Processor65816 core and implements:
 //   - Virtual bus: read/write/idle with SNES memory-map timing
@@ -23,7 +23,7 @@
 
 namespace snes::core {
 
-// SnesCpu — SNES 65816 CPU
+// SnesCpu - SNES 65816 CPU
 class SnesCpu : public Processor65816 {
 public:
     explicit SnesCpu(ICpuBus& bus);
@@ -56,6 +56,11 @@ public:
     void SetClockCallback(std::function<void(uint32_t)> callback) { onClock_ = std::move(callback); }
     void SetBeforeCycleCallback(std::function<void(uint32_t)> callback) {
       beforeCycle_ = std::move(callback);
+    }
+    // Cartridge clocks synchronize before reads and writes. Idle cycles and
+    // the trailing half of a read retain their clock debt until the next edge.
+    void SetCoprocessorSyncCallback(std::function<void()> callback) {
+      onCoprocessorSync_ = std::move(callback);
     }
 
     // Release the previous access's interrupt lock after arbitration and the
@@ -99,35 +104,42 @@ public:
     bool interruptPending() const override;
 
 private:
-    // Clock accounting — adds master clocks
-    void addClocks(uint32_t clocks);
+  friend class Emulator;
+  // A debugger step finishes the live instruction retained at a display event.
+  bool stepSuspended_ = false;
+  std::function<uint32_t()> resumeStep_;
+  std::function<void()> discardStep_;
 
-    // NMI / IRQ state
-    void pollInterrupts();
+  // Clock accounting - adds master clocks
+  void addClocks(uint32_t clocks);
 
-    ICpuBus& bus_;
-    uint64_t cycles_ = 0;
-    uint32_t instructionClocks_ = 0;  // Clocks for current instruction
+  // NMI / IRQ state
+  void pollInterrupts();
 
-    // NMI edge detection
-    bool nmiLine_      = false;  // Current NMI pin state
-    bool nmiEdge_      = false;  // Pending NMI edge (set on low→high transition)
-    bool nmiPending_   = false;  // NMI will be serviced after current instruction
+  ICpuBus &bus_;
+  uint64_t cycles_ = 0;
+  uint32_t instructionClocks_ = 0; // Clocks for current instruction
 
-    // IRQ level detection
-    bool irqLine_      = false;  // Current IRQ pin state (active = true)
-    bool irqPending_   = false;  // IRQ will be serviced after current instruction
-    bool resetPending_ = false;
+  // NMI edge detection
+  bool nmiLine_ = false;    // Current NMI pin state
+  bool nmiEdge_ = false;    // Pending NMI edge (set on low→high transition)
+  bool nmiPending_ = false; // NMI will be serviced after current instruction
 
-    // DRAM refresh state: 0=idle, 1=bus-halt (6 clocks), 2=interleave (2 clocks)
-    uint8_t dramRefreshState_ = 0;
+  // IRQ level detection
+  bool irqLine_ = false;    // Current IRQ pin state (active = true)
+  bool irqPending_ = false; // IRQ will be serviced after current instruction
+  bool resetPending_ = false;
 
-    // ALU step callback for CPU cycles and the five refresh sub-steps.
-    AluStepCallback onAluStep_;
-    std::function<void(uint32_t)> onClock_;
-    std::function<void(uint32_t)> beforeCycle_;
-    std::function<void()> onBusPhase_;
-    std::function<bool()> onInterruptPoll_;
+  // DRAM refresh state: 0=idle, 1=bus-halt (6 clocks), 2=interleave (2 clocks)
+  uint8_t dramRefreshState_ = 0;
+
+  // ALU step callback for CPU cycles and the five refresh sub-steps.
+  AluStepCallback onAluStep_;
+  std::function<void(uint32_t)> onClock_;
+  std::function<void(uint32_t)> beforeCycle_;
+  std::function<void()> onCoprocessorSync_;
+  std::function<void()> onBusPhase_;
+  std::function<bool()> onInterruptPoll_;
 };
 
 } // namespace snes::core

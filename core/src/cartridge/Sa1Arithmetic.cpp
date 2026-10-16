@@ -5,37 +5,25 @@
 namespace snes::core {
 
 void Sa1::AdvanceTimer(uint32_t masterClocks) {
-    const uint8_t control = registers_[0x10];
-    const uint32_t width = (control & 0x80) ? 512 : 341;
-    const uint32_t height = (control & 0x80) ? 512 : videoLines_;
-    const uint32_t hTarget = RegisterWord(0x12) & 0x1ff;
-    const uint32_t vTarget = RegisterWord(0x14) & 0x1ff;
-    const uint32_t oldDot = hClocks_ / 4;
-    const uint32_t position = vCounter_ * width + oldDot;
-    const uint64_t fractional = uint64_t(hClocks_ & 3) + masterClocks;
-    const uint64_t dots = fractional / 4;
-    const auto matches = [&](uint32_t h, uint32_t v) {
-        return (control & 3) && (!(control & 1) || h == hTarget) &&
-               (!(control & 2) || v == vTarget);
-    };
-
-    // Find an entry into the comparator's matching interval, even when one
-    // scheduler call crosses several lines or frames. Acknowledging a V-only
-    // interrupt in the matching line must not immediately reassert it.
-    if (masterClocks && !timerMatch_ && matches(oldDot, vCounter_)) sa1Flags_ |= 0x40;
-    if ((control & 3) && (!(control & 1) || hTarget < width) &&
-        (!(control & 2) || vTarget < height)) {
-        const uint32_t period = (control & 2) ? width * height : width;
-        const uint32_t target = ((control & 2) ? vTarget * width : 0) +
-                                ((control & 1) ? hTarget : 0);
-        uint32_t distance = (target + period - (position % period)) % period;
-        if (!distance) distance = period;
-        if (dots >= distance) sa1Flags_ |= 0x40;
-    }
-    const uint32_t next = static_cast<uint32_t>((position + dots) % (width * height));
-    vCounter_ = static_cast<uint16_t>(next / width);
-    hClocks_ = static_cast<uint16_t>((next % width) * 4 + (fractional & 3));
-    timerMatch_ = matches(hClocks_ / 4, vCounter_);
+  const auto control = registers_[0x10];
+  hClocks_ += static_cast<uint16_t>(masterClocks);
+  if (control & 0x80) {
+    vCounter_ = static_cast<uint16_t>((vCounter_ + (hClocks_ >> 11)) & 0x1ff);
+    hClocks_ &= 0x7ff;
+  } else if (hClocks_ >= 1364) {
+    hClocks_ = 0;
+    if (++vCounter_ >= videoLines_)
+      vCounter_ = 0;
+  }
+  if (!(control & 3))
+    return;
+  const bool horizontal = hClocks_ == uint32_t(RegisterWord(0x12)) * 4;
+  const bool vertical = vCounter_ == RegisterWord(0x14);
+  const bool match = (control & 3) == 1   ? horizontal
+                     : (control & 3) == 2 ? vertical && !hClocks_
+                                          : (control & 3) == 3 && horizontal && vertical;
+  if (match)
+    sa1Flags_ |= 0x40;
 }
 
 void Sa1::StartArithmetic() {
@@ -44,31 +32,27 @@ void Sa1::StartArithmetic() {
     const int64_t a = bitsA < 0x8000 ? int64_t(bitsA) : int64_t(bitsA) - 0x10000;
     const int64_t b = bitsB < 0x8000 ? int64_t(bitsB) : int64_t(bitsB) - 0x10000;
     const uint8_t mode = registers_[0x50] & 3;
-    arithmeticNextOverflow_ = false;
-    arithmeticClocks_ = (mode & 2) ? 12 : 10;
-
     if (mode & 2) {
-        const int64_t accumulator = (arithmeticResult_ & (uint64_t{1} << 39))
-            ? int64_t(arithmeticResult_) - (int64_t{1} << 40) : int64_t(arithmeticResult_);
-        const int64_t result = accumulator + a * b;
-        arithmeticNextOverflow_ = result < -(int64_t{1} << 39) || result >= (int64_t{1} << 39);
-        arithmeticNext_ = static_cast<uint64_t>(result) & AccumulatorMask;
+      const uint64_t result = arithmeticResult_ + static_cast<uint64_t>(a * b);
+      arithmeticOverflow_ = result > AccumulatorMask;
+      arithmeticResult_ = result & AccumulatorMask;
     } else if (mode == 1) {
-        arithmeticNext_ = 0;
-        if (bitsB) {
-            const int64_t quotient = a / bitsB;
-            int64_t remainder = a % bitsB;
-            if (remainder < 0) remainder = -remainder;
-            arithmeticNext_ = uint16_t(quotient) | (uint64_t(remainder) << 16);
-        } else {
-            const uint16_t quotient = a < 0 ? 1 : 0xffff;
-            const uint16_t remainder = static_cast<uint16_t>(a < 0 ? -a : a);
-            arithmeticNext_ = quotient | (uint64_t(remainder) << 16);
+      arithmeticResult_ = 0;
+      if (bitsB) {
+        int64_t quotient = a / bitsB;
+        int64_t remainder = a % bitsB;
+        if (remainder < 0) {
+          --quotient;
+          remainder += bitsB;
         }
-        if (arithmeticNext_ & 0x80000000) arithmeticNext_ |= uint64_t{0xff} << 32;
+        const uint32_t packed = uint16_t(quotient) | (uint32_t(remainder) << 16);
+        arithmeticResult_ = packed;
+        if (packed & 0x80000000)
+          arithmeticResult_ |= uint64_t{0xff} << 32;
+      }
         registers_[0x51] = registers_[0x52] = 0;
     } else {
-        arithmeticNext_ = static_cast<uint64_t>(a * b) & AccumulatorMask;
+      arithmeticResult_ = static_cast<uint32_t>(a * b);
     }
     registers_[0x53] = registers_[0x54] = 0;
 }

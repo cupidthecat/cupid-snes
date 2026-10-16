@@ -3,7 +3,7 @@
 // Automatic controller polling interface.
 
 #pragma once
-// AutoJoypad.hpp — SNES auto-joypad polling state machine
+// AutoJoypad.hpp - SNES auto-joypad polling state machine
 //
 // Implements the automatic controller polling that occurs at VBlank start
 // when enabled via NMITIMEN ($4200) bit 0.
