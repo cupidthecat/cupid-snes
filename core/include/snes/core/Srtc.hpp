@@ -16,6 +16,7 @@ public:
     using Clock = std::function<int64_t()>;
     static constexpr size_t SaveSize = 24;
     explicit Srtc(Clock clock = {});
+    void Reset();
     uint8_t Read();
     void Write(uint8_t value);
     std::array<uint8_t, SaveSize> Save();

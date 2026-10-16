@@ -364,6 +364,10 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     } else {
         cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0x00);
     }
+    if (cart.header_.chip == EnhancementChip::Obc1) {
+      cart.sram_.assign(8192, 0xff);
+      cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
+    }
     if (cart.header_.mapping == MappingType::DecompressedSdd1) cart.sram_.clear();
     if (cart.header_.chip == EnhancementChip::Cx4) cart.cx4_ = std::make_unique<Cx4>(cart.rom_);
     if (cart.header_.chip == EnhancementChip::Dsp3) {
@@ -446,6 +450,35 @@ uint32_t Cartridge::RomCrc32() const noexcept {
     return romCrc32_;
 }
 
+void Cartridge::Reset() {
+  memselFast_ = false;
+  superFxClockRemainder_ = 0;
+  flashProgram_ = flashVendor_ = flashExtendedStatus_ = flashStatus_ = false;
+  flashCommand_ = 0;
+  sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
+  st010_ = St010{};
+  if (spc7110_)
+    spc7110_->reset();
+  if (sa1_)
+    sa1_->Reset();
+  if (superFx_)
+    superFx_->Reset();
+  if (cx4_)
+    cx4_->Reset();
+  if (st011_)
+    st011_->Reset();
+  if (st018_)
+    st018_->Reset();
+  if (bsx_)
+    bsx_->Reset();
+  if (dsp3_)
+    dsp3_->Reset();
+  if (dsp4_)
+    dsp4_->Reset();
+  if (obc1_)
+    obc1_->Reset();
+}
+
 void Cartridge::SetMemselFast(bool enabled) noexcept {
     memselFast_ = enabled;
 }
@@ -455,63 +488,115 @@ bool Cartridge::MemselFast() const noexcept {
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
-    if (bsx_) return bsx_->ReadCpu(cpuAddress, openBus);
-    if (dsp3_ && Dsp3::Selects(cpuAddress)) return dsp3_->Read(uint16_t(cpuAddress));
-    if (dsp4_ && Dsp4::Selects(cpuAddress)) return dsp4_->Read(uint16_t(cpuAddress));
-    if (st011_ && St010::Selects(cpuAddress)) return st011_->Read(cpuAddress);
-    if (st018_ && (cpuAddress & 0x40f000) == 0x003000) return st018_->Read(cpuAddress);
-    if (cx4_ && Cx4::Selects(cpuAddress)) return cx4_->Read(cpuAddress);
-    if (sa1_) return sa1_->ReadCpu(cpuAddress, openBus);
-    if (superFx_) return superFx_->ReadCpu(cpuAddress, openBus);
-    if (spc7110_) {
-        if ((cpuAddress & 0x40ff00) == 0x4800) return spc7110_->mmio_read(cpuAddress, openBus);
-        if ((cpuAddress >> 16) == 0x50) return spc7110_->mmio_read(0x4800, openBus);
-    }
-    if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress))
-        return st010_.Read(cpuAddress, sram_);
-    if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800)
-        return sdd1Registers_[cpuAddress & 7];
-    if (const auto offset = ResolveMemoryPackOffset(cpuAddress))
-        return ReadMemoryPack(cpuAddress, *offset);
-    if (const auto sramOffset = ResolveSramOffset(cpuAddress); sramOffset.has_value() && !sram_.empty()) {
-        return sram_[*sramOffset];
-    }
+  if (obc1_) {
+    if (Obc1::Selects(cpuAddress))
+      return obc1_->Read(static_cast<uint16_t>(cpuAddress));
+    if ((cpuAddress & 0x408000) != 0x008000)
+      return openBus;
+  }
+  if (bsx_)
+    return bsx_->ReadCpu(cpuAddress, openBus);
+  if (dsp3_ && Dsp3::Selects(cpuAddress))
+    return dsp3_->Read(uint16_t(cpuAddress));
+  if (dsp4_ && Dsp4::Selects(cpuAddress))
+    return dsp4_->Read(uint16_t(cpuAddress));
+  if (st011_ && St010::Selects(cpuAddress))
+    return st011_->Read(cpuAddress);
+  if (st018_ && (cpuAddress & 0x40f000) == 0x003000)
+    return st018_->Read(cpuAddress);
+  if (cx4_ && Cx4::Selects(cpuAddress))
+    return cx4_->Read(cpuAddress);
+  if (sa1_)
+    return sa1_->ReadCpu(cpuAddress, openBus);
+  if (superFx_)
+    return superFx_->ReadCpu(cpuAddress, openBus);
+  if (spc7110_) {
+    if ((cpuAddress & 0x40ff00) == 0x4800)
+      return spc7110_->mmio_read(cpuAddress, openBus);
+    if ((cpuAddress >> 16) == 0x50)
+      return spc7110_->mmio_read(0x4800, openBus);
+  }
+  if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress))
+    return st010_.Read(cpuAddress, sram_);
+  if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800)
+    return sdd1Registers_[cpuAddress & 7];
+  if (const auto offset = ResolveMemoryPackOffset(cpuAddress))
+    return ReadMemoryPack(cpuAddress, *offset);
+  if (const auto sramOffset = ResolveSramOffset(cpuAddress);
+      sramOffset.has_value() && !sram_.empty()) {
+    return sram_[*sramOffset];
+  }
 
-    if (const auto romOffset = ResolveRomOffset(cpuAddress); romOffset.has_value() && !rom_.empty()) {
-        return rom_[*romOffset];
-    }
+  if (const auto romOffset = ResolveRomOffset(cpuAddress); romOffset.has_value() && !rom_.empty()) {
+    return rom_[*romOffset];
+  }
 
-    return openBus;
+  return openBus;
 }
 
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
-    if (bsx_) { bsx_->WriteCpu(cpuAddress, value); return; }
-    if (dsp3_ && Dsp3::Selects(cpuAddress)) { dsp3_->Write(uint16_t(cpuAddress), value); return; }
-    if (dsp4_ && Dsp4::Selects(cpuAddress)) { dsp4_->Write(uint16_t(cpuAddress), value); return; }
-    if (st011_ && St010::Selects(cpuAddress)) { st011_->Write(cpuAddress, value); return; }
-    if (st018_ && (cpuAddress & 0x40f000) == 0x003000) { st018_->Write(cpuAddress, value); return; }
-    if (cx4_ && Cx4::Selects(cpuAddress)) { cx4_->Write(cpuAddress, value); return; }
-    if (sa1_) { sa1_->WriteCpu(cpuAddress, value); return; }
-    if (superFx_) { superFx_->WriteCpu(cpuAddress, value); return; }
-    if (spc7110_) {
-        if ((cpuAddress & 0x40ff00) == 0x4800) { spc7110_->mmio_write(cpuAddress, value); return; }
-        if (!(spc7110_->r4830 & 0x80)) return;
+  if (obc1_) {
+    if (Obc1::Selects(cpuAddress))
+      obc1_->Write(static_cast<uint16_t>(cpuAddress), value);
+    return;
+  }
+  if (bsx_) {
+    bsx_->WriteCpu(cpuAddress, value);
+    return;
+  }
+  if (dsp3_ && Dsp3::Selects(cpuAddress)) {
+    dsp3_->Write(uint16_t(cpuAddress), value);
+    return;
+  }
+  if (dsp4_ && Dsp4::Selects(cpuAddress)) {
+    dsp4_->Write(uint16_t(cpuAddress), value);
+    return;
+  }
+  if (st011_ && St010::Selects(cpuAddress)) {
+    st011_->Write(cpuAddress, value);
+    return;
+  }
+  if (st018_ && (cpuAddress & 0x40f000) == 0x003000) {
+    st018_->Write(cpuAddress, value);
+    return;
+  }
+  if (cx4_ && Cx4::Selects(cpuAddress)) {
+    cx4_->Write(cpuAddress, value);
+    return;
+  }
+  if (sa1_) {
+    sa1_->WriteCpu(cpuAddress, value);
+    return;
+  }
+  if (superFx_) {
+    superFx_->WriteCpu(cpuAddress, value);
+    return;
+  }
+  if (spc7110_) {
+    if ((cpuAddress & 0x40ff00) == 0x4800) {
+      spc7110_->mmio_write(cpuAddress, value);
+      return;
     }
-    if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress)) {
-        st010_.Write(cpuAddress, value, sram_);
-        return;
-    }
-    if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800) {
-        sdd1Registers_[cpuAddress & 7] = value;
-        return;
-    }
-    if (const auto offset = ResolveMemoryPackOffset(cpuAddress)) {
-        if (SelectsFlashIo(cpuAddress)) WriteMemoryPack(cpuAddress, *offset, value);
-        return;
-    }
-    if (const auto sramOffset = ResolveSramOffset(cpuAddress); sramOffset.has_value() && !sram_.empty()) {
-        sram_[*sramOffset] = value;
-    }
+    if (!(spc7110_->r4830 & 0x80))
+      return;
+  }
+  if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress)) {
+    st010_.Write(cpuAddress, value, sram_);
+    return;
+  }
+  if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800) {
+    sdd1Registers_[cpuAddress & 7] = value;
+    return;
+  }
+  if (const auto offset = ResolveMemoryPackOffset(cpuAddress)) {
+    if (SelectsFlashIo(cpuAddress))
+      WriteMemoryPack(cpuAddress, *offset, value);
+    return;
+  }
+  if (const auto sramOffset = ResolveSramOffset(cpuAddress);
+      sramOffset.has_value() && !sram_.empty()) {
+    sram_[*sramOffset] = value;
+  }
 }
 
 uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
@@ -571,6 +656,8 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
 
     const auto bytes = std::min(sram_.size(), data.size());
     std::copy_n(data.begin(), bytes, sram_.begin());
+    if (obc1_)
+      obc1_->Reset();
 }
 
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {

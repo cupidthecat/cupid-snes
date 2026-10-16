@@ -29,7 +29,6 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Dsp1.hpp"
 #include "snes/core/Dsp2.hpp"
-#include "snes/core/Obc1.hpp"
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Msu1.hpp"
 
@@ -112,6 +111,9 @@ public:
     }
     bool LoadRtc(std::span<const uint8_t> data) { return srtc_ ? srtc_->Load(data) : cartridge_ && cartridge_->LoadRtc(data); }
 
+    // Call between emulation steps. Retains RAM, media and platform attachments.
+    bool Reset();
+
     FrameStepResult StepFrame(const FrameStepOptions& options = {});
 
     uint64_t CurrentFrame() const noexcept;
@@ -135,6 +137,7 @@ private:
     /// Wire all subsystem callbacks and map the bus.
     /// Called from LoadCartridge() once the cartridge is ready.
     void InitSubsystems();
+    void ResetHardware(bool warm);
     void AdvanceClocks(uint32_t clocks);
     void SynchronizeDevices();
     void SynchronizeCoprocessors();
@@ -174,7 +177,6 @@ private:
     bool singleInstruction_ = false;
     std::unique_ptr<Dsp1> dsp1_;       // created if cartridge uses DSP-1
     std::unique_ptr<Dsp2> dsp2_;
-    std::unique_ptr<Obc1> obc1_;
     std::unique_ptr<Srtc> srtc_;
     std::unique_ptr<Msu1> msu1_;
 

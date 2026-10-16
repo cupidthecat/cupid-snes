@@ -380,6 +380,35 @@ void DmaAudioAcrossFrames() {
     Check((bus.Read(0x2000) & 0x38) == 0x30, "Looping PCM remains active after DMA and the following frame");
 }
 
+void ResetWithMountedMedia() {
+  Fixture fixture;
+  fixture.Pack();
+  auto machine = Load(fixture.Write("game.sfc", Rom({0xdb})));
+  Audio audio;
+  machine->AttachAudioOutput(&audio);
+  Play(*machine, true);
+  machine->StepFrame();
+  auto &bus = machine->GetBus();
+  Check((bus.Read(0x2000) & 0x30) == 0x30, "PCM playback is active before reset");
+  bus.Write(0x2000, 0x70);
+  bus.Write(0x2003, 0);
+  Check(bus.Read(0x2001) == (0x70 ^ 0x59), "The data stream has advanced before reset");
+  Check(machine->Reset(), "Console resets with mounted MSU-1 files");
+  Check(bus.Read(0x2000) == 2 && bus.Read(0x2002) == 'S' && bus.Read(0x2001) == 0x59,
+        "Reset stops playback, rewinds data and retains the mounted media");
+  audio.samples.clear();
+  machine->StepFrame();
+  Check(!audio.samples.empty() && std::all_of(audio.samples.begin(), audio.samples.end(),
+                                              [](float value) { return value == 0; }),
+        "Reset discards queued PCM playback");
+  Play(*machine);
+  audio.samples.clear();
+  machine->StepFrame();
+  Check(std::any_of(audio.samples.begin(), audio.samples.end(),
+                    [](float value) { return value != 0; }),
+        "Retained PCM files play again after reset");
+}
+
 void NativeAudioMixing() {
     Fixture fixture;
     const std::array<PcmFrame, 1> pcm{PcmFrame{30000, -30000}};
@@ -452,6 +481,7 @@ int main() {
         ActivePlaybackWithoutOutput();
         DmaAudioAcrossFrames();
         NativeAudioMixing();
+        ResetWithMountedMedia();
         std::puts("MSU-1 console integration passed");
         return 0;
     } catch (const std::exception& error) {

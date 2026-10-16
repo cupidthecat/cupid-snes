@@ -41,8 +41,8 @@ public:
     Ppu(const Ppu&) = delete;
     Ppu& operator=(const Ppu&) = delete;
 
-    // Reset - power-on defaults (clear VRAM/OAM/CGRAM, reset latches)
-    void Reset();
+    // Warm reset retains VRAM; OAM, CGRAM and latches reset on either path.
+    void Reset(bool retainVram = false);
 
     // Bus interface - called from MemoryBus via handler callbacks
     //   addr is the full 24-bit address (only $2100-$213F are dispatched here)
@@ -237,7 +237,7 @@ public:
         bool bgPriority         = false;
 
         // $2115 VMAIN
-        bool vramIncrementMode  = false; // 0=after $2118, 1=after $2119
+        bool vramIncrementMode = true;   // 0=after $2118, 1=after $2119
         uint8_t vramMapping     = 0;     // address translation mode (0-3)
         uint16_t vramIncrementSize = 1;  // 1,32,128
 
@@ -285,8 +285,8 @@ public:
         bool     vcounter    = false; // toggle for $213D read
 
         struct PpuMdr {
-            uint8_t mdr    = 0;
-            uint8_t bgofs  = 0;   // BG scroll offset latch
+          uint8_t mdr = 0xff;
+          uint8_t bgofs  = 0;   // BG scroll offset latch
         } ppu1, ppu2;
     };
 
