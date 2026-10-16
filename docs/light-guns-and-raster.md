@@ -37,7 +37,7 @@ Core input providers override `PollLightGun(port, gun, frame)` and return `Light
 
 ## Raster fixes
 
-The renderer previously saved registers and palettes per scanline but read tile memory and sprite attributes at VBlank. A later VRAM or OAM update could therefore change rows that had already passed. Each visible scanline retains its tile memory and parsed objects. Backgrounds, Mode 7, and sprites render from that saved state.
+The renderer previously saved registers and palettes per scanline but read tile memory and sprite attributes at VBlank. A later VRAM or OAM update could therefore change rows that had already passed. Objects retain tile memory and parsed attributes per scanline. Backgrounds and Mode 7 now use the [clocked fetch pipeline](background-fetch.md), which reads VRAM and registers at their consuming stages.
 
 Unchanged lines share an immutable VRAM snapshot. The renderer copies 64 KiB only when a visible line first uses a new VRAM revision, then reuses the allocated storage in later frames. A frame with no visible VRAM changes needs one tile-memory snapshot instead of 224. Forced-blank uploads still create a new snapshot, preserving earlier lines. A retained mutable `VramData()` pointer enables memory comparisons before sharing snapshots, including after reset. Worst-case storage remains roughly 15 MiB for a distinct revision on each overscan line.
 
@@ -51,4 +51,4 @@ Tests cover packet endings, strobe behavior, turbo transitions, gun selection, W
 
 Both supplied games completed 1,800 frames with visible video and non-silent audio. The saved Contra prototype frame showed gameplay. No light-gun game was available for this check; synthetic protocol tests do not establish retail-game compatibility.
 
-Beam input uses the scheduled aim position without simulating optical brightness thresholds or sensor persistence. CPU register accesses advance hardware per bus cycle. Graphics memory is sampled once per scanline; supported display, scroll, mosaic, window and color-math register writes split the rendered line at their recorded horizontal positions. Individual tile-fetch timing and optical sensor behavior remain unmodeled.
+Beam input uses the scheduled aim position without simulating optical brightness thresholds or sensor persistence. CPU register accesses advance hardware per bus cycle. Background names, pattern words, offsets, and Mode 7 samples follow their fetch and pixel clocks. Object memory remains sampled per scanline; screen register writes split final composition at their pixel positions. Individual object-fetch timing and optical sensor behavior remain unmodeled.

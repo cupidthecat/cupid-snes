@@ -11,9 +11,10 @@
 // Register state controls memory access and the rendering pipeline.
 
 #include "snes/core/Ppu.hpp"
+#include "snes/core/PpuBackground.hpp"
 #include <algorithm>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace snes::core {
@@ -34,15 +35,19 @@ bool PpuDebugEnabled() {
 
 // Constructor / Reset
 Ppu::Ppu()
-    : vram_(std::make_unique<uint16_t[]>(VramWords))
-    , lines_(std::make_unique<Line[]>(MaxVisibleLines))
-    , output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight))
-{
-    BuildLightTable();
-    Reset();
+    : background_(std::make_unique<PpuBackground>()),
+      vram_(std::make_unique<uint16_t[]>(VramWords)),
+      lines_(std::make_unique<Line[]>(MaxVisibleLines)),
+      output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
+  BuildLightTable();
+  Reset();
 }
 
+Ppu::~Ppu() = default;
+
 void Ppu::Reset(bool retainVram) {
+  background_->Reset();
+  backgroundClock_ = 0;
   // Clear memory
   if (!retainVram)
     std::memset(vram_.get(), 0, VramWords * sizeof(uint16_t));
@@ -79,38 +84,53 @@ void Ppu::Reset(bool retainVram) {
 
 // Frame / scanline hooks
 void Ppu::FrameBegin() {
-    // Toggle interlace field each frame
-    fieldId_ = !fieldId_;
-    frameOverscan_ = io_.overscan;
-    displayInterlace_ = io_.interlace;
+  if (currentLine_ != 0)
+    SetCurrentLine(0);
+  // Toggle interlace field each frame
+  fieldId_ = !fieldId_;
+  frameOverscan_ = io_.overscan;
+  displayInterlace_ = io_.interlace;
+  background_->BeginLine(0, fieldId_, io_);
+  backgroundClock_ = 0;
 
-    io_.obj.rangeOver = false;
-    io_.obj.timeOver  = false;
+  io_.obj.rangeOver = false;
+  io_.obj.timeOver = false;
 
-    // Reset scanline cache for new frame
-    lineStart_ = 0;
-    lineCount_ = 0;
-    for (auto& events : rasterEvents_) events.clear();
-    vramSnapshotCount_ = 0;
-    mosaicCounterLine_ = 0xffff;
+  // Reset scanline cache for new frame
+  lineStart_ = 0;
+  lineCount_ = 0;
+  for (auto &events : rasterEvents_)
+    events.clear();
+  vramSnapshotCount_ = 0;
+  mosaicCounterLine_ = 0xffff;
 }
 
 void Ppu::AdvanceMosaicCounter(uint16_t line) noexcept {
-    if (line == 0 || line >= VDisp() || mosaicCounterLine_ == line) return;
-    mosaicCounterLine_ = line;
+  if (mosaicCounterLine_ == line)
+    return;
+  mosaicCounterLine_ = line;
 
-    bool mosaicEnable = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable ||
-                        io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
-    if (line == 1) {
-        io_.mosaic.counter = mosaicEnable ? static_cast<uint8_t>(io_.mosaic.size + 1) : 0;
-    }
+  bool mosaicEnable =
+      io_.bg1.mosaicEnable || io_.bg2.mosaicEnable || io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
+  if (line == 1) {
+    io_.mosaic.counter = mosaicEnable ? static_cast<uint8_t>(io_.mosaic.size + 1) : 0;
+  }
     if (io_.mosaic.counter && !--io_.mosaic.counter) {
         io_.mosaic.counter = mosaicEnable ? io_.mosaic.size : 0;
     }
 }
 
 void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
+  if (currentLine_ != vcounter) {
+    SynchronizeBackground(1080);
     currentLine_ = vcounter;
+    currentHClock_ = 0;
+    backgroundClock_ = 0;
+    AdvanceMosaicCounter(vcounter);
+    background_->BeginLine(vcounter, fieldId_, io_);
+    if (vcounter > 0 && vcounter < MaxVisibleLines)
+      lines_[vcounter].backgroundHires = false;
+  }
     AdvanceMosaicCounter(vcounter);
     if (vcounter > 0 && vcounter < VDisp()) {
         UpdateObjectOverflow(vcounter);
@@ -159,15 +179,9 @@ void Ppu::UpdateObjectOverflow(uint16_t line) {
 
 void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO& before) {
     if (currentLine_ == 0 || currentLine_ >= VDisp()) return;
-    const bool screenClock = type == RasterEventType::Display || type == RasterEventType::Mode7;
-    const unsigned firstClock = screenClock ? 58 : 88;
-    const unsigned lastClock = screenClock ? 1082 : 1096;
-    if (currentHClock_ < firstClock || currentHClock_ >= lastClock)
+    if (currentHClock_ < 58 || currentHClock_ >= 1082)
       return;
-
-    // Screen pixels and Mode 7 samples occur every four clocks, starting at H=58.
-    const int x = screenClock ? (currentHClock_ - firstClock + 3) / 4
-                              : static_cast<int>(currentHClock_ / 4) - 22;
+    const int x = (currentHClock_ - 58 + 3) / 4;
     if (x <= 0 || x >= 256) return;
 
     RasterEvent event;
@@ -205,89 +219,12 @@ void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
     state.displayDisable = value.displayDisable;
     state.displayBrightness = value.displayBrightness;
     break;
-  case RasterEventType::Mode7:
-    switch (event.index) {
-    case 0x1a:
-      state.mode7.hflip = value.mode7.hflip;
-      state.mode7.vflip = value.mode7.vflip;
-      state.mode7.repeat = value.mode7.repeat;
-      break;
-    case 0x1b:
-      state.mode7.a = value.mode7.a;
-      break;
-    case 0x1c:
-      state.mode7.b = value.mode7.b;
-      break;
-    case 0x1d:
-      state.mode7.c = value.mode7.c;
-      break;
-    case 0x1e:
-      state.mode7.d = value.mode7.d;
-      break;
-    case 0x1f:
-      state.mode7.x = value.mode7.x;
-      break;
-    case 0x20:
-      state.mode7.y = value.mode7.y;
-      break;
-    }
+  case RasterEventType::OutputMode:
+    state.bgMode = value.bgMode;
+    state.pseudoHires = value.pseudoHires;
+    state.extbg = value.extbg;
+    std::copy_n(value.obj.priority, 4, state.obj.priority);
     break;
-  case RasterEventType::Mosaic:
-    state.mosaic = value.mosaic;
-    state.bg1.mosaicEnable = value.bg1.mosaicEnable;
-    state.bg2.mosaicEnable = value.bg2.mosaicEnable;
-    state.bg3.mosaicEnable = value.bg3.mosaicEnable;
-    state.bg4.mosaicEnable = value.bg4.mosaicEnable;
-    break;
-  case RasterEventType::Scroll: {
-    Background *bg = nullptr;
-    switch (event.index >> 1) {
-    case 0:
-      bg = &state.bg1;
-      break;
-    case 1:
-      bg = &state.bg2;
-      break;
-    case 2:
-      bg = &state.bg3;
-      break;
-    case 3:
-      bg = &state.bg4;
-      break;
-    default:
-      break;
-    }
-    if (!bg)
-      break;
-    const Background *sourceBg = nullptr;
-    switch (event.index >> 1) {
-    case 0:
-      sourceBg = &value.bg1;
-      break;
-    case 1:
-      sourceBg = &value.bg2;
-      break;
-    case 2:
-      sourceBg = &value.bg3;
-      break;
-    case 3:
-      sourceBg = &value.bg4;
-      break;
-    default:
-      break;
-    }
-    if (!sourceBg)
-      break;
-    if (event.index & 1)
-      bg->voffset = sourceBg->voffset;
-    else
-      bg->hoffset = sourceBg->hoffset;
-    if (event.index == 0)
-      state.mode7.hoffset = value.mode7.hoffset;
-    if (event.index == 1)
-      state.mode7.voffset = value.mode7.voffset;
-    break;
-  }
   case RasterEventType::WindowSelect:
     if (event.index == 0) {
       copyLayerSelection(state.bg1.window, value.bg1.window);
@@ -374,34 +311,40 @@ void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
 }
 
 void Ppu::ScanlineBegin(uint16_t line) {
-    AdvanceMosaicCounter(line);
-    UpdateObjectOverflow(line);
+  if (currentLine_ != line)
+    SetCurrentLine(line);
+  SynchronizeBackground(512);
+  AdvanceMosaicCounter(line);
+  UpdateObjectOverflow(line);
 
-    // Preserve the memory and register state used by this scanline.
-    if (line > 0 && line < 240) {
-        auto& cache = lines_[line];
-        cache.y = line;
-        cache.fieldID = fieldId_;
-        cache.io = io_;
+  // Preserve the memory and register state used by this scanline.
+  if (line > 0 && line < 240) {
+    auto &cache = lines_[line];
+    cache.y = line;
+    cache.fieldID = fieldId_;
+    cache.io = io_;
 
-        if (line >= VDisp()) {
-            cache.io.displayDisable = true;
-        } else {
-            std::memcpy(cache.cgram, cgram_.data(), sizeof(cache.cgram));
-            cache.vram = SnapshotVram();
-            ParseOam();
-            cache.objects = objects_;
-        }
-
-        if (lineCount_ == 0) lineStart_ = line;
-        lineCount_++;
+    if (line >= VDisp()) {
+      cache.io.displayDisable = true;
+    } else {
+      std::memcpy(cache.cgram, cgram_.data(), sizeof(cache.cgram));
+      cache.vram = SnapshotVram();
+      ParseOam();
+      cache.objects = objects_;
     }
+
+    if (lineCount_ == 0)
+      lineStart_ = line;
+    lineCount_++;
+  }
 }
 
 void Ppu::VBlankBegin() {
-    if (!io_.displayDisable) {
-        OamAddressReset();
-    }
+  if (currentLine_ > 0 && currentLine_ < VDisp())
+    SynchronizeBackground(1080);
+  if (!io_.displayDisable) {
+    OamAddressReset();
+  }
 
     // Render all cached scanlines
     RenderFrame();
@@ -533,16 +476,30 @@ void Ppu::LatchCounters(uint16_t hcounter, uint16_t vcounter) {
 //
 // Read the selected register and apply its read-side effects.
 uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
-    switch (addr & 0xFFFF) {
+  SynchronizeBackground(currentHClock_);
+  switch (addr & 0xFFFF) {
 
-    // Write-only registers - return PPU1 MDR
-    case 0x2104: case 0x2105: case 0x2106: case 0x2108:
-    case 0x2109: case 0x210A: case 0x2114: case 0x2115:
-    case 0x2116: case 0x2118: case 0x2119: case 0x211A:
-    case 0x2124: case 0x2125: case 0x2126: case 0x2128:
-    case 0x2129: case 0x212A: {
-        return latch_.ppu1.mdr;
-    }
+  // Write-only registers - return PPU1 MDR
+  case 0x2104:
+  case 0x2105:
+  case 0x2106:
+  case 0x2108:
+  case 0x2109:
+  case 0x210A:
+  case 0x2114:
+  case 0x2115:
+  case 0x2116:
+  case 0x2118:
+  case 0x2119:
+  case 0x211A:
+  case 0x2124:
+  case 0x2125:
+  case 0x2126:
+  case 0x2128:
+  case 0x2129:
+  case 0x212A: {
+    return latch_.ppu1.mdr;
+  }
 
     // $2134 - MPYL (mode 7 multiply result low)
     case 0x2134: {
@@ -686,19 +643,20 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 //
 // Update the selected register and apply its write-side effects.
 void Ppu::WriteIO(uint32_t addr, uint8_t data) {
-    switch (addr & 0xFFFF) {
+  SynchronizeBackground(currentHClock_);
+  switch (addr & 0xFFFF) {
 
-    // $2100 - INIDISP (display control)
-    case 0x2100: {
-        const IO before = io_;
-        if (io_.displayDisable && currentLine_ == VDisp()) {
-            OamAddressReset();
-        }
-        io_.displayBrightness = data & 0x0F;
-        io_.displayDisable    = (data >> 7) & 1;
-        RecordRasterEvent(RasterEventType::Display, 0, before);
-        return;
+  // $2100 - INIDISP (display control)
+  case 0x2100: {
+    const IO before = io_;
+    if (io_.displayDisable && currentLine_ == VDisp()) {
+      OamAddressReset();
     }
+    io_.displayBrightness = data & 0x0F;
+    io_.displayDisable = (data >> 7) & 1;
+    RecordRasterEvent(RasterEventType::Display, 0, before);
+    return;
+  }
 
     // $2101 - OBSEL (object size + base address)
     case 0x2101: {
@@ -748,49 +706,37 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
     // $2105 - BGMODE (BG mode, tile sizes)
     case 0x2105: {
-        uint8_t oldMode = io_.bgMode;
-        bool oldPri = io_.bgPriority;
-        io_.bgMode       = data & 7;
-        io_.bgPriority   = (data >> 3) & 1;
-        io_.bg1.tileSize = (data >> 4) & 1;
-        io_.bg2.tileSize = (data >> 5) & 1;
-        io_.bg3.tileSize = (data >> 6) & 1;
-        io_.bg4.tileSize = (data >> 7) & 1;
-        UpdateVideoMode();
-        if (PpuDebugEnabled() && (oldMode != io_.bgMode || oldPri != io_.bgPriority)) {
-            std::fprintf(stderr,
-                         "[PPU-DBG l=%u] BGMODE mode=%u bgPri=%u tileSize=%u/%u/%u/%u\n",
-                         currentLine_, io_.bgMode, io_.bgPriority,
-                         io_.bg1.tileSize ? 1 : 0, io_.bg2.tileSize ? 1 : 0,
-                         io_.bg3.tileSize ? 1 : 0, io_.bg4.tileSize ? 1 : 0);
-        }
-        return;
+      const IO before = io_;
+      uint8_t oldMode = io_.bgMode;
+      bool oldPri = io_.bgPriority;
+      io_.bgMode = data & 7;
+      io_.bgPriority = (data >> 3) & 1;
+      io_.bg1.tileSize = (data >> 4) & 1;
+      io_.bg2.tileSize = (data >> 5) & 1;
+      io_.bg3.tileSize = (data >> 6) & 1;
+      io_.bg4.tileSize = (data >> 7) & 1;
+      UpdateVideoMode();
+      if (PpuDebugEnabled() && (oldMode != io_.bgMode || oldPri != io_.bgPriority)) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BGMODE mode=%u bgPri=%u tileSize=%u/%u/%u/%u\n",
+                     currentLine_, io_.bgMode, io_.bgPriority, io_.bg1.tileSize ? 1 : 0,
+                     io_.bg2.tileSize ? 1 : 0, io_.bg3.tileSize ? 1 : 0, io_.bg4.tileSize ? 1 : 0);
+      }
+      RecordRasterEvent(RasterEventType::OutputMode, 0, before);
+      return;
     }
 
     // $2106 - MOSAIC
     case 0x2106: {
-        const IO before = io_;
-        bool wasMosaicEnabled = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable ||
-                                io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
-        const uint8_t oldSize = io_.mosaic.size;
-        io_.bg1.mosaicEnable = (data >> 0) & 1;
-        io_.bg2.mosaicEnable = (data >> 1) & 1;
-        io_.bg3.mosaicEnable = (data >> 2) & 1;
-        io_.bg4.mosaicEnable = (data >> 3) & 1;
-        io_.mosaic.size      = ((data >> 4) & 0x0F) + 1;
-        const bool mosaicEnabled = (data & 0x0F) != 0;
-        if (mosaicEnabled && (!wasMosaicEnabled || oldSize != io_.mosaic.size ||
-            before.bg1.mosaicEnable != io_.bg1.mosaicEnable ||
-            before.bg2.mosaicEnable != io_.bg2.mosaicEnable ||
-            before.bg3.mosaicEnable != io_.bg3.mosaicEnable ||
-            before.bg4.mosaicEnable != io_.bg4.mosaicEnable)) {
-            io_.mosaic.counter = currentLine_ > 0 ? io_.mosaic.size
-                                                  : static_cast<uint8_t>(io_.mosaic.size + 1);
-        } else if (!mosaicEnabled) {
-            io_.mosaic.counter = 0;
-        }
-        RecordRasterEvent(RasterEventType::Mosaic, 0, before);
-        return;
+      bool wasMosaicEnabled = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable ||
+                              io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
+      io_.bg1.mosaicEnable = (data >> 0) & 1;
+      io_.bg2.mosaicEnable = (data >> 1) & 1;
+      io_.bg3.mosaicEnable = (data >> 2) & 1;
+      io_.bg4.mosaicEnable = (data >> 3) & 1;
+      io_.mosaic.size = ((data >> 4) & 15) + 1;
+      if (!wasMosaicEnabled && (data & 15))
+        io_.mosaic.counter = io_.mosaic.size + 1;
+      return;
     }
 
     // $2107 - BG1SC (BG1 tilemap address + size)
@@ -862,123 +808,111 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
     // $210D - BG1HOFS (BG1 horizontal scroll)
     // Also writes Mode 7 horizontal offset
     case 0x210D: {
-        const IO before = io_;
-        io_.mode7.hoffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        io_.bg1.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        latch_.ppu2.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG1HOFS data=%02X hoffset=$%04X\n",
-                         currentLine_, data, io_.bg1.hoffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 0, before);
-        return;
+      io_.mode7.hoffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      io_.bg1.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
+                                               (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
+                                              0x03FF);
+      latch_.ppu1.bgofs = data;
+      latch_.ppu2.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG1HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
+                     io_.bg1.hoffset);
+      }
+      return;
     }
 
     // $210E - BG1VOFS (BG1 vertical scroll)
     // Also writes Mode 7 vertical offset
     case 0x210E: {
-        const IO before = io_;
-        io_.mode7.voffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-        latch_.mode7 = data;
-        io_.bg1.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  latch_.ppu1.bgofs) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG1VOFS data=%02X voffset=$%04X\n",
-                         currentLine_, data, io_.bg1.voffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 1, before);
-        return;
+      io_.mode7.voffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+      latch_.mode7 = data;
+      io_.bg1.voffset =
+          static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+      latch_.ppu1.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG1VOFS data=%02X voffset=$%04X\n", currentLine_, data,
+                     io_.bg1.voffset);
+      }
+      return;
     }
 
     // $210F - BG2HOFS
     case 0x210F: {
-        const IO before = io_;
-        io_.bg2.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        latch_.ppu2.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG2HOFS data=%02X hoffset=$%04X\n",
-                         currentLine_, data, io_.bg2.hoffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 2, before);
-        return;
+      io_.bg2.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
+                                               (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
+                                              0x03FF);
+      latch_.ppu1.bgofs = data;
+      latch_.ppu2.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG2HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
+                     io_.bg2.hoffset);
+      }
+      return;
     }
 
     // $2110 - BG2VOFS
     case 0x2110: {
-        const IO before = io_;
-        io_.bg2.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  latch_.ppu1.bgofs) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG2VOFS data=%02X voffset=$%04X\n",
-                         currentLine_, data, io_.bg2.voffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 3, before);
-        return;
+      io_.bg2.voffset =
+          static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+      latch_.ppu1.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG2VOFS data=%02X voffset=$%04X\n", currentLine_, data,
+                     io_.bg2.voffset);
+      }
+      return;
     }
 
     // $2111 - BG3HOFS
     case 0x2111: {
-        const IO before = io_;
-        io_.bg3.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        latch_.ppu2.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG3HOFS data=%02X hoffset=$%04X\n",
-                         currentLine_, data, io_.bg3.hoffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 4, before);
-        return;
+      io_.bg3.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
+                                               (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
+                                              0x03FF);
+      latch_.ppu1.bgofs = data;
+      latch_.ppu2.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG3HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
+                     io_.bg3.hoffset);
+      }
+      return;
     }
 
     // $2112 - BG3VOFS
     case 0x2112: {
-        const IO before = io_;
-        io_.bg3.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  latch_.ppu1.bgofs) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG3VOFS data=%02X voffset=$%04X\n",
-                         currentLine_, data, io_.bg3.voffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 5, before);
-        return;
+      io_.bg3.voffset =
+          static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+      latch_.ppu1.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG3VOFS data=%02X voffset=$%04X\n", currentLine_, data,
+                     io_.bg3.voffset);
+      }
+      return;
     }
 
     // $2113 - BG4HOFS
     case 0x2113: {
-        const IO before = io_;
-        io_.bg4.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        latch_.ppu2.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG4HOFS data=%02X hoffset=$%04X\n",
-                         currentLine_, data, io_.bg4.hoffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 6, before);
-        return;
+      io_.bg4.hoffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
+                                               (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
+                                              0x03FF);
+      latch_.ppu1.bgofs = data;
+      latch_.ppu2.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG4HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
+                     io_.bg4.hoffset);
+      }
+      return;
     }
 
     // $2114 - BG4VOFS
     case 0x2114: {
-        const IO before = io_;
-        io_.bg4.voffset = static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) |
-                  latch_.ppu1.bgofs) & 0x03FF);
-        latch_.ppu1.bgofs = data;
-        if (PpuDebugEnabled()) {
-            std::fprintf(stderr, "[PPU-DBG l=%u] BG4VOFS data=%02X voffset=$%04X\n",
-                         currentLine_, data, io_.bg4.voffset);
-        }
-        RecordRasterEvent(RasterEventType::Scroll, 7, before);
-        return;
+      io_.bg4.voffset =
+          static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+      latch_.ppu1.bgofs = data;
+      if (PpuDebugEnabled()) {
+        std::fprintf(stderr, "[PPU-DBG l=%u] BG4VOFS data=%02X voffset=$%04X\n", currentLine_, data,
+                     io_.bg4.voffset);
+      }
+      return;
     }
 
     // $2115 - VMAIN (VRAM address increment mode)
@@ -1020,65 +954,51 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
     // $211A - M7SEL (Mode 7 settings)
     case 0x211A: {
-      const IO before = io_;
       io_.mode7.hflip = (data >> 0) & 1;
       io_.mode7.vflip = (data >> 1) & 1;
       io_.mode7.repeat = (data >> 6) & 3;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1a, before);
       return;
     }
 
     // $211B - M7A
     case 0x211B: {
-      const IO before = io_;
       io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1b, before);
       return;
     }
 
     // $211C - M7B
     case 0x211C: {
-      const IO before = io_;
       io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1c, before);
       return;
     }
 
     // $211D - M7C
     case 0x211D: {
-      const IO before = io_;
       io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1d, before);
       return;
     }
 
     // $211E - M7D
     case 0x211E: {
-      const IO before = io_;
       io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1e, before);
       return;
     }
 
     // $211F - M7X
     case 0x211F: {
-      const IO before = io_;
       io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x1f, before);
       return;
     }
 
     // $2120 - M7Y
     case 0x2120: {
-      const IO before = io_;
       io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
       latch_.mode7 = data;
-      RecordRasterEvent(RasterEventType::Mode7, 0x20, before);
       return;
     }
 
@@ -1307,30 +1227,30 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
     // $2133 - SETINI (screen mode / scroll settings)
     case 0x2133: {
-        bool oldInterlace = io_.interlace;
-        bool oldObjInterlace = io_.obj.interlace;
-        bool oldOverscan = io_.overscan;
-        bool oldPseudoHires = io_.pseudoHires;
-        io_.interlace     = (data >> 0) & 1;
-        io_.obj.interlace = (data >> 1) & 1;
-        io_.overscan      = (data >> 2) & 1;
-        io_.pseudoHires   = (data >> 3) & 1;
-        io_.extbg         = (data >> 6) & 1;
-        UpdateVideoMode();
-        if (onVDisp_) onVDisp_(VDisp());
-        if (PpuDebugEnabled() && (oldInterlace != io_.interlace
-            || oldObjInterlace != io_.obj.interlace
-            || oldOverscan != io_.overscan
-            || oldPseudoHires != io_.pseudoHires)) {
-            std::fprintf(stderr,
-                         "[PPU-DBG l=%u] SETINI interlace=%u objInterlace=%u overscan=%u pseudoHires=%u extbg=%u\n",
-                         currentLine_, io_.interlace ? 1 : 0,
-                         io_.obj.interlace ? 1 : 0,
-                         io_.overscan ? 1 : 0,
-                         io_.pseudoHires ? 1 : 0,
-                         io_.extbg ? 1 : 0);
-        }
-        return;
+      const IO before = io_;
+      bool oldInterlace = io_.interlace;
+      bool oldObjInterlace = io_.obj.interlace;
+      bool oldOverscan = io_.overscan;
+      bool oldPseudoHires = io_.pseudoHires;
+      io_.interlace = (data >> 0) & 1;
+      io_.obj.interlace = (data >> 1) & 1;
+      io_.overscan = (data >> 2) & 1;
+      io_.pseudoHires = (data >> 3) & 1;
+      io_.extbg = (data >> 6) & 1;
+      UpdateVideoMode();
+      if (onVDisp_)
+        onVDisp_(VDisp());
+      if (PpuDebugEnabled() &&
+          (oldInterlace != io_.interlace || oldObjInterlace != io_.obj.interlace ||
+           oldOverscan != io_.overscan || oldPseudoHires != io_.pseudoHires)) {
+        std::fprintf(stderr,
+                     "[PPU-DBG l=%u] SETINI interlace=%u objInterlace=%u overscan=%u "
+                     "pseudoHires=%u extbg=%u\n",
+                     currentLine_, io_.interlace ? 1 : 0, io_.obj.interlace ? 1 : 0,
+                     io_.overscan ? 1 : 0, io_.pseudoHires ? 1 : 0, io_.extbg ? 1 : 0);
+      }
+      RecordRasterEvent(RasterEventType::OutputMode, 0, before);
+      return;
     }
 
     } // switch

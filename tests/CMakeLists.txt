@@ -218,3 +218,7 @@ if(SNES_PROCESSOR_DIAGNOSTIC_DIR)
     set_tests_properties(snes_external_${processor} PROPERTIES TIMEOUT 120 LABELS "external")
   endforeach()
 endif()
+
+add_executable(snes_ppu_background_tests test_ppu_background.cpp)
+target_link_libraries(snes_ppu_background_tests PRIVATE snes_core)
+add_test(NAME snes_ppu_background_tests COMMAND snes_ppu_background_tests)

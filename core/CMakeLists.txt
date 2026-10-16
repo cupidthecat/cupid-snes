@@ -27,6 +27,8 @@ add_library(snes_core
   src/cpu/UpdDsp.cpp
   src/cpu/SnesCpu.cpp
   src/memory/MemoryBus.cpp
+  src/ppu/PpuBackgroundOutput.cpp
+  src/ppu/PpuBackground.cpp
   src/ppu/Ppu.cpp
   src/ppu/PpuRender.cpp
   src/audio/Dsp.cpp
