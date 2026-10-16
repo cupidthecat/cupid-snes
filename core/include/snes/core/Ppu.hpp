@@ -17,7 +17,7 @@
 //   CGRAM - 512 bytes (256 × 15-bit colors stored as uint16_t)
 //
 // Rendering:
-//   Per-scanline pipeline: snapshot IO → render BG/OBJ → window → composite
+//   Clocked background fetches, cached object rows, windows, and color math
 //   Output: 256×224(240) pixels as uint32_t RGBA8888
 //
 
@@ -31,11 +31,13 @@
 
 namespace snes::core {
 
+class PpuBackground;
+
 // Ppu - PPU register model
 class Ppu {
 public:
     Ppu();
-    ~Ppu() = default;
+    ~Ppu();
 
     // Non-copyable
     Ppu(const Ppu&) = delete;
@@ -56,7 +58,7 @@ public:
     void FrameBegin();
 
     /// Called at the start of each visible scanline (V=1..vdisp-1).
-    /// Snapshots registers, palettes, tile memory, and objects for the renderer.
+    /// Retains object memory and screen registers for final composition.
     void ScanlineBegin(uint16_t line);
 
     /// Called at V=vdisp (start of vblank).
@@ -346,6 +348,8 @@ public:
         ObjectItem items[128]  = {};
         ObjectTile tiles[128]  = {};
 
+        Pixel backgroundAbove[256] = {}, backgroundBelow[256] = {};
+        bool backgroundHires = false;
         Pixel    above[256] = {};                 // Main screen line buffer
         Pixel    below[256] = {};                 // Sub screen line buffer
         bool     windowAbove[256] = {};           // Color window for main screen
@@ -384,11 +388,9 @@ public:
 private:
   enum class RasterEventType : uint8_t {
     Display,
-    Mosaic,
-    Scroll,
+    OutputMode,
     WindowSelect,
     Composition,
-    Mode7,
   };
 
   struct RasterEvent {
@@ -462,15 +464,6 @@ private:
     /// Render one IO state over a logical 256-dot span of a cached scanline.
     void RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch);
 
-    /// Initialize above/below buffers with backdrop color.
-    void InitLineBuffers(Line& line);
-
-    /// Render one background layer into the line buffers.
-    void RenderBackground(Line& line, const Background& bg, uint8_t source);
-
-    /// Render Mode 7 background.
-    void RenderMode7(Line& line, const Background& bg, uint8_t source);
-
     /// Render all sprites into the line buffers.
     void RenderObjects(Line& line, const ObjectIO& obj);
 
@@ -481,10 +474,6 @@ private:
     /// Compute window mask for color math.
     void RenderWindowColor(const Line& line, const WindowColor& wc,
                            uint8_t mask, bool output[256]);
-
-    /// Tilemap lookup - returns 16-bit tilemap word.
-    uint16_t GetTile(const Line& line, const Background& bg,
-                     uint32_t hoffset, uint32_t voffset);
 
     /// Priority-based pixel plot.
     static void PlotAbove(Line& line, int x, uint8_t source,
@@ -509,7 +498,12 @@ private:
     /// Build the brightness lookup table.
     void BuildLightTable();
 
+    void SynchronizeBackground(uint16_t clock);
+    void StoreBackgroundPixel(unsigned x);
+
     // State
+    std::unique_ptr<PpuBackground> background_;
+    uint16_t backgroundClock_ = 0;
     IO    io_;
     Latch latch_;
 

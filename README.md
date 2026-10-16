@@ -82,7 +82,7 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 
 [Rendering and LoROM checks](docs/accuracy-notes.md) covers coordinate handling, ROM mapping, and their regression tests.
 
-[Cartridge, PPU, and DMA regression checks](docs/hardware-regressions.md) covers DSP-1 addressing, ROM mirrors, counter latching, palette access, OAM, overscan timing, and indirect HDMA termination.
+[Cartridge, PPU, and DMA regression checks](docs/hardware-regressions.md) covers DSP-1 addressing, ROM mirrors, counter latching, palette access, OAM, overscan timing, and indirect HDMA termination. [Background fetch timing](docs/background-fetch.md) describes tile latches, scroll latency, and mode changes.
 
 [CPU regression checks](docs/cpu-regressions.md) covers stop and wait states, interrupt entry, and stack boundaries.
 

@@ -52,6 +52,6 @@ Generated tests cover instruction ordering, flags, branches, stack wrapping, poi
 
 A local instruction audit checked two million generated instruction cases across both processor revisions, including complete register, flag, stack, and RAM results. A 5,400-field Pilotwings flight capture matched every video field and 2,878,783 shared stereo samples. DSP-3 and DSP-4 game checks each matched 6,000 video fields and their shared audio samples. A 9,000-field Super Mario Kart attract sequence also matched video and shared audio samples.
 
-A 1,800-field PAL DSP-4 capture matched video and 1,153,100 shared stereo samples. A 6,000-field ST011 overscan run exercised its firmware and shared RAM. ST010 racing also ran for 6,000 fields; [prefetched background pixels at mode switches](https://github.com/cupidthecat/cupid-snes/issues/32) still need work.
+A 1,800-field PAL DSP-4 capture matched video and 1,153,100 shared stereo samples. A 6,000-field ST011 overscan run exercised its firmware and shared RAM. The ST010 racing replay now matches 6,000 fields and shared audio samples after the [background fetch pipeline](background-fetch.md) retained prefetched pixels across mode switches.
 
 These checks cover the exercised sequences. They do not establish complete game compatibility, serial-pin behavior with external devices, or every raster transition. The committed tests generate their own firmware and ROM fixtures.

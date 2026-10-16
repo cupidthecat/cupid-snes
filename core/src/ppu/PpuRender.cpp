@@ -1,12 +1,12 @@
 // snes emulator
 // core/src/ppu/PpuRender.cpp
-// Scanline rendering for backgrounds, sprites, and color math.
+// Compose retained background samples, object rows, and color math.
 
 // PpuRender.cpp - SNES PPU scanline rendering pipeline
 //
 // Implements the scanline rendering pipeline:
 //   - IO state snapshot per visible scanline
-//   - Background rendering (modes 0-7, 2bpp/4bpp/8bpp, offset-per-tile)
+//   - Retained background samples from the clocked fetch and shift stages
 //   - Sprite rendering (128 OAM evaluation, 32-per-line, 4bpp tiles)
 //   - Window masking (BG/OBJ layer windows + color math windows)
 //   - Priority-based compositing with above/below (main/sub) screens
@@ -98,11 +98,6 @@ void Ppu::ParseOam() {
     }
 }
 
-// Scanline snapshot - called each visible scanline during emulation
-
-// ScanlineBegin is defined in Ppu.cpp; we update it here with caching.
-// The actual caching is done via the new body (see wire-up below).
-
 // Frame rendering - renders all cached scanlines at VBlank
 
 void Ppu::RenderFrame() {
@@ -111,6 +106,7 @@ void Ppu::RenderFrame() {
     bool hires = false, interlace = displayInterlace_, overscan = false;
     for (int i = 0; i < lineCount_; ++i) {
         const auto& registers = lines_[lineStart_ + i].io;
+        hires |= lines_[lineStart_ + i].backgroundHires;
         hires |= registers.pseudoHires || registers.bgMode == 5 || registers.bgMode == 6;
         overscan |= registers.overscan;
     }
@@ -206,18 +202,10 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
     return;
   }
 
-  // Step 1: Initialize line buffers with backdrop
-  InitLineBuffers(line);
-
-  // Step 2: Render background and object layers in priority order.
-  RenderBackground(line, line.io.bg1, Source::BG1);
-  if (!line.io.extbg)
-    RenderBackground(line, line.io.bg2, Source::BG2);
-  RenderBackground(line, line.io.bg3, Source::BG3);
-  RenderBackground(line, line.io.bg4, Source::BG4);
+  // Background samples have already crossed the fetch and shift stages.
+  std::copy_n(line.backgroundAbove, 256, line.above);
+  std::copy_n(line.backgroundBelow, 256, line.below);
   RenderObjects(line, line.io.obj);
-  if (line.io.extbg)
-    RenderBackground(line, line.io.bg2, Source::BG2); // EXTBG: BG2 after sprites
 
   // Step 3: Compute color windows
   RenderWindowColor(line, line.io.col.window, line.io.col.window.aboveMask, line.windowAbove);
@@ -255,19 +243,6 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
   }
 }
 
-// InitLineBuffers - fill with backdrop color
-
-void Ppu::InitLineBuffers(Line& line) {
-    bool hires = line.io.pseudoHires || line.io.bgMode == 5 || line.io.bgMode == 6;
-    uint16_t aboveColor = line.cgram[0]; // palette[0] always
-    uint16_t belowColor = hires ? line.cgram[0] : line.io.col.fixedColor;
-
-    for (int x = 0; x < 256; x++) {
-        line.above[x] = {Source::COL, 0, aboveColor};
-        line.below[x] = {Source::COL, 0, belowColor};
-    }
-}
-
 // PlotAbove / PlotBelow - priority-based pixel merge
 
 void Ppu::PlotAbove(Line& line, int x, uint8_t source,
@@ -293,387 +268,6 @@ uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
         ((paletteColor << 2) & 0x001C) + ((paletteIndex <<  1) & 0x0002) +  // R
         ((paletteColor << 4) & 0x0380) + ((paletteIndex <<  5) & 0x0040) +  // G
         ((paletteColor << 7) & 0x6000) + ((paletteIndex << 10) & 0x1000));  // B
-}
-
-// GetTile - tilemap word lookup
-//
-// The tilemap contains 16-bit entries: vhopppcc cccccccc
-//   v=vflip h=hflip o=priority ppp=palette cccccccccc=character
-
-uint16_t Ppu::GetTile(const Line& line, const Background& bg,
-                      uint32_t hoffset, uint32_t voffset) {
-    bool hires = line.io.bgMode == 5 || line.io.bgMode == 6;
-    uint32_t tileHeight = 3 + static_cast<uint32_t>(bg.tileSize);
-    uint32_t tileWidth  = !hires ? tileHeight : 4;
-
-    uint32_t screenX = (bg.screenSize & 1) ? (32 << 5) : 0;
-    uint32_t screenY = (bg.screenSize & 2) ? (32 << (5 + (bg.screenSize & 1))) : 0;
-
-    uint32_t tileX = hoffset >> tileWidth;
-    uint32_t tileY = voffset >> tileHeight;
-
-    uint32_t offset = ((tileY & 0x1F) << 5) | (tileX & 0x1F);
-    if (tileX & 0x20) offset += screenX;
-    if (tileY & 0x20) offset += screenY;
-
-    return line.vram[(bg.screenAddress + offset) & 0x7FFF];
-}
-
-// RenderBackground - tiled BG rendering (modes 0-6, 2/4/8bpp)
-//
-
-void Ppu::RenderBackground(Line& line, const Background& bg, uint8_t source) {
-    // Skip inactive layers
-    if (bg.tileMode == TileMode::Inactive) return;
-    if (!bg.aboveEnable && !bg.belowEnable) return;
-
-    // Mode 7 → separate path
-    if (bg.tileMode == TileMode::Mode7) {
-        RenderMode7(line, bg, source);
-        return;
-    }
-
-    // Compute per-layer window masks
-    bool winAbove[256], winBelow[256];
-    RenderWindow(line, bg.window, bg.window.aboveEnable, winAbove);
-    RenderWindow(line, bg.window, bg.window.belowEnable, winBelow);
-
-    // Tile parameters
-    bool hires = line.io.bgMode == 5 || line.io.bgMode == 6;
-    bool offsetPerTile = line.io.bgMode == 2 || line.io.bgMode == 4 ||
-                         line.io.bgMode == 6;
-    bool directColorMode = line.io.col.directColor && source == Source::BG1 &&
-                           (line.io.bgMode == 3 || line.io.bgMode == 4);
-
-    int tileMode = static_cast<int>(bg.tileMode); // BPP2=0, BPP4=1, BPP8=2
-    int colorShift = 3 + tileMode;
-    int width = 256 << static_cast<int>(hires);
-    uint32_t tileHeight = 3 + static_cast<uint32_t>(bg.tileSize);
-    uint32_t tileWidth = !hires ? tileHeight : 4;
-    uint32_t tileMask = 0x0FFF >> tileMode;
-    uint32_t tiledataIndex = bg.tiledataAddress >> colorShift;
-    uint32_t paletteBase = (line.io.bgMode == 0) ? (static_cast<uint32_t>(source) << 5) : 0;
-    uint32_t paletteShift = 2 << tileMode;
-
-    uint32_t hscroll = bg.hoffset;
-    uint32_t vscroll = bg.voffset;
-
-    uint32_t hmask = (static_cast<uint32_t>(width) <<
-                      static_cast<uint32_t>(bg.tileSize) <<
-                      static_cast<uint32_t>(!!(bg.screenSize & 1))) - 1;
-    uint32_t vmask = (static_cast<uint32_t>(width) <<
-                      static_cast<uint32_t>(bg.tileSize) <<
-                      static_cast<uint32_t>(!!(bg.screenSize & 2))) - 1;
-
-    // line.y is the hardware vcounter: output row + 1.
-    uint32_t y = line.y;
-    if (hires) {
-        hscroll <<= 1;
-        if (line.io.interlace) {
-          // Interlace selects the field parity unless mosaic holds the row.
-          y = (y << 1) | static_cast<uint32_t>(line.fieldID && !bg.mosaicEnable);
-        }
-    }
-
-    // Mosaic: snap Y position
-    if (bg.mosaicEnable) {
-        int mosaicDelta = line.io.mosaic.size - line.io.mosaic.counter;
-        if (hires && line.io.interlace) mosaicDelta <<= 1;
-        y = static_cast<uint32_t>(static_cast<int>(y) - mosaicDelta);
-    }
-
-    // Mosaic state for X
-    uint16_t mosaicColor = 0;
-    uint8_t  mosaicPriority = 0;
-    int      mosaicCounter = 0;
-    bool     mosaicTransparent = true;
-
-    // Iterate tile columns
-    int x = 0 - static_cast<int>(hscroll & 7);
-    while (x < width) {
-        uint32_t hoffset2 = static_cast<uint32_t>(x) + hscroll;
-        uint32_t voffset2 = y + vscroll;
-
-        // Offset-per-tile (modes 2, 4, 6)
-        if (offsetPerTile) {
-            uint32_t validBit = 0x2000 << source;
-            // Offset entries cover eight logical dots, including in Mode 6
-            // where each dot contains two source pixels. Keep the lookup and
-            // replacement scroll in the renderer's source-pixel coordinates.
-            const uint32_t offsetWidth = 8u << static_cast<uint32_t>(hires);
-            const uint32_t offsetX = static_cast<uint32_t>(x) + (hscroll & (offsetWidth - 1));
-            if (offsetX >= offsetWidth) {
-                const uint32_t lookupX = (offsetX - offsetWidth) +
-                    ((line.io.bg3.hoffset & ~7u) << static_cast<uint32_t>(hires));
-                uint32_t hLookup = GetTile(line, line.io.bg3,
-                    lookupX, line.io.bg3.voffset);
-
-                if (line.io.bgMode == 4) {
-                    // Mode 4: single BG3 word, bit 15 → H or V
-                    if (hLookup & validBit) {
-                        if (!(hLookup & 0x8000))
-                            hoffset2 = offsetX + (hLookup & ~7u);
-                        else
-                            voffset2 = y + hLookup;
-                    }
-                } else {
-                    // Modes 2/6: separate H+V lookups
-                    uint32_t vLookup = GetTile(line, line.io.bg3,
-                        lookupX, line.io.bg3.voffset + 8);
-                    if (hLookup & validBit)
-                        hoffset2 = offsetX + ((hLookup & ~7u) << static_cast<uint32_t>(hires));
-                    if (vLookup & validBit)
-                        voffset2 = y + vLookup;
-                }
-            }
-        }
-
-        hoffset2 &= hmask;
-        voffset2 &= vmask;
-
-        // Fetch tilemap entry
-        uint16_t tileEntry = GetTile(line, bg, hoffset2, voffset2);
-
-        uint32_t mirrorY = (tileEntry & 0x8000) ? 7 : 0;
-        uint32_t mirrorX = (tileEntry & 0x4000) ? 7 : 0;
-        uint8_t  tilePriority = bg.priority[(tileEntry >> 13) & 1];
-        uint32_t paletteNumber = (tileEntry >> 10) & 7;
-        uint32_t paletteIndex = (paletteBase + (paletteNumber << paletteShift)) & 0xFF;
-
-        uint32_t tileNumber = tileEntry & 0x03FF;
-
-        // 16×16 tile handling - note: additions happen BEFORE 10-bit mask,
-        // Apply the ten-bit tile-number mask after adding the subtile offset.
-        if (tileWidth == 4 && (static_cast<bool>(hoffset2 & 8) ^ static_cast<bool>(mirrorX)))
-            tileNumber += 1;
-        if (tileHeight == 4 && (static_cast<bool>(voffset2 & 8) ^ static_cast<bool>(mirrorY)))
-            tileNumber += 16;
-
-        tileNumber = (((tileNumber & 0x03FF) + tiledataIndex) & tileMask);
-
-        // Fetch character data (bitplane format)
-        uint16_t address = static_cast<uint16_t>(
-            ((tileNumber << colorShift) + ((voffset2 & 7) ^ mirrorY)) & 0x7FFF);
-
-        uint64_t data = 0;
-        data  = static_cast<uint64_t>(line.vram[address +  0]) <<  0; // planes 0-1
-        if (tileMode >= 1)
-            data |= static_cast<uint64_t>(line.vram[address +  8]) << 16; // planes 2-3
-        if (tileMode >= 2) {
-            data |= static_cast<uint64_t>(line.vram[address + 16]) << 32; // planes 4-5
-            data |= static_cast<uint64_t>(line.vram[address + 24]) << 48; // planes 6-7
-        }
-
-        // Decode 8 pixels from the packed bitplane data
-        for (int tileX = 0; tileX < 8; tileX++, x++) {
-            if (x < 0 || x >= width) continue;
-
-            uint32_t shift = mirrorX ? tileX : (7 - tileX);
-            uint32_t color = 0;
-
-            color  = static_cast<uint32_t>((data >> (shift +  0)) &   1);
-            color += static_cast<uint32_t>((data >> (shift +  7)) &   2);
-            if (tileMode >= 1) {
-                color += static_cast<uint32_t>((data >> (shift + 14)) &   4);
-                color += static_cast<uint32_t>((data >> (shift + 21)) &   8);
-            }
-            if (tileMode >= 2) {
-                color += static_cast<uint32_t>((data >> (shift + 28)) &  16);
-                color += static_cast<uint32_t>((data >> (shift + 35)) &  32);
-                color += static_cast<uint32_t>((data >> (shift + 42)) &  64);
-                color += static_cast<uint32_t>((data >> (shift + 49)) & 128);
-            }
-
-            // Mosaic
-            if (bg.mosaicEnable && (hires || line.io.mosaic.size > 1)) {
-                if (mosaicCounter == 0) {
-                    // Hires mosaic selects the even source sample for both
-                    // screens, even at size one, and measures blocks in dots.
-                    mosaicCounter = line.io.mosaic.size << static_cast<int>(hires);
-                    mosaicTransparent = (color == 0);
-                    if (!mosaicTransparent) {
-                        if (!directColorMode) {
-                            mosaicColor = line.cgram[(paletteIndex + color) & 0xFF];
-                        } else {
-                            mosaicColor = DirectColor(
-                                static_cast<uint8_t>(paletteNumber),
-                                static_cast<uint8_t>(color));
-                        }
-                    }
-                    mosaicPriority = tilePriority;
-                }
-                mosaicCounter--;
-
-                if (mosaicTransparent) continue;
-
-                if (!hires) {
-                    if (bg.aboveEnable && !winAbove[x])
-                        PlotAbove(line, x, source, mosaicPriority, mosaicColor);
-                    if (bg.belowEnable && !winBelow[x])
-                        PlotBelow(line, x, source, mosaicPriority, mosaicColor);
-                } else {
-                    int X = x >> 1;
-                    if (x & 1) {
-                        if (bg.aboveEnable && !winAbove[X])
-                            PlotAbove(line, X, source, mosaicPriority, mosaicColor);
-                    } else {
-                        if (bg.belowEnable && !winBelow[X])
-                            PlotBelow(line, X, source, mosaicPriority, mosaicColor);
-                    }
-                }
-                continue;
-            }
-
-            // Color 0 = transparent
-            if (color == 0) continue;
-
-            // Resolve final color
-            uint16_t finalColor;
-            if (!directColorMode) {
-                finalColor = line.cgram[(paletteIndex + color) & 0xFF];
-            } else {
-                finalColor = DirectColor(
-                    static_cast<uint8_t>(paletteNumber),
-                    static_cast<uint8_t>(color));
-            }
-
-            // Plot to above/below based on window and enable flags
-            if (!hires) {
-                if (bg.aboveEnable && !winAbove[x])
-                    PlotAbove(line, x, source, tilePriority, finalColor);
-                if (bg.belowEnable && !winBelow[x])
-                    PlotBelow(line, x, source, tilePriority, finalColor);
-            } else {
-                int X = x >> 1;
-                if (x & 1) {
-                    if (bg.aboveEnable && !winAbove[X])
-                        PlotAbove(line, X, source, tilePriority, finalColor);
-                } else {
-                    if (bg.belowEnable && !winBelow[X])
-                        PlotBelow(line, X, source, tilePriority, finalColor);
-                }
-            }
-        }
-    }
-}
-
-// RenderMode7 - Mode 7 affine-transformed background
-//
-
-void Ppu::RenderMode7(Line& line, const Background& bg, uint8_t source) {
-    if (!bg.aboveEnable && !bg.belowEnable) return;
-
-    bool winAbove[256], winBelow[256];
-    RenderWindow(line, bg.window, bg.window.aboveEnable, winAbove);
-    RenderWindow(line, bg.window, bg.window.belowEnable, winBelow);
-
-    // Mode 7 matrix parameters (signed)
-    int a = static_cast<int16_t>(line.io.mode7.a);
-    int b = static_cast<int16_t>(line.io.mode7.b);
-    int c = static_cast<int16_t>(line.io.mode7.c);
-    int d = static_cast<int16_t>(line.io.mode7.d);
-
-    // 13-bit sign extension
-    auto signExtend13 = [](uint16_t v) -> int {
-        return static_cast<int>(v & 0x1FFF) - ((v & 0x1000) ? 0x2000 : 0);
-    };
-
-    int hcenter = signExtend13(line.io.mode7.x);
-    int vcenter = signExtend13(line.io.mode7.y);
-    int hoffset = signExtend13(line.io.mode7.hoffset);
-    int voffset = signExtend13(line.io.mode7.voffset);
-
-    auto clip = [](int n) -> int {
-        return (n & 0x2000) ? (n | ~1023) : (n & 1023);
-    };
-
-    // Mode 7 vertical mosaic is keyed by BG1 even when rendering EXTBG BG2.
-    int y = line.y;
-    if (line.io.bg1.mosaicEnable)
-        y -= line.io.mosaic.size - line.io.mosaic.counter;
-    if (line.io.mode7.vflip) y = 255 - y;
-
-    const bool directColorMode = source == Source::BG1 && line.io.col.directColor;
-
-    int originX = (a * clip(hoffset - hcenter) & ~63)
-                + (b * clip(voffset - vcenter) & ~63)
-                + (b * y & ~63)
-                + hcenter * 256;
-    int originY = (c * clip(hoffset - hcenter) & ~63)
-                + (d * clip(voffset - vcenter) & ~63)
-                + (d * y & ~63)
-                + vcenter * 256;
-
-    // Mosaic state
-    uint16_t mosaicColor = 0;
-    uint8_t  mosaicPriority = 0;
-    int      mosaicCounter = 0;
-    bool     mosaicTransparent = true;
-
-    for (int X = 0; X < 256; X++) {
-        int sx = line.io.mode7.hflip ? (255 - X) : X;
-
-        int pixelX = (originX + a * sx) >> 8;
-        int pixelY = (originY + c * sx) >> 8;
-
-        int tileX = (pixelX >> 3) & 127;
-        int tileY = (pixelY >> 3) & 127;
-        bool outOfBounds = (pixelX | pixelY) & ~1023;
-
-        // Mode 7 VRAM layout:
-        // Low bytes of VRAM[0..16383] = tile numbers (128×128 tilemap)
-        // High bytes of VRAM[tile*64 + pixel_offset] = pixel data
-        uint16_t tileAddress = static_cast<uint16_t>(tileY * 128 + tileX);
-        uint8_t tile = (line.io.mode7.repeat == 3 && outOfBounds)
-                           ? 0
-                           : static_cast<uint8_t>(line.vram[tileAddress & 0x7FFF] & 0xFF);
-
-        uint16_t palAddress = static_cast<uint16_t>(
-            (tile << 6) | ((pixelY & 7) << 3) | (pixelX & 7));
-        uint8_t palette = (line.io.mode7.repeat == 2 && outOfBounds)
-                              ? 0
-                              : static_cast<uint8_t>((line.vram[palAddress & 0x7FFF] >> 8) & 0xFF);
-
-        uint8_t tilePriority;
-        if (source == Source::BG1) {
-            tilePriority = bg.priority[0];
-        } else {
-            // EXTBG BG2: bit 7 of palette = priority select
-            tilePriority = bg.priority[palette >> 7];
-            palette &= 0x7F;
-        }
-
-        // Mosaic
-        if (bg.mosaicEnable && line.io.mosaic.size > 1) {
-            if (mosaicCounter == 0) {
-                mosaicCounter = line.io.mosaic.size;
-                mosaicTransparent = (palette == 0);
-                if (!mosaicTransparent) {
-                    mosaicColor = directColorMode ? DirectColor(0, palette)
-                                                  : line.cgram[palette];
-                }
-                mosaicPriority = tilePriority;
-            }
-            mosaicCounter--;
-
-            if (mosaicTransparent) continue;
-            if (bg.aboveEnable && !winAbove[X])
-                PlotAbove(line, X, source, mosaicPriority, mosaicColor);
-            if (bg.belowEnable && !winBelow[X])
-                PlotBelow(line, X, source, mosaicPriority, mosaicColor);
-            continue;
-        }
-
-        if (palette == 0) continue;
-
-        uint16_t finalColor = directColorMode ? DirectColor(0, palette)
-                                              : line.cgram[palette];
-
-        if (bg.aboveEnable && !winAbove[X])
-            PlotAbove(line, X, source, tilePriority, finalColor);
-        if (bg.belowEnable && !winBelow[X])
-            PlotBelow(line, X, source, tilePriority, finalColor);
-    }
 }
 
 // RenderObjects - sprite rendering

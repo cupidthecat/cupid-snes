@@ -322,14 +322,16 @@ void Mode6TileOffsets() {
                         for (int x = 0; x < 512; ++x) {
                             int sourceX = x + scroll * 2;
                             int sourceY = y + 1 + 5;
-                            const int offsetDot = x / 2 + (scroll & 7);
-                            // The first eight logical dots, shortened by fine scroll,
-                            // have no offset entry. Each later entry covers 16 source pixels.
-                            if (offsetDot >= 8) {
-                                const int column = (lookupScroll / 8 + (offsetDot - 8) / 8) & 63;
-                                if (offsets & 1)
-                                    sourceX = x + (scroll & 7) * 2 + ((16 + column * 24) & 1023) * 2;
-                                if (offsets & 2) sourceY = y + 1 + ((11 + column * 5) & 1023);
+                            const int fine = (scroll * 2) & 7;
+                            const int fetchGroup = (x + fine) / 16;
+                            // A pair of character columns shares the offset fetched in
+                            // the preceding bus group. The initial pair has no offset.
+                            if (fetchGroup >= 1) {
+                              const int column = (lookupScroll / 8 + fetchGroup - 1) & 63;
+                              if (offsets & 1)
+                                sourceX = x + fine + ((16 + column * 24) & 1016);
+                              if (offsets & 2)
+                                sourceY = y + 1 + ((11 + column * 5) & 1023);
                             }
                             const int mapX = (sourceX / 16) & 63;
                             const int mapY = (sourceY / (tall ? 16 : 8)) & 63;
@@ -422,9 +424,10 @@ void RasterSpanSampling() {
                     raster->SetCurrentHClock(0);
                     raster->WriteIO(0x2100, 15);
                     for (int i = 0; i < 11; ++i) {
-                        if (i == 5) raster->ScanlineBegin(line);
-                        raster->SetCurrentHClock(ScreenClock(boundaries[i]));
-                        raster->WriteIO(0x2100, static_cast<uint8_t>((i * 7 + line) % 15 + 1));
+                      if (i == 6)
+                        raster->ScanlineBegin(line);
+                      raster->SetCurrentHClock(ScreenClock(boundaries[i]));
+                      raster->WriteIO(0x2100, static_cast<uint8_t>((i * 7 + line) % 15 + 1));
                     }
                 }
                 raster->VBlankBegin();
@@ -644,13 +647,13 @@ void RasterStageOrdering() {
   ppu->SetCurrentHClock(594);
   ppu->WriteIO(0x2100, 7); // Screen pixel 134.
   ppu->SetCurrentHClock(600);
-  ppu->WriteIO(0x2106, 0x31); // Background sample 128.
+  ppu->WriteIO(0x2106, 0x31); // The next shifter sample is pixel 136.
   ppu->VBlankBegin();
-  for (int x = 128; x < 134; ++x)
-    Expect(Pixel(*ppu, x, 0) == 0x001f,
-           "Background and screen writes are applied in pixel order across pipeline stages");
-  Expect(Pixel(*ppu, 134, 0) == 14,
-         "A screen write retains its own pixel boundary after a later background write");
+  Expect(Pixel(*ppu, 133, 0) == 0x03e0 && Pixel(*ppu, 134, 0) == 14 &&
+             Pixel(*ppu, 135, 0) == (14 << 5),
+         "Screen brightness changes before the following background mosaic sample");
+  for (int x = 136; x < 140; ++x)
+    Expect(Pixel(*ppu, x, 0) == 14, "Mosaic retains the color sampled by the live shifter");
 }
 
 void Mode7WriteClock() {
@@ -720,7 +723,8 @@ void RasterRegisterChanges() {
         Write16(*ppu, 0x210d, 8);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 100, 0) == 0x001f, "Raster scroll leaves the earlier tile columns unchanged");
-        Expect(Pixel(*ppu, 132, 0) == 0x03e0, "Raster scroll uses the new offset after the write");
+        Expect(Pixel(*ppu, 132, 0) == 0x001f && Pixel(*ppu, 160, 0) == 0x03e0,
+               "Scroll writes affect only character columns whose names have not been fetched");
     }
     {
         auto ppu = std::make_unique<Ppu>();
@@ -731,7 +735,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2123, 0x02);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0x001f, "Window selection keeps the earlier span unmasked");
@@ -753,8 +757,8 @@ void RasterRegisterChanges() {
         ppu->WriteIO(0x2106, 0x31);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 126, 0) != Pixel(*ppu, 127, 0), "Pixels before the mosaic write stay unmosaiced");
-        Expect(Pixel(*ppu, 128, 0) == Pixel(*ppu, 129, 0) &&
-               Pixel(*ppu, 128, 0) == Pixel(*ppu, 131, 0),
+        Expect(Pixel(*ppu, 136, 0) == Pixel(*ppu, 137, 0) &&
+                   Pixel(*ppu, 136, 0) == Pixel(*ppu, 139, 0),
                "Mosaic starts in the span following its timestamp");
     }
     {
@@ -767,7 +771,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2127, 127);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0, "Raster window position preserves the earlier masked span");
@@ -785,7 +789,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x212a, 0x01);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0, "Raster window logic preserves the earlier OR-masked span");
@@ -797,10 +801,10 @@ void RasterRegisterChanges() {
         ppu->WriteIO(0x212c, 0);
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
-        ppu->SetCurrentHClock(RasterClock(64));
+        ppu->SetCurrentHClock(ScreenClock(64));
         ppu->WriteIO(0x212c, 1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(192));
+        ppu->SetCurrentHClock(ScreenClock(192));
         ppu->WriteIO(0x212c, 0);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 32, 0) == 0, "Raster main-screen selection reconstructs the pre-snapshot disabled span");
@@ -817,7 +821,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x212e, 1);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0x001f, "Raster main-window enable preserves the earlier visible span");
@@ -829,7 +833,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2130, 0xc0);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0x001f, "Raster color-window control preserves the earlier main pixel");
@@ -847,7 +851,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x212b, 0x04);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0x001f, "Raster color-window logic preserves the earlier OR span");
@@ -861,7 +865,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2131, 0x01);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 5, "Raster color-math designation preserves the earlier unblended span");
@@ -877,7 +881,7 @@ void RasterRegisterChanges() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2132, 0x22);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 6, "Raster fixed color preserves the earlier blend operand");
@@ -936,7 +940,7 @@ void Mode7DirectColorAndExtbgMosaic() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x2130, 0x01);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 64, 0) == 0x001f, "Raster direct-color control preserves the earlier indexed span");
@@ -1047,7 +1051,7 @@ void HiresAdjacentMathAndWindows() {
             ppu->FrameBegin();
             ppu->SetCurrentLine(1);
             ppu->ScanlineBegin(1);
-            ppu->SetCurrentHClock(RasterClock(128));
+            ppu->SetCurrentHClock(ScreenClock(128));
             Write16(*ppu, 0x210d, 8);
             ppu->WriteIO(0x2123, 0x02);
             ppu->VBlankBegin();
@@ -1068,7 +1072,7 @@ void HiresAdjacentMathAndWindows() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x212d, 2);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 128, 0) == 0, "Raster sub-screen selection preserves the earlier backdrop sub pixel");
@@ -1085,7 +1089,7 @@ void HiresAdjacentMathAndWindows() {
         ppu->FrameBegin();
         ppu->SetCurrentLine(1);
         ppu->ScanlineBegin(1);
-        ppu->SetCurrentHClock(RasterClock(128));
+        ppu->SetCurrentHClock(ScreenClock(128));
         ppu->WriteIO(0x212f, 2);
         ppu->VBlankBegin();
         Expect(Pixel(*ppu, 128, 0) == static_cast<uint16_t>(5 << 5),
@@ -1153,7 +1157,7 @@ void HiresCompositingLatches() {
       ppu->FrameBegin();
       ppu->SetCurrentLine(1);
       ppu->ScanlineBegin(1);
-      ppu->SetCurrentHClock(RasterClock(128));
+      ppu->SetCurrentHClock(ScreenClock(128));
       ppu->WriteIO(change.address, change.value);
       ppu->VBlankBegin();
       Expect(Pixel(*ppu, 256, 0) == change.boundarySub,
@@ -1191,7 +1195,7 @@ void HiresCompositingLatches() {
     ppu->ScanlineBegin(1);
     ppu->SetCurrentHClock(ScreenClock(64));
     ppu->WriteIO(0x2100, 0x8f);
-    ppu->SetCurrentHClock(RasterClock(96));
+    ppu->SetCurrentHClock(ScreenClock(96));
     ppu->WriteIO(0x2131, 0);
     ppu->WriteIO(0x2132, 0x26);
     ppu->SetCurrentHClock(ScreenClock(128));
