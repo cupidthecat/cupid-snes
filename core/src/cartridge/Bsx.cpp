@@ -29,7 +29,7 @@ struct Bsx::Impl {
 
     std::span<const uint8_t> bios;
     std::span<uint8_t> pack, sram;
-    std::vector<uint8_t> psram = std::vector<uint8_t>(0x80000);
+    std::vector<uint8_t> psram = std::vector<uint8_t>(0x80000, 0xff);
     std::array<uint8_t, 16> pending{}, active{};
     uint8_t hidden = 0x3f;
     bool ready = false;

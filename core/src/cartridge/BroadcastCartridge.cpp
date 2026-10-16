@@ -8,7 +8,7 @@ namespace snes::core {
 void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
     bsx_.reset();
     header_.sramSizeShift = 5;
-    sram_.assign(0x8000, 0);
+    sram_.assign(0x8000, 0xff);
     if (pack.empty()) memoryPack_.assign(0x100000, 0xff);
     else memoryPack_.assign(pack.begin(), pack.end());
     memoryPackReadOnly_ = memoryPack_[0xff00] == 'M' && memoryPack_[0xff02] == 'P' &&

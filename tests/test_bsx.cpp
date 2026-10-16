@@ -35,6 +35,16 @@ struct Fixture {
     }
 };
 
+void ColdStorage() {
+  std::vector<uint8_t> bios(0x100000), pack(0x100000, 255), sram(0x8000, 255);
+  Bsx chip(bios, pack, sram);
+  Check(chip.Psram().size() == 0x80000 && std::all_of(chip.Psram().begin(), chip.Psram().end(),
+                                                      [](uint8_t byte) { return byte == 255; }),
+        "Fresh download RAM starts erased");
+  chip.Psram()[0x123] = 0x64;
+  chip.Reset();
+  Check(chip.Psram()[0x123] == 0x64, "Reset retains downloaded RAM");
+}
 void MapperLatchesAndStorage() {
     Fixture f;
     for (unsigned reg = 0; reg < 16; ++reg) {
@@ -302,8 +312,11 @@ void PacketStreams() {
 
 int main() {
     try {
-        MapperLatchesAndStorage(); PsramAndPackMapping(); MappingPriority();
-        FlashCommandsAndIrq(); RadioAndClock(); PacketStreams();
+      ColdStorage();
+      MapperLatchesAndStorage();
+      PsramAndPackMapping();
+      MappingPriority();
+      FlashCommandsAndIrq(); RadioAndClock(); PacketStreams();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "BS-X regression: %s\n", error.what());
         return 1;

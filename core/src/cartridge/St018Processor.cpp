@@ -27,6 +27,7 @@ void St018Processor::Restart() {
 void St018Processor::Reset() {
   reset_ = false;
   Restart();
+  ram_.fill(0);
 }
 
 void St018Processor::SetPal(bool pal) {

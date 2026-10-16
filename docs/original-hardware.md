@@ -84,7 +84,7 @@ The memory controller follows the documented [MCC register and mapping behavior]
 
 ## Validation scope
 
-The current Windows Release build passes all 59 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
+The current Windows Release build passes all 60 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
 
 Run the complete test set with:
 
