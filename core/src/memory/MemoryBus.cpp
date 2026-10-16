@@ -349,8 +349,10 @@ void MemoryBus::MapCartridge(Cartridge& cart) {
       MapRange(0x80, 0xbf, 0x6000, 0x7fff, cartSlot);
     }
     if (cart.Header().chip == EnhancementChip::St018) {
-      MapRange(0x00, 0x3f, 0x3000, 0x3fff, cartSlot);
-      MapRange(0x80, 0xbf, 0x3000, 0x3fff, cartSlot);
+      const uint16_t first = cart.HasArmProcessor() ? 0x3800 : 0x3000;
+      const uint16_t last = cart.HasArmProcessor() ? 0x38ff : 0x3fff;
+      MapRange(0x00, 0x3f, first, last, cartSlot);
+      MapRange(0x80, 0xbf, first, last, cartSlot);
     }
     switch (mapping) {
     case MappingType::Bsx:

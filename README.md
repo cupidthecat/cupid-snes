@@ -16,7 +16,7 @@ The core includes:
 - A scanline renderer with tiled backgrounds, sprites, windows, color math, Mode 7, high-resolution and pseudo-hires output, overscan, and interlace.
 - An SPC700 and S-DSP audio path with BRR samples, envelopes, Gaussian interpolation, pitch modulation, noise, stereo mixing, and echo at 32 kHz.
 - Cartridge header detection, 512-byte copier-header removal, interleaved ROM normalization, LoROM and HiROM mirrors, extended layouts, SRAM, and fast-ROM access timing.
-- Cartridge hardware for DSP-1, DSP-2, DSP-3, DSP-4, OBC1, S-RTC, S-DD1, SPC7110, SA-1, Super FX, Cx4, ST010, BS-X, and Sufami Turbo. DSP-1 through DSP-4 and ST010/ST011 can execute supplied cartridge firmware. ST018 currently covers its startup protocol.
+- Cartridge hardware for DSP-1, DSP-2, DSP-3, DSP-4, OBC1, S-RTC, S-DD1, SPC7110, SA-1, Super FX, Cx4, ST010, BS-X, and Sufami Turbo. DSP-1 through DSP-4, ST010/ST011, and ST018 can execute supplied cartridge firmware.
 - MSU-1 data streaming and PCM playback from `.msu` and numbered `.pcm` sidecars.
 - SDL input for gamepads, keyboard controls, mouse, multitap, Super Scope, Justifiers, and the MACS rifle.
 - `.srm`, `.rtc`, and flash sidecar saves, written through temporary files before replacement.
@@ -70,7 +70,7 @@ The smoke tool's arguments and exit codes are documented in [Cartridge compatibi
 
 ## Current limits
 
-The emulator is not cycle exact. SA-1 advancement can finish a whole instruction, PPU memory collisions within a clock still need validation, and several cartridge chips are modeled at the command or board-protocol level. Backgrounds and objects use clocked fetch state. BS-X live reception and SoundLink audio are not implemented. Light-gun input uses scheduled beam positions rather than modeling the optical sensor.
+The emulator is not cycle exact. SA-1 cache timing still needs validation, PPU memory collisions within a clock still need validation, and several cartridge chips are modeled at the command or board-protocol level. Backgrounds and objects use clocked fetch state. BS-X live reception and SoundLink audio are not implemented. Light-gun input uses scheduled beam positions rather than modeling the optical sensor.
 
 Passing a mapper test, recognizing a chip, or getting visible output from a smoke run is not the same as full game compatibility. The detailed notes call out the limits for each subsystem:
 
@@ -94,4 +94,4 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 
 [Light guns and raster memory](docs/light-guns-and-raster.md) covers Super Scope, Justifiers, MACS rifle, aiming controls, beam latches, and graphics-memory timing.
 
-[Clocked cartridge processors](docs/clocked-cartridge-processors.md) covers DSP and ST firmware files, processor clocks, board maps, and saves. [ST010 cartridge support](docs/st010.md) describes the fallback math commands.
+[Clocked cartridge processors](docs/clocked-cartridge-processors.md) covers DSP and ST firmware files, processor clocks, board maps, and saves. [ST010 cartridge support](docs/st010.md) describes the fallback math commands. [ST018 firmware execution](docs/st018.md) covers the ARM processor and CPU bridge.

@@ -64,6 +64,7 @@ std::vector<uint8_t> Image(uint8_t type) {
     std::fill_n(rom.begin() + 0x7fc0, 64, 0);
     std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
     rom[0x7fc0] = 'T'; rom[0x7fd5] = 0x30; rom[0x7fd6] = type; rom[0x7fd7] = 9;
+    rom[0x7fd8] = 3;
     rom[0x7fd9] = 1; rom[0x7fdc] = rom[0x7fdd] = 0xff; rom[0x7ffd] = 0x80;
     return rom;
 }

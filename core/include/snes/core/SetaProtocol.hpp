@@ -1,5 +1,5 @@
-// Observed ST011 command packets and ST018 startup handshakes.
-// These interfaces do not emulate either device's internal program processor.
+// Fallback ST011 command packets and ST018 startup handshakes.
+// Firmware execution uses separate processor modules.
 #pragma once
 
 #include <array>

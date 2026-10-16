@@ -5,12 +5,14 @@
 
 namespace snes::core {
 const char *CartridgeFirmware::FileName(FirmwareKind kind) {
-  constexpr std::array names{"dsp1.rom", "dsp1b.rom", "dsp2.rom", "dsp3.rom",
-                             "dsp4.rom", "st010.rom", "st011.rom"};
+  constexpr std::array names{"dsp1.rom", "dsp1b.rom", "dsp2.rom",  "dsp3.rom",
+                             "dsp4.rom", "st010.rom", "st011.rom", "st018.rom"};
   return names.at(static_cast<size_t>(kind));
 }
 
 size_t CartridgeFirmware::Size(FirmwareKind kind) {
+  if (kind == FirmwareKind::St018)
+    return 0x28000;
   return kind == FirmwareKind::St010 || kind == FirmwareKind::St011 ? 0xd000 : 0x2000;
 }
 
