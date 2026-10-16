@@ -467,20 +467,25 @@ void Clock() {
     program({9, 5, 9, 5, 3, 2, 8, 2, 2, 4, 2, 10}); // 2024-02-28 23:59:59
     auto digits = ReadClock(clock);
     Check(digits[12] == 3, "S-RTC computes weekday when programmed");
-    clock.Write(13);
-    Check(clock.Read() == 15 && clock.Read() == 9, "S-RTC starts a coherent read snapshot");
     now += 2;
+    Check(ReadClock(clock) == digits, "Host time does not advance a running cartridge calendar");
+    clock.Write(13);
+    Check(clock.Read() == 15 && clock.Read() == 9, "S-RTC starts a live calendar read");
+    clock.Advance(1);
     clock.Save();
-    Check(clock.Read() == 5, "Saving during a clock read does not tear the timestamp");
+    Check(clock.Read() == 0,
+          "Reads observe a calendar edge without a save changing the serial cursor");
+    clock.Advance(21'477'272);
     digits = ReadClock(clock);
-    Check(digits[0] == 1 && digits[1] == 0 && digits[4] == 0 && digits[6] == 9 && digits[7] == 2 && digits[12] == 4,
-          "S-RTC leap-day rollover");
+    Check(digits[0] == 1 && digits[1] == 0 && digits[4] == 0 && digits[6] == 9 && digits[7] == 2 &&
+              digits[12] == 3,
+          "S-RTC leap-day rollover retains its programmed weekday register");
     const auto saved = clock.Save();
     now += 86400;
     Srtc restored([&] { return now; });
     Check(restored.Load(saved), "S-RTC save round trip");
     digits = ReadClock(restored);
-    Check(digits[6] == 1 && digits[7] == 0 && digits[8] == 3 && digits[12] == 5,
+    Check(digits[6] == 1 && digits[7] == 0 && digits[8] == 3 && digits[12] == 3,
           "S-RTC advances while the emulator is closed");
     now -= 3600;
     Check(ReadClock(restored) == digits, "S-RTC ignores host clock rollback");
@@ -488,9 +493,10 @@ void Clock() {
     Check(!restored.Load(corrupt), "S-RTC rejects an invalid save signature");
     Check(!restored.Load(std::span(saved).first(20)), "S-RTC rejects truncated saves");
     program({9, 5, 9, 5, 3, 2, 8, 2, 2, 0, 0, 11}); // 2100 is not a leap year.
-    ++now;
+    clock.Reset();
+    clock.Advance(1);
     digits = ReadClock(clock);
-    Check(digits[6] == 1 && digits[7] == 0 && digits[8] == 3, "S-RTC Gregorian century rule");
+    Check(digits[6] == 1 && digits[7] == 0 && digits[8] == 3, "S-RTC century rollover");
     clock.Write(14); clock.Write(4);
     Check(clock.Read() == 0, "S-RTC clear leaves read mode");
     digits = ReadClock(clock);

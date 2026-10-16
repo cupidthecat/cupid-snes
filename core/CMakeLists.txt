@@ -43,7 +43,7 @@ add_library(snes_core
   src/audio/Dsp2.cpp
   src/audio/Spc700.cpp
   src/audio/Smp.cpp
-  src/audio/Srtc.cpp
+  src/cartridge/Srtc.cpp
   src/io/AutoJoypad.cpp
   src/io/ControllerPorts.cpp
   src/io/CpuIoRegisters.cpp

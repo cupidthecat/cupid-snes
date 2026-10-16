@@ -52,6 +52,12 @@ jobs:
           tests/test_spc7110_parts.cpp -o spc7110-parts-tests
       - name: Test SPC7110 coding and RTC
         run: ./spc7110-parts-tests
+      - name: Build S-RTC calendar tests
+        run: >-
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include
+          core/src/cartridge/Srtc.cpp tests/test_srtc.cpp -o srtc-tests
+      - name: Test S-RTC calendar
+        run: ./srtc-tests
   windows:
     runs-on: windows-2022
     timeout-minutes: 20

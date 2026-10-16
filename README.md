@@ -99,3 +99,5 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 [Cx4 processor execution](docs/cx4.md) covers data firmware, instruction caches, DMA, ROM ownership, and CPU IRQ controls.
 
 [SPC7110 and cartridge RTC](docs/spc7110.md) covers decompression, arithmetic timing, data ports, memory maps, and clock saves.
+
+[S-RTC cartridge clock](docs/srtc.md) covers calendar programming, oscillator timing, live reads, and persistence.

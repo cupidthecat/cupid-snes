@@ -20,9 +20,9 @@ New cartridge RAM starts at $FF. Loading a save or resetting the console rebuild
 
 ## S-RTC
 
-The clock reads through $2800 and accepts commands through $2801 in banks $00-$3F/$80-$BF. Commands select read mode, program the calendar, or clear it. Reads contain a leading $F, thirteen calendar nibbles, and a trailing $F. A read sequence keeps one calendar snapshot even if a save occurs during the read.
+The clock reads through $2800 and accepts commands through $2801 in banks $00-$3F/$80-$BF. Commands select read mode, program the calendar, or clear it. Reads contain a leading $F, thirteen calendar nibbles, and a trailing $F. Calendar reads remain live across clock edges, and saving preserves the serial cursor.
 
-A new clock starts with the host's local date and time. Games can program another date. Calendar advancement uses elapsed host seconds, accounts for Gregorian leap years, and ignores clock rollback. The clock also advances across emulator restarts.
+A new clock has cleared calendar storage. Games can program its date, and running calendars advance at one Hz from console clocks. Loading a save applies elapsed host time. [S-RTC cartridge clock](srtc.md) describes numeric programming, live reads, calendar carries, and reset behavior.
 
 The frontend stores clock data in a `.rtc` file beside the ROM, using the same temporary-file replacement as battery RAM. It saves every 300 frames and on normal exit. The file contains thirteen calendar bytes, the three ASCII bytes `RTC`, and an eight-byte unsigned Unix timestamp in little-endian order. This 24-byte format is specific to this emulator. Invalid signatures and sizes stop loading without replacing the file.
 

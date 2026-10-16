@@ -516,6 +516,8 @@ void Emulator::ResetHardware(bool warm) {
   const bool pal = (country >= 2 && country <= 12) || country == 18;
   timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
   cartridge_->SetPal(pal);
+  if (srtc_)
+    srtc_->SetPal(pal);
   ppu_.SetPal(pal);
   frameIndex_ = 0;
   masterCycles_ = 0;
@@ -699,10 +701,14 @@ void Emulator::SynchronizeCoprocessors() {
   while (delta > std::numeric_limits<uint32_t>::max()) {
     cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max(), cpu_->regs().mar,
                                 cpu_->DramRefreshActive());
+    if (srtc_)
+      srtc_->Advance(std::numeric_limits<uint32_t>::max());
     delta -= std::numeric_limits<uint32_t>::max();
   }
   cartridge_->AdvanceHardware(static_cast<uint32_t>(delta), cpu_->regs().mar,
                               cpu_->DramRefreshActive());
+  if (srtc_)
+    srtc_->Advance(static_cast<uint32_t>(delta));
 }
 
 void Emulator::SynchronizeDevices() {

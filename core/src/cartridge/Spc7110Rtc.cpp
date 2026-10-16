@@ -2,7 +2,6 @@
 #include "snes/core/Timing.hpp"
 #include <algorithm>
 #include <chrono>
-#include <ctime>
 #include <limits>
 #include <utility>
 
@@ -15,35 +14,7 @@ EpsonRtc::EpsonRtc(Clock clock) : clock_(std::move(clock)) {
           .count();
     };
   digits_[1] = 8;
-  InitializeTime(clock_());
   Reset();
-}
-void EpsonRtc::InitializeTime(int64_t timestamp) {
-  const std::time_t value = std::time_t(timestamp);
-  std::tm local{};
-#ifdef _WIN32
-  if (localtime_s(&local, &value))
-    return;
-#else
-  if (!localtime_r(&value, &local))
-    return;
-#endif
-  const auto pair = [this](unsigned i, unsigned n) {
-    digits_[i] = uint8_t(n % 10);
-    digits_[i + 1] = uint8_t(n / 10);
-  };
-  pair(0, unsigned(std::min(local.tm_sec, 59)));
-  digits_[1] |= 8;
-  pair(2, unsigned(local.tm_min));
-  const unsigned hour = unsigned(local.tm_hour);
-  pair(4, (hour % 12) ? hour % 12 : 12);
-  if (hour >= 12)
-    digits_[5] |= 4;
-  pair(6, unsigned(local.tm_mday));
-  pair(8, unsigned(local.tm_mon + 1));
-  pair(10, unsigned(local.tm_year % 100));
-  digits_[12] = uint8_t(local.tm_wday);
-  resync_ = true;
 }
 void EpsonRtc::Reset() {
   ticks_ = seconds_ = 0;

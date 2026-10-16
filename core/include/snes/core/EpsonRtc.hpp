@@ -38,6 +38,5 @@ private:
   void Year();
   uint8_t Digit(unsigned index);
   void Put(unsigned index, uint8_t value);
-  void InitializeTime(int64_t timestamp);
 };
 } // namespace snes::core
