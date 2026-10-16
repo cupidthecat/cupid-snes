@@ -39,6 +39,12 @@ jobs:
           core/src/cpu/Arm6.cpp tests/test_arm6.cpp -o arm-tests
       - name: Test ARM processor
         run: ./arm-tests
+      - name: Build HG51B processor tests
+        run: >-
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include
+          core/src/cpu/Hg51b.cpp core/src/cpu/Hg51bHost.cpp tests/test_hg51b.cpp -o hg51b-tests
+      - name: Test HG51B processor
+        run: ./hg51b-tests
   windows:
     runs-on: windows-2022
     timeout-minutes: 20

@@ -238,3 +238,11 @@ add_test(NAME snes_st018_tests COMMAND snes_st018_tests)
 add_executable(snes_arm6_tests test_arm6.cpp)
 target_link_libraries(snes_arm6_tests PRIVATE snes_core)
 add_test(NAME snes_arm6_tests COMMAND snes_arm6_tests)
+
+add_executable(snes_hg51b_tests test_hg51b.cpp)
+target_link_libraries(snes_hg51b_tests PRIVATE snes_core)
+add_test(NAME snes_hg51b_tests COMMAND snes_hg51b_tests)
+
+add_executable(snes_cx4_processor_tests test_cx4_processor.cpp)
+target_link_libraries(snes_cx4_processor_tests PRIVATE snes_core)
+add_test(NAME snes_cx4_processor_tests COMMAND snes_cx4_processor_tests)

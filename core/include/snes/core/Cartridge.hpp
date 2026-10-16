@@ -6,6 +6,7 @@
 
 #include "snes/core/Bsx.hpp"
 #include "snes/core/Cx4.hpp"
+#include "snes/core/Cx4Processor.hpp"
 #include "snes/core/Dsp3.hpp"
 #include "snes/core/Dsp4.hpp"
 #include "snes/core/NecDsp.hpp"
@@ -150,7 +151,11 @@ public:
   bool HasArmProcessor() const noexcept {
     return bool(armDsp_);
   }
+  bool HasCx4Processor() const noexcept {
+    return bool(cx4Processor_);
+  }
   bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
+  bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
 
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;
@@ -209,6 +214,7 @@ private:
     std::unique_ptr<Sa1> sa1_;
     std::unique_ptr<SuperFx> superFx_;
     std::unique_ptr<Cx4> cx4_;
+    std::unique_ptr<Cx4Processor> cx4Processor_;
     std::unique_ptr<St011> st011_;
     std::unique_ptr<St018> st018_;
     std::unique_ptr<St018Processor> armDsp_;
