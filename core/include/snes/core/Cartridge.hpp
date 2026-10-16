@@ -13,6 +13,7 @@
 #include "snes/core/Bsx.hpp"
 #include "snes/core/Dsp3.hpp"
 #include "snes/core/Dsp4.hpp"
+#include "snes/core/Obc1.hpp"
 #include <memory>
 
 #include <cstddef>
@@ -122,6 +123,9 @@ public:
     const RomHeader& Header() const noexcept;
     uint32_t RomCrc32() const noexcept;
 
+    // Reset device controls while retaining cartridge storage and clock data.
+    void Reset();
+
     void SetMemselFast(bool enabled) noexcept;
     bool MemselFast() const noexcept;
 
@@ -198,6 +202,7 @@ private:
     std::unique_ptr<Bsx> bsx_;
     std::unique_ptr<Dsp3> dsp3_;
     std::unique_ptr<Dsp4> dsp4_;
+    std::unique_ptr<Obc1> obc1_;
 };
 
 } // namespace snes::core

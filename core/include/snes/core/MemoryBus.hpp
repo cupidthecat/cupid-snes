@@ -106,6 +106,8 @@ public:
 
     /// Full reset: clear all mappings, reset WRAM, reset I/O state.
     void Reset();
+    // Reset CPU-facing latches without changing memory or address dispatch.
+    void ResetRegisters();
 
     // WRAM direct access (for DMA, WMDATA, testing)
     uint8_t* WramData() noexcept { return wram_.data(); }

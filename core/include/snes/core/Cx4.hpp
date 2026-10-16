@@ -11,7 +11,7 @@ class Cx4 {
 public:
     explicit Cx4(std::span<const uint8_t> rom) : rom_(rom) {}
     static bool Selects(uint32_t address) noexcept { return (address & 0x40e000) == 0x006000; }
-    void Reset() { ram_.fill(0); }
+    void Reset();
     uint8_t Read(uint32_t address) const;
     void Write(uint32_t address, uint8_t value);
 

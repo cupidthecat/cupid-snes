@@ -61,6 +61,11 @@ Srtc::Srtc(Clock clock) : clock_(std::move(clock)) {
     }
 }
 
+void Srtc::Reset() {
+  mode_ = Mode::Read;
+  index_ = -1;
+}
+
 void Srtc::SetWeekday() {
     const auto date = Date(digits_);
     if (date.ok()) digits_[12] = static_cast<uint8_t>(std::chrono::weekday(std::chrono::sys_days(date)).c_encoding());

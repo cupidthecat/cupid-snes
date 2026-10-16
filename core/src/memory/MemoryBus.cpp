@@ -172,19 +172,18 @@ void MemoryBus::Reset() {
         wram_[i] = (i & 1) ? 0xAA : 0x55;
     }
 
-    // Reset WMDATA address
-    wmdataAddr_ = 0;
-
-    // Reset MDR
-    mdr_ = 0;
-
-    // Reset bus speed
-    fastRom_ = false;
+    ResetRegisters();
 
     // Reset cached slot IDs
     wramSlotLo_ = 0;
     wramSlotFull_ = 0;
     wmdataSlot_ = 0;
+}
+
+void MemoryBus::ResetRegisters() {
+  wmdataAddr_ = 0;
+  mdr_ = 0;
+  fastRom_ = false;
 }
 
 // WRAM mapping
@@ -334,6 +333,15 @@ void MemoryBus::MapCartridge(Cartridge& cart) {
     // We map the entire ROM-accessible regions; the Cartridge::Read/Write
     // internally resolves the actual offset and handles mirroring.
     const auto mapping = cart.Header().mapping;
+    if (cart.Header().chip == EnhancementChip::Obc1) {
+      MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
+      MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
+      for (uint8_t bank : {0x70, 0xf0}) {
+        MapRange(bank, bank + 1, 0x6000, 0x7fff, cartSlot);
+        MapRange(bank, bank + 1, 0xe000, 0xffff, cartSlot);
+      }
+      return;
+    }
     if (cart.Header().chip == EnhancementChip::Cx4) {
       MapRange(0x00, 0x3f, 0x6000, 0x7fff, cartSlot);
       MapRange(0x80, 0xbf, 0x6000, 0x7fff, cartSlot);

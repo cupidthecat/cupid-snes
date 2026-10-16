@@ -42,38 +42,39 @@ Ppu::Ppu()
     Reset();
 }
 
-void Ppu::Reset() {
-    // Clear memory
+void Ppu::Reset(bool retainVram) {
+  // Clear memory
+  if (!retainVram)
     std::memset(vram_.get(), 0, VramWords * sizeof(uint16_t));
-    oam_.fill(0);
-    cgram_.fill(0);
+  oam_.fill(0);
+  cgram_.fill(0);
 
-    // Reset IO to power-on defaults
-    io_ = IO{};
-    latch_ = Latch{};
+  // Reset IO to power-on defaults
+  io_ = IO{};
+  latch_ = Latch{};
 
-    // Clear rendering state
-    lineStart_ = 0;
-    lineCount_ = 0;
-    for (auto& events : rasterEvents_) events.clear();
-    vramSnapshotCount_ = 0;
-    vramDirty_ = true;
-    mosaicCounterLine_ = 0xffff;
-    std::memset(output_.get(), 0,
-                static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
+  // Clear rendering state
+  lineStart_ = 0;
+  lineCount_ = 0;
+  for (auto &events : rasterEvents_)
+    events.clear();
+  vramSnapshotCount_ = 0;
+  vramDirty_ = true;
+  mosaicCounterLine_ = 0xffff;
+  std::memset(output_.get(), 0, static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
 
-    currentLine_ = 0;
-    currentHClock_ = 0;
-    cpuPio_ = 0xFF;
-    fieldId_ = false;
-    frameOverscan_ = false;
-    displayInterlace_ = false;
-    frameWidth_ = 256;
-    frameHeight_ = 224;
-    frameInterlace_ = false;
-    isPal_ = false;
+  currentLine_ = 0;
+  currentHClock_ = 0;
+  cpuPio_ = 0xFF;
+  fieldId_ = false;
+  frameOverscan_ = false;
+  displayInterlace_ = false;
+  frameWidth_ = 256;
+  frameHeight_ = 224;
+  frameInterlace_ = false;
+  isPal_ = false;
 
-    UpdateVideoMode();
+  UpdateVideoMode();
 }
 
 // Frame / scanline hooks

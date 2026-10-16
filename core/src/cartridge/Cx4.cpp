@@ -59,6 +59,11 @@ uint8_t Cx4::RomByte(uint32_t offset) const {
     return rom_[base + address];
 }
 
+void Cx4::Reset() {
+  // Work RAM stays powered; the command and processor registers restart.
+  std::fill(ram_.begin() + 0x1f40, ram_.end(), 0);
+}
+
 uint8_t Cx4::Read(uint32_t address) const {
     return (address & 0xffff) == 0x7f5e ? 0 : Byte(address);
 }

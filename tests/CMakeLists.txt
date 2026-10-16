@@ -28,6 +28,10 @@ add_executable(snes_frame_execution_tests test_frame_execution.cpp)
 target_link_libraries(snes_frame_execution_tests PRIVATE snes_core)
 add_test(NAME snes_frame_execution_tests COMMAND snes_frame_execution_tests)
 
+add_executable(snes_console_reset_tests test_console_reset.cpp)
+target_link_libraries(snes_console_reset_tests PRIVATE snes_core)
+add_test(NAME snes_console_reset_tests COMMAND snes_console_reset_tests)
+
 add_executable(snes_execution_context_tests test_execution_context.cpp)
 target_link_libraries(snes_execution_context_tests PRIVATE snes_core)
 add_test(NAME snes_execution_context_tests COMMAND snes_execution_context_tests)

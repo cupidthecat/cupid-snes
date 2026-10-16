@@ -218,7 +218,6 @@ void Emulator::InitSubsystems() {
     // Map the DSP-1 data and status windows for the cartridge board.
     dsp1_.reset();
     dsp2_.reset();
-    obc1_.reset();
     srtc_.reset();
     const auto chip = cartridge_->Header().chip;
     if (chip == EnhancementChip::Dsp1) {
@@ -253,15 +252,6 @@ void Emulator::InitSubsystems() {
             bus_.MapRange(bank, bank + 0x1f, 0x8000, 0xbfff, slot);
         }
     }
-    if (chip == EnhancementChip::Obc1) {
-        obc1_ = std::make_unique<Obc1>();
-        const auto slot = bus_.RegisterHandler(
-            [this](uint32_t address, uint8_t) { return obc1_->Read(static_cast<uint16_t>(address)); },
-            [this](uint32_t address, uint8_t data) { obc1_->Write(static_cast<uint16_t>(address), data); });
-        bus_.MapRange(0x00, 0x3f, 0x6000, 0x7fff, slot);
-        bus_.MapRange(0x80, 0xbf, 0x6000, 0x7fff, slot);
-    }
-
     if (chip == EnhancementChip::Srtc) {
         srtc_ = std::make_unique<Srtc>();
         const auto slot = bus_.RegisterHandler(
@@ -462,39 +452,7 @@ void Emulator::InitSubsystems() {
         return autoJoypad_.Ports().Read(port);
     });
 
-    // 9. Reset all subsystems to power-on state
-    dsp_.Power();
-    smp_.Power();
-    ppu_.Reset();
-    cpuIo_.Reset();
-    dma_.Reset();
-    irq_.Reset();
-    autoJoypad_.Reset();
-    timing_.Reset();
-
-    const auto country = cartridge_->Header().country;
-    const bool pal = (country >= 2 && country <= 12) || country == 18;
-    timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
-    cartridge_->SetPal(pal);
-    ppu_.SetPal(pal);
-    frameIndex_ = 0;
-    masterCycles_ = 0;
-    pendingExtraClocks_ = 0;
-    pendingHdmaSetup_ = false;
-    pendingHdmaRun_ = false;
-    servicingHdma_ = false;
-    dmaArmed_ = false;
-    audioOverflow_.clear();
-    collectingAudio_ = false;
-    nextSmpMasterClock_ = 0;
-    coprocessorsSyncedClock_ = 0;
-    coprocessorClockTarget_ = 0;
-
-    // Set up DSP audio output buffer
-    dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
-
-    // Queue reset after wiring; execution begins only when the console is stepped.
-    cpu_->Reset();
+    ResetHardware(false);
     cpu_->resumeStep_ = [this]() { return ResumeCpuInstruction(); };
     cpu_->discardStep_ = [this]() { StopFrameExecution(); };
     cpu_->SetClockCallback([this](uint32_t clocks) { AdvanceClocks(clocks); });
@@ -505,6 +463,63 @@ void Emulator::InitSubsystems() {
     initialized_ = true;
 
     Logger::Instance().Write(LogLevel::Info, "Subsystems initialized");
+}
+
+bool Emulator::Reset() {
+  if (!initialized_)
+    return false;
+  StopFrameExecution();
+  ResetHardware(true);
+  return true;
+}
+
+void Emulator::ResetHardware(bool warm) {
+  if (warm) {
+    bus_.ResetRegisters();
+    cartridge_->Reset();
+    if (dsp1_)
+      dsp1_->Reset();
+    if (dsp2_)
+      *dsp2_ = Dsp2{};
+    if (srtc_)
+      srtc_->Reset();
+    if (msu1_)
+      msu1_->Reset();
+    dsp_.SoftReset();
+  } else {
+    dsp_.Power();
+  }
+  smp_.Power(warm);
+  ppu_.Reset(warm);
+  cpuIo_.Reset();
+  dma_.Reset();
+  irq_.Reset();
+  autoJoypad_.Reset();
+  timing_.Reset();
+
+  const auto country = cartridge_->Header().country;
+  const bool pal = (country >= 2 && country <= 12) || country == 18;
+  timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
+  cartridge_->SetPal(pal);
+  ppu_.SetPal(pal);
+  frameIndex_ = 0;
+  masterCycles_ = 0;
+  pendingExtraClocks_ = 0;
+  pendingHdmaSetup_ = false;
+  pendingHdmaRun_ = false;
+  servicingHdma_ = false;
+  dmaArmed_ = false;
+  audioOverflow_.clear();
+  collectingAudio_ = false;
+  nextSmpMasterClock_ = 0;
+  coprocessorsSyncedClock_ = 0;
+  coprocessorClockTarget_ = 0;
+
+  // Set up DSP audio output buffer
+  dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
+
+  // Queue reset after wiring; execution begins only when the console is stepped.
+  cpu_->Reset();
 }
 
 // StepFrame - run one complete video frame

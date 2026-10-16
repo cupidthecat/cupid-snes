@@ -42,3 +42,13 @@ ctest --test-dir out/build/release --output-on-failure
 ```
 
 To run only this suite, add `-R snes_hardware_regression_tests` to the CTest command. These checks verify the behaviors above; they do not establish compatibility with every game or enhancement chip.
+
+## Console reset
+
+`Emulator::Reset()` resets a loaded console between emulation steps and returns false when no cartridge is loaded. It cancels an unfinished CPU instruction or DMA transfer before resetting device registers and clocks. Existing video, audio and input attachments stay connected.
+
+Warm reset retains WRAM, audio RAM, VRAM and cartridge RAM. OAM, palette memory and SA-1 internal RAM clear. DSP registers retain their values except FLG, which becomes $E0. The PPU starts in forced blank with both data latches at $FF and VRAM incrementing after the high-byte port. Region settings, mounted media and battery clocks survive. MSU-1 playback stops and its data stream rewinds.
+
+OBC1 uses the cartridge's 8 KiB save memory for its object data and selector bytes. Loading a save or resetting the console restores the object and base selection from that memory. Indexed object writes leave the physical register bytes untouched. Both object-controller aliases in banks $70-$71 and $F0-$F1 share these registers; unused board windows return open bus.
+
+`snes_console_reset_tests` covers both regions, retained memory, DSP registers, cancelled instructions and DMA, cartridge processors, clocks, controller configuration and repeated reset. The MSU-1 integration suite checks reset while media is mounted and playing.

@@ -92,26 +92,26 @@ Smp::Smp() {
     Power();
 }
 
-void Smp::Power() {
-    // Reset the SPC700 processor core
-    Spc700::Power();
+void Smp::Power(bool retainRam) {
+  // Reset the SPC700 processor core
+  Spc700::Power();
 
-    // Clear RAM
+  if (!retainRam)
     ram_.fill(0);
 
-    // Reset I/O state to power-on defaults
-    io_ = IO{};  // uses default member initializers
+  // Reset I/O state to power-on defaults
+  io_ = IO{}; // uses default member initializers
 
-    // Clear port latches
-    apuInput_.fill(0);
-    cpuOutput_.fill(0);
+  // Clear port latches
+  apuInput_.fill(0);
+  cpuOutput_.fill(0);
 
-    // Reset timers
-    timer0_ = {};
-    timer1_ = {};
-    timer2_ = {};
-    busWait_ = {};
-    hardwareClocks_ = 0;
+  // Reset timers
+  timer0_ = {};
+  timer1_ = {};
+  timer2_ = {};
+  busWait_ = {};
+  hardwareClocks_ = 0;
 }
 
 // Bus interface - Spc700 overrides

@@ -97,8 +97,8 @@ public:
       return hardwareClocks_;
     }
 
-    // Power-on reset
-    void Power();
+    // Warm reset keeps the shared audio RAM.
+    void Power(bool retainRam = false);
 
     // Direct access (for testing / debugging)
     uint8_t*       Ram()       noexcept { return ram_.data(); }
