@@ -184,6 +184,8 @@ struct SuperFx::Impl {
         uint16_t offset;
         bool cached, hit;
         unsigned fillByte = 0;
+        enum class Phase { Synchronize, Read, Access };
+        Phase phase = Phase::Read;
         Fetch(Impl& value, uint16_t pc) : chip(value), address(pc), bank(value.programBank),
             offset(uint16_t(pc - value.cacheBase)), cached(offset < 512),
             hit(cached && (value.validLines & (uint32_t(1) << (offset / 16)))) {}
@@ -199,9 +201,33 @@ struct SuperFx::Impl {
                                     : port == Port::Rom ? chip.romRemaining
                                     : port == Port::Ram ? chip.ramRemaining
                                                         : 0;
-          chip.BeginWait(conflict + (hit ? chip.CoreCost() : chip.MemoryCost()), port);
+          if (!cached) {
+            chip.cacheFill = this;
+            // Synchronization and the memory access settle buffers on separate steps.
+            phase = conflict ? Phase::Synchronize : Phase::Read;
+            chip.BeginWait(conflict ? conflict : chip.MemoryCost(), Port::None);
+            return;
+          }
+          chip.BeginWait(chip.CoreCost(), Port::None);
         }
         bool CompleteByte() noexcept {
+          if (!cached) {
+            if (phase == Phase::Synchronize) {
+              phase = Phase::Read;
+              chip.BeginWait(chip.MemoryCost(), Port::None);
+              return false;
+            }
+            if (phase == Phase::Read) {
+              bank = chip.programBank;
+              phase = Phase::Access;
+            }
+            if (!chip.Granted(BankPort(bank))) {
+              chip.BeginWait(6, Port::None);
+              return false;
+            }
+            chip.cacheFill = nullptr;
+            return true;
+          }
           const unsigned line = offset & 0x1f0;
           const uint32_t base = (uint32_t(bank) << 16) | (address & 0xfff0);
           chip.cache[line + fillByte] = chip.MemoryByte(base + fillByte);
@@ -412,37 +438,64 @@ struct SuperFx::Impl {
             const unsigned mode = (status >> 8) & 3;
             const unsigned n = opcode & 15;
             const uint16_t input = r[source];
+            bool takeBranch = false;
+            if (opcode >= 0x05 && opcode <= 0x0f) {
+              const bool s = (status & Sign) != 0, v = (status & Overflow) != 0;
+              switch (opcode) {
+              case 0x05:
+                takeBranch = true;
+                break;
+              case 0x06:
+                takeBranch = s == v;
+                break;
+              case 0x07:
+                takeBranch = s != v;
+                break;
+              case 0x08:
+                takeBranch = !(status & Zero);
+                break;
+              case 0x09:
+                takeBranch = (status & Zero) != 0;
+                break;
+              case 0x0a:
+                takeBranch = !s;
+                break;
+              case 0x0b:
+                takeBranch = s;
+                break;
+              case 0x0c:
+                takeBranch = !(status & Carry);
+                break;
+              case 0x0d:
+                takeBranch = (status & Carry) != 0;
+                break;
+              case 0x0e:
+                takeBranch = !v;
+                break;
+              case 0x0f:
+                takeBranch = v;
+                break;
+              }
+            }
             uint16_t immediate = 0;
             if ((opcode >= 0x05 && opcode <= 0x0f) || (opcode & 0xf0) == 0xa0 || opcode >= 0xf0) {
                 immediate = pipeline;
                 ++r[15];
                 pipeline = co_await Fetch{*this, r[15]};
+                pcWritten = false;
                 if (opcode >= 0xf0) {
                     immediate |= uint16_t(pipeline) << 8;
                     ++r[15];
                     pipeline = co_await Fetch{*this, r[15]};
+                    pcWritten = false;
                 }
             }
             const uint16_t operandRegister = r[n];
             bool clearPrefix = true;
             if (opcode >= 0x05 && opcode <= 0x0f) {
-                const bool s = (status & Sign) != 0, v = (status & Overflow) != 0;
-                bool take = false;
-                switch (opcode) {
-                case 0x05: take = true; break;
-                case 0x06: take = s == v; break;
-                case 0x07: take = s != v; break;
-                case 0x08: take = !(status & Zero); break;
-                case 0x09: take = (status & Zero) != 0; break;
-                case 0x0a: take = !s; break;
-                case 0x0b: take = s; break;
-                case 0x0c: take = !(status & Carry); break;
-                case 0x0d: take = (status & Carry) != 0; break;
-                case 0x0e: take = !v; break;
-                case 0x0f: take = v; break;
-                }
-                if (take) SetRegister(15, uint16_t(r[15] + int8_t(immediate)));
-                clearPrefix = false;
+              if (takeBranch)
+                SetRegister(15, uint16_t(r[15] + int8_t(immediate)));
+              clearPrefix = false;
             } else if (opcode >= 0x10 && opcode <= 0x1f) {
                 if (status & With) SetRegister(n, input);
                 else { destination = n; clearPrefix = false; }
@@ -454,12 +507,14 @@ struct SuperFx::Impl {
                 lastRam = r[n];
                 const uint32_t base = uint32_t(ramBank) << 16;
                 co_await RamWrite{*this, base | lastRam, uint8_t(input)};
-                if (!(mode & 1)) co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(input >> 8)};
+                if (!(status & Alt1))
+                  co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(r[source] >> 8)};
             } else if (opcode >= 0x40 && opcode <= 0x4b) {
                 lastRam = r[n];
                 const uint32_t base = uint32_t(ramBank) << 16;
                 uint16_t value = co_await RamRead{*this, base | lastRam};
-                if (!(mode & 1)) value |= uint16_t(co_await RamRead{*this, base | (lastRam ^ 1u)}) << 8;
+                if (!(status & Alt1))
+                  value |= uint16_t(co_await RamRead{*this, base | (lastRam ^ 1u)}) << 8;
                 SetRegister(destination, value);
             } else if (opcode >= 0x50 && opcode <= 0x6f) {
                 const bool subtract = opcode >= 0x60;
@@ -480,9 +535,13 @@ struct SuperFx::Impl {
             } else if (opcode >= 0x80 && opcode <= 0x8f) {
                 const uint8_t right = uint8_t((mode & 2) ? n : r[n]);
                 const auto value = uint16_t((mode & 1) ? uint8_t(input) * right : int8_t(input) * int8_t(right));
-                if (!(config & 0x20)) co_await Wait{*this, CoreCost()};
+                // Results and prefixes are visible during the remaining multiply clocks.
                 SetRegister(destination, value);
                 ResultFlags(value);
+                ClearPrefix();
+                clearPrefix = false;
+                if (!(config & 0x20))
+                  co_await Wait{*this, CoreCost()};
             } else if (opcode >= 0x91 && opcode <= 0x94) {
                 r[11] = uint16_t(r[15] + n);
             } else if (opcode >= 0x98 && opcode <= 0x9d) {
@@ -503,7 +562,7 @@ struct SuperFx::Impl {
                         SetRegister(n, uint16_t(low | (uint16_t(high) << 8)));
                     } else {
                         co_await RamWrite{*this, base | lastRam, uint8_t(operandRegister)};
-                        co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(operandRegister >> 8)};
+                        co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(r[n] >> 8)};
                     }
                 }
             } else if (opcode >= 0xb0 && opcode <= 0xbf) {
@@ -615,32 +674,37 @@ struct SuperFx::Impl {
                 case 0x90: {
                     const uint32_t base = uint32_t(ramBank) << 16;
                     co_await RamWrite{*this, base | lastRam, uint8_t(input)};
-                    co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(input >> 8)};
+                    co_await RamWrite{*this, base | (lastRam ^ 1u), uint8_t(r[source] >> 8)};
                     break;
                 }
                 case 0x9f: {
                     const auto product = uint32_t(int32_t(int16_t(input)) * int32_t(int16_t(r[6])));
-                    co_await Wait{*this, ((config & 0x20) ? 3u : 7u) * CoreCost()};
                     if (mode & 1) r[4] = uint16_t(product);
                     SetRegister(destination, uint16_t(product >> 16));
                     ResultFlags(uint16_t(product >> 16));
                     Flag(Carry, (product & 0x8000) != 0);
+                    ClearPrefix();
+                    clearPrefix = false;
+                    co_await Wait{*this, ((config & 0x20) ? 3u : 7u) * CoreCost()};
                     break;
                 }
                 case 0xdf:
                     if (!(mode & 2)) SetColor(co_await RomRead{*this});
                     else if (mode == 2) {
-                        co_await Wait{*this, ramRemaining, ramRemaining ? Port::Ram : Port::None};
-                        ramBank = uint8_t(input & 1);
+                      co_await Wait{*this, ramRemaining, Port::None};
+                      ramBank = uint8_t(r[source] & 1);
                     } else {
                         co_await RomRead{*this};
-                        romBank = uint8_t(input & 0x7f);
+                        romBank = uint8_t(r[source] & 0x7f);
                     }
                     break;
                 case 0xef: {
                     const uint8_t byte = co_await RomRead{*this};
-                    const uint16_t value = mode == 0 ? byte : mode == 1 ? uint16_t((input & 0xff) | (uint16_t(byte) << 8)) :
-                        mode == 2 ? uint16_t((input & 0xff00) | byte) : uint16_t(int16_t(int8_t(byte)));
+                    const uint16_t value =
+                        mode == 0   ? byte
+                        : mode == 1 ? uint16_t((r[source] & 0xff) | (uint16_t(byte) << 8))
+                        : mode == 2 ? uint16_t((input & 0xff00) | byte)
+                                    : uint16_t(int16_t(int8_t(byte)));
                     SetRegister(destination, value);
                     break;
                 }
@@ -691,6 +755,8 @@ struct SuperFx::Impl {
               r14Written = true;
               StartRomRead();
             }
+            if (n == 15)
+              pcWritten = true;
             if (address == 0x301f) status |= Go;
             return;
         }

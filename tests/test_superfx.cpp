@@ -478,6 +478,205 @@ void CpuRomBufferRestart() {
   }
 }
 
+void MultiplyWriteTimes() {
+  for (bool fast : {false, true}) {
+    for (bool quick : {false, true}) {
+      for (uint8_t opcode : {uint8_t(0x80), uint8_t(0x9f)}) {
+        for (unsigned mode = 0; mode < 4; ++mode) {
+          Fixture f;
+          const unsigned coreCost = fast ? 1 : 2;
+          const unsigned extra = opcode == 0x9f ? (quick ? 3 : 7) * coreCost : quick ? 0 : coreCost;
+          const uint32_t product = opcode == 0x9f ? uint32_t(-98) : (mode & 2) ? 0 : 2401;
+          const uint16_t result = opcode == 0x9f ? uint16_t(product >> 16) : uint16_t(product);
+          f.Reg(0, 49);
+          f.Reg(4, 0x2345);
+          f.Reg(6, 0xfffe);
+          f.chip.WriteCpu(0x3039, fast);
+          f.chip.WriteCpu(0x3037, quick ? 0x20 : 0);
+          f.Cache({Prefix(mode), opcode, 0, 1});
+          f.Start(0);
+          f.chip.Advance(3 * coreCost);
+          Check(f.Reg(0) == result, "Multiply publishes its result before the internal wait");
+          Check((f.chip.ReadCpu(0x3031) & 0x13) == 0,
+                "Multiply clears instruction prefixes before the internal wait");
+          Check((f.chip.ReadCpu(0x3030) & 0x0e) == (opcode == 0x9f ? 0x0c
+                                                    : result       ? 0
+                                                                   : 2),
+                "Multiply publishes result flags before the internal wait");
+          if (opcode == 0x9f && (mode & 1))
+            Check(f.Reg(4) == uint16_t(product), "LMULT publishes the low word before waiting");
+          if (extra) {
+            f.Reg(0, 0xa55a);
+            f.chip.WriteCpu(0x3031, 2);
+            f.chip.Advance(extra);
+            Check(f.Reg(0) == 0xa55a, "A CPU result-register write during multiplication survives");
+            Check((f.chip.ReadCpu(0x3031) & 3) == 2,
+                  "A CPU prefix write during multiplication survives the internal wait");
+          }
+          f.chip.Advance(coreCost);
+          Check(!f.Running(), "Multiply retains its internal clock cost before STOP");
+        }
+      }
+    }
+  }
+}
+
+void BranchConditionSnapshot() {
+  for (bool fast : {false, true}) {
+    for (uint8_t opcode : {uint8_t(8), uint8_t(9), uint8_t(12), uint8_t(13)}) {
+      Fixture f;
+      const unsigned coreCost = fast ? 1 : 2;
+      f.chip.WriteCpu(0x3039, fast);
+      f.Cache({1, opcode, 2, 1, 0, 1});
+      f.Start(0);
+      f.chip.Advance(3 * coreCost);
+      f.chip.WriteCpu(0x3030, 0x26);
+      f.chip.Advance(coreCost);
+      Check(f.Reg(15) == (opcode == 8 || opcode == 12 ? 5 : 4),
+            "A branch samples its condition before fetching the displacement");
+    }
+  }
+}
+
+void BufferedFetchWaits() {
+  Fixture f;
+  f.chip.WriteCpu(0x3039, 1);
+  f.Reg(14, 15);
+  f.ram[4] = 0x31;
+  f.ram[5] = 0x30;
+  f.Cache({0x3d, 0xaf, 2, 0, 1});
+  f.Start(0);
+  f.chip.Advance(5);
+  f.Reg(14, 0x3456);
+  f.chip.Advance(1);
+  Check((f.chip.ReadCpu(0x3030) & 0x40) == 0,
+        "An uncached fetch starts a separate memory step after buffered synchronization");
+}
+
+void BufferedInstructionOperands() {
+  for (unsigned mode = 1; mode < 4; ++mode) {
+    Fixture f;
+    f.Reg(0, 0x31);
+    f.Reg(14, 15);
+    f.rom[15] = 0xae;
+    f.chip.WriteCpu(0x3039, 1);
+    f.Cache({Prefix(mode), 0xef, 0, 1});
+    f.Start(0);
+    f.chip.Advance(3);
+    f.Reg(0, 0xa55a);
+    f.chip.Advance(3);
+    Check(f.Reg(0) == (mode == 1   ? 0xae5a
+                       : mode == 2 ? 0x00ae
+                                   : 0xffae),
+          "Buffered byte merges sample the source at their specified point in the read");
+  }
+  Fixture rom;
+  rom.Reg(0, 0x31);
+  rom.Reg(14, 15);
+  rom.chip.WriteCpu(0x3039, 1);
+  rom.Cache({0x3f, 0xdf, 0, 1});
+  rom.Start(0);
+  rom.chip.Advance(3);
+  rom.Reg(0, 0x6a);
+  rom.chip.Advance(3);
+  Check(rom.chip.ReadCpu(0x3036) == 0x6a, "ROMB samples its source after buffered reads settle");
+  Fixture ram;
+  ram.Reg(0, 1);
+  ram.Reg(1, 0x1000);
+  ram.chip.WriteCpu(0x3039, 1);
+  ram.Cache({0x3d, 0x31, 0x3e, 0xdf, 0, 1});
+  ram.Start(0);
+  ram.chip.Advance(5);
+  ram.Reg(0, 0);
+  ram.chip.Advance(3);
+  Check(ram.chip.ReadCpu(0x303c) == 0, "RAMB samples its source after buffered writes settle");
+}
+
+void WordMemoryOperands() {
+  for (uint8_t opcode : {uint8_t(0x31), uint8_t(0x90)}) {
+    Fixture f;
+    f.Reg(0, 0x1234);
+    f.Reg(1, 0x1000);
+    f.Cache({0x3d, 0x31, opcode, 0, 1});
+    f.Start(0);
+    f.chip.Advance(9);
+    f.Reg(0, 0xa55a);
+    f.chip.Advance(100);
+    Check(f.ram[0x1000] == 0x34 && f.ram[0x1001] == 0xa5,
+          "A word store samples its high byte after the first buffered write is queued");
+  }
+  for (uint8_t opcode : {uint8_t(0xa0), uint8_t(0xf0)}) {
+    Fixture f;
+    f.Reg(0, 0x1234);
+    f.Reg(1, 0x1000);
+    f.chip.WriteCpu(0x3039, 1);
+    if (opcode == 0xa0)
+      f.Cache({0x3d, 0x31, 0x3e, opcode, 0x80, 0, 1});
+    else
+      f.Cache({0x3d, 0x31, 0x3e, opcode, 0, 1, 0, 1});
+    f.Start(0);
+    f.chip.Advance(7);
+    f.Reg(0, 0xa55a);
+    f.chip.Advance(100);
+    Check(f.ram[0x100] == 0x34 && f.ram[0x101] == 0xa5,
+          "Immediate-address stores sample the high source byte after the first write wait");
+  }
+  for (bool load : {false, true}) {
+    Fixture f;
+    f.Reg(0, 0x1234);
+    f.Reg(1, 0x1000);
+    f.ram[0x1001] = 0x56;
+    f.Cache({0x3d, 0x31, uint8_t(load ? 0x41 : 0x31), 0, 1});
+    f.Start(0);
+    f.chip.Advance(9);
+    f.chip.WriteCpu(0x3031, 1);
+    f.chip.Advance(100);
+    Check(load ? f.Reg(0) == 0x34 : f.ram[0x1001] == 0x56,
+          "The load/store width is selected after the first buffered access");
+  }
+}
+
+void RamBankAfterSettledWrite() {
+  Fixture f;
+  f.Reg(0, 1);
+  f.Reg(1, 0x1000);
+  f.chip.WriteCpu(0x3039, 1);
+  f.Cache({0x3d, 0x31, 0x3e, 0xdf, 0, 1});
+  f.Start(0);
+  f.chip.Advance(5);
+  f.chip.WriteCpu(0x303a, 0x10);
+  f.chip.Advance(3);
+  Check(f.ram[0x1000] == 1 && f.chip.ReadCpu(0x303c) == 1,
+        "RAMB needs no new RAM grant after its buffered write has committed");
+}
+
+void CpuProgramCounterWrite() {
+  Fixture f;
+  f.Reg(0, 49);
+  f.Cache({1, 0x80, 0, 1});
+  f.Start(0);
+  f.chip.Advance(6);
+  f.Reg(15, 5);
+  f.chip.Advance(2);
+  Check(f.Reg(15) == 5, "A CPU PC write during an internal wait suppresses the final increment");
+  f.chip.Advance(2);
+  Check(!f.Running() && f.Reg(15) == 6, "The following opcode fetch consumes the CPU PC marker");
+}
+
+void UncachedFetchBank() {
+  Fixture f;
+  f.ram[0x200] = 0xa0;
+  f.ram[0x201] = 0x34;
+  f.ram[0x202] = 0;
+  f.ram[0x203] = 1;
+  f.Start(0x200);
+  f.chip.Advance(1);
+  f.chip.WriteCpu(0x3034, 0x70);
+  f.chip.Advance(100);
+  Check(!f.Running() && f.Reg(0) == 0x34,
+        "An uncached opcode samples its bank after the memory clock wait");
+}
+
 void RomBufferInstructions() {
     for (unsigned mode = 0; mode < 4; ++mode) {
         Fixture f;
@@ -785,6 +984,14 @@ int main() {
       BranchesAndPipeline();
       RamInstructions();
       CpuRomBufferRestart();
+      MultiplyWriteTimes();
+      BranchConditionSnapshot();
+      BufferedFetchWaits();
+      BufferedInstructionOperands();
+      WordMemoryOperands();
+      RamBankAfterSettledWrite();
+      CpuProgramCounterWrite();
+      UncachedFetchBank();
       RomBufferInstructions();
       PixelsAndScreenModes();
       PixelPlaneWriteTimes();
