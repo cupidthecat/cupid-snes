@@ -18,6 +18,8 @@ Processor-owned work RAM has separate rules:
 
 ST018 bridge reset retains work RAM. It restarts the processor and bridge controls without performing a console reset. The console's own WRAM also remains separate from cartridge storage.
 
+[Super FX pixel memory](gsu-pixel-memory.md) describes plane writes, cache flushes, and instruction state during memory waits.
+
 ## Save loading and cartridge replacement
 
 `Cartridge::LoadSram` copies the supplied prefix up to the physical storage size. An empty input leaves memory unchanged, and an oversized input truncates at the end of the allocation. Untouched bytes retain their current values. `LoadSlotSram` applies the same prefix rule to one occupied slot. An empty slot exposes no save data.
