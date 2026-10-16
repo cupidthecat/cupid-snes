@@ -58,6 +58,51 @@ void Boot(SnesCpu &cpu, MemoryBus &) {
   cpu.Step();
 }
 
+void CallBusState() {
+  struct ObservedBus : Bus {
+    SnesCpu *cpu = nullptr;
+    std::vector<std::array<uint32_t, 2>> state;
+    void Write(uint32_t address, uint8_t value) override {
+      if (cpu)
+        state.push_back({cpu->regs().pc, cpu->regs().s});
+      Bus::Write(address, value);
+    }
+  };
+  for (bool emulation : {false, true})
+    for (bool longCall : {false, true}) {
+      ObservedBus bus;
+      SnesCpu cpu(bus);
+      Boot(cpu, bus);
+      cpu.regs().e = emulation;
+      cpu.regs().s = 0x1ff;
+      bus.ram[0x8000] = longCall ? 0x22 : 0x20;
+      bus.ram[0x8001] = 0;
+      bus.ram[0x8002] = 0x81;
+      bus.ram[0x8003] = 0x12;
+      bus.cpu = &cpu;
+      cpu.Step();
+      Check("Call stack bus samples", unsigned(bus.state.size()), longCall ? 3 : 2);
+      for (unsigned index = 0; index < bus.state.size(); ++index) {
+        Check("Call return PC is visible during stack writes", bus.state[index][0],
+              longCall ? 0x8003 : 0x8002);
+        Check("Long-call native pushes decrement SP before the bus write", bus.state[index][1],
+              0x1ff - index - (longCall ? 1 : 0));
+      }
+    }
+  for (uint8_t opcode : {0x00, 0x02}) {
+    ObservedBus bus;
+    SnesCpu cpu(bus);
+    Boot(cpu, bus);
+    cpu.regs().e = false;
+    cpu.regs().pb = 0x12;
+    cpu.regs().s = 0x1ff;
+    bus.ram[0x8000] = opcode;
+    bus.cpu = &cpu;
+    cpu.Step();
+    Check("Software interrupt bank pushes retain SP during the bus write", bus.state[0][1], 0x1ff);
+  }
+}
+
 void InterruptStack() {
     // Exercise every byte of an interrupt frame across the page boundary.
     for (bool emulation : {false, true}) {
@@ -391,7 +436,16 @@ void Stop() {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "stop") Stop();
-    else { InterruptStack(); ExtendedStackInstructions(); WaitInterrupt(); StackInstructionTiming(); PullBankBoundaries(); CpuIoOpenBus(); CpuIoInstructionReads(); }
+    else {
+      CallBusState();
+      InterruptStack();
+      ExtendedStackInstructions();
+      WaitInterrupt();
+      StackInstructionTiming();
+      PullBankBoundaries();
+      CpuIoOpenBus();
+      CpuIoInstructionReads();
+    }
     std::printf("%d CPU checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

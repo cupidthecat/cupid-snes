@@ -49,6 +49,138 @@ struct Fixture {
     }
 };
 
+void BusPhases() {
+  for (bool pal : {false, true})
+    for (unsigned mode = 0; mode < 4; ++mode) {
+      Fixture f;
+      f.chip.SetPal(pal);
+      f.chip.WriteCpu(0x2229, 0xff);
+      for (unsigned offset = 0; offset < 2048; ++offset)
+        f.chip.WriteCpu(0x3000 + offset, 0xea);
+      f.chip.WriteCpu(0x3000, 0);
+      const uint8_t code[] = {0xa9, 0x5a, 0x8d, 0, 0x30, 0xea};
+      for (unsigned offset = 0; offset < sizeof(code); ++offset)
+        f.chip.WriteCpu(0x3100 + offset, code[offset]);
+      f.Start(0x100);
+      f.chip.WriteSa1(0x222a, 0xff);
+      for (unsigned master = 1; master <= 32; ++master) {
+        const uint32_t console = mode == 1                                   ? 0xc00000
+                                 : (mode == 2 || (mode == 3 && master <= 7)) ? 0x3000
+                                                                             : 0;
+        f.chip.Advance(1, console, mode == 2 && master >= 11 && master <= 12);
+        const auto &r = f.chip.CpuRegisters();
+        if (master <= 2)
+          Check(r.pc == 0x101 && r.a == 0,
+                "An opcode read retains its live stack until its bus phase completes");
+        if (master == 4 && mode < 2)
+          Check(r.pc == 0x102 && r.a == 0,
+                "An immediate operand is consumed after its pending bus phase");
+        if (master == 8 && mode == 3)
+          Check(r.pc == 0x102 && r.a == 0,
+                "Each IRAM conflict is checked again after the preceding bus phase");
+        const unsigned visibleAt = mode == 2 ? 33 : mode == 3 ? 17 : 13;
+        Check(f.chip.ReadCpu(0x3000) == (master < visibleAt ? 0 : 0x5a),
+              "Shared IRAM stores publish only after all native bus phases complete");
+      }
+    }
+}
+
+void ExecutionLifecycle() {
+  const auto prepare = [](Fixture &f, uint8_t value) {
+    f.chip.WriteCpu(0x2229, 0xff);
+    for (unsigned offset = 0; offset < 2048; ++offset)
+      f.chip.WriteCpu(0x3000 + offset, 0xea);
+    f.chip.WriteCpu(0x3000, 0);
+    const uint8_t code[] = {0xa9, value, 0x8d, 0, 0x30, 0xea};
+    for (unsigned offset = 0; offset < sizeof(code); ++offset)
+      f.chip.WriteCpu(0x3100 + offset, code[offset]);
+    f.Start(0x100);
+    f.chip.WriteSa1(0x222a, 0xff);
+  };
+  {
+    Fixture left, right;
+    prepare(left, 0x5a);
+    prepare(right, 0xa7);
+    left.chip.Advance(4);
+    right.chip.Advance(13);
+    Check(left.chip.CpuRegisters().a == 0 && left.chip.ReadCpu(0x3000) == 0 &&
+              right.chip.ReadCpu(0x3000) == 0xa7,
+          "Separate SA-1 instances retain independent suspended stacks");
+    left.chip.Advance(9);
+    Check(left.chip.ReadCpu(0x3000) == 0x5a && right.chip.ReadCpu(0x3000) == 0xa7,
+          "Resuming one cartridge cannot execute another cartridge's pending memory access");
+  }
+  {
+    Fixture f;
+    prepare(f, 0x5a);
+    f.ram[0] = 0x46;
+    f.chip.Advance(12);
+    f.chip.Reset();
+    f.chip.Advance(100);
+    Check(f.chip.ReadCpu(0x3000) == 0 && f.ram[0] == 0x46,
+          "Device reset cancels a pending store while retaining battery RAM");
+    prepare(f, 0xa7);
+    f.chip.Advance(13);
+    Check(f.chip.ReadCpu(0x3000) == 0xa7, "Reset starts a fresh execution stack");
+  }
+  {
+    Fixture f;
+    prepare(f, 0x5a);
+    f.chip.Advance(1);
+    f.chip.WriteCpu(0x2200, 0x40);
+    f.chip.Advance(100);
+    Check(f.chip.CpuRegisters().pc == 0x102 && f.chip.CpuRegisters().a == 0x5a &&
+              f.chip.ReadCpu(0x3000) == 0,
+          "WAIT lets the live instruction finish before holding the following opcode");
+    f.chip.WriteCpu(0x2200, 0);
+    f.chip.Advance(100);
+    Check(f.chip.ReadCpu(0x3000) == 0x5a, "WAIT release resumes the following instruction");
+  }
+  {
+    Fixture f;
+    prepare(f, 0x5a);
+    f.chip.Advance(12);
+    std::vector<uint8_t> rom(0x8000, 0xea), ram(0x2000);
+    const uint8_t code[] = {0xa9, 0x99, 0x8f, 0, 1, 0x40, 0xdb};
+    std::copy(std::begin(code), std::end(code), rom.begin());
+    f.chip.Reset(rom, ram);
+    f.Start();
+    f.chip.WriteSa1(0x2227, 0x80);
+    f.chip.Advance(100);
+    Check(ram[0x100] == 0x99 && f.ram[0x100] == 0,
+          "Replacing cartridge spans cancels the old live operation before attaching new memory");
+    f.chip.Reset(f.rom, f.ram);
+  }
+  for (unsigned deadline : {1u, 3u, 5u, 11u, 12u, 13u}) {
+    Fixture f;
+    prepare(f, 0x5a);
+    f.chip.Advance(deadline);
+  }
+}
+
+void ResetControl() {
+  Fixture f;
+  f.Code(0x8000, {0xa9, 0xff, 0x8d, 0x2a, 0x22, 0xa9, 0x4f, 0x48, 0xab, 0x18, 0xfb,
+                  0xc2, 0x30, 0xa9, 0x34, 0x12, 0x5b, 0xa2, 0x78, 0x56, 0xa0, 0xbc,
+                  0x9a, 0xa9, 0x21, 0x43, 0x1b, 0xa9, 0xef, 0xbe, 0xdb});
+  f.Start();
+  f.chip.Advance(200);
+  const auto before = f.chip.CpuRegisters();
+  Check(before.stp && !before.e && before.a == 0xbeef && before.db == 0x4f,
+        "The reset fixture enters native mode with live general registers");
+  f.chip.WriteCpu(0x2200, 0x20);
+  SetCpu(f.chip, 0x2203, 0x9000);
+  f.chip.WriteCpu(0x2200, 0);
+  const auto &after = f.chip.CpuRegisters();
+  Check(after.pc == 0x9000 && !after.pb && !after.db && !after.stp,
+        "SA-1 reset release selects its vector, clears banks and releases STOP");
+  Check(after.a == before.a && after.x == before.x && after.y == before.y && after.s == before.s &&
+            after.d == before.d && after.p == before.p && after.e == before.e,
+        "SA-1 control reset retains general registers, stack and processor mode");
+  f.chip.WriteSa1(0x300, 0x55);
+  Check(f.chip.ReadCpu(0x3300) == 0, "SA-1 reset release clears its IRAM write permission");
+}
+
 void TransferTiming() {
   struct Case {
     std::array<uint8_t, 4> code;
@@ -71,8 +203,12 @@ void TransferTiming() {
       {{0xdc, 0, 2}, 0xc08100, {14, 22, 26}},
   };
   const std::array<uint32_t, 3> consoles{0, 0xc00000, 0x3000};
+  const std::array<uint32_t, 13> deadlinePc{0x8002, 0x8005,   0x8003,  0x8009, 0x8100,
+                                            0x8003, 0xc08100, 0x8004,  0x8100, 0xc08100,
+                                            0x8100, 0x8100,   0xc08100};
   for (unsigned index = 0; index < consoles.size(); ++index)
-    for (const auto &test : cases) {
+    for (unsigned instruction = 0; instruction < std::size(cases); ++instruction) {
+      const auto &test = cases[instruction];
       Fixture f;
       std::copy(test.code.begin(), test.code.end(), f.rom.begin());
       f.chip.WriteCpu(0x2229, 4);
@@ -82,11 +218,11 @@ void TransferTiming() {
       f.Start();
       f.chip.Advance(test.clocks[index], consoles[index]);
       const auto &r = f.chip.CpuRegisters();
-      Check(((uint32_t(r.pb) << 16) | r.pc) == test.target,
-            "SA-1 control transfers retain the ROM target penalty before the next opcode");
+      Check(((uint32_t(r.pb) << 16) | r.pc) == deadlinePc[instruction],
+            "SA-1 control transfers retain their pending operand, idle or prefetch phase");
       f.chip.Advance(1, consoles[index]);
-      Check(((uint32_t(r.pb) << 16) | r.pc) != test.target,
-            "A completed SA-1 control transfer leaves no extra prefetch clock debt");
+      Check(((uint32_t(r.pb) << 16) | r.pc) == test.target + 1,
+            "The next opcode fetch starts when the SA-1 transfer's final phase resumes");
     }
 }
 
@@ -143,22 +279,24 @@ void HardwareInterruptTiming() {
         f.Code(0x8000, {0x18, 0xfb, 0x58, 0xea, 0xea});
       else
         f.Code(0x8000, {0x58, 0xea, 0xea});
-      f.chip.WriteSa1(0x222a, 0xff);
       f.chip.WriteSa1(0x220a, 0x80);
       SetCpu(f.chip, 0x2207, 0x8100);
       f.Start();
+      f.chip.WriteSa1(0x222a, 0xff);
       if (native)
         f.chip.Advance(8);
       f.chip.Advance(4);
       f.chip.WriteCpu(0x2200, 0x80);
       f.chip.Advance(4);
-      f.chip.Advance(native ? nativeClocks[index] : emulationClocks[index], consoles[index]);
+      // Finish the preceding instruction's pending read before changing MAR.
+      f.chip.Advance(1);
+      f.chip.Advance((native ? nativeClocks[index] : emulationClocks[index]) - 1, consoles[index]);
       const auto &r = f.chip.CpuRegisters();
-      Check(r.pc == 0x8100 && !r.pb && r.s == 0x1ff - (native ? 4 : 3) && (r.p & 0x0c) == 4,
-            "SA-1 interrupt entry uses the programmed vector and preserves its stack and status "
-            "rules");
+      Check(r.pc == (native ? 0x8004 : 0x8002) && r.s == 0x1ff - (native ? 3 : 2) &&
+                (r.p & 0x0c) == 0,
+            "SA-1 hardware entry retains its final status write at the native clock deadline");
       f.chip.Advance(1, consoles[index]);
-      Check(r.pc == 0x8101,
+      Check(r.pc == 0x8101 && !r.pb && r.s == 0x1ff - (native ? 4 : 3) && (r.p & 0x0c) == 4,
             "The handler starts after SA-1 hardware entry without vector-table read cycles");
     }
 }
@@ -417,53 +555,121 @@ void VariableBits() {
     Check(Get(mapped.chip, 0x230c) == 0x9abc, "Bit reader follows Super MMC projection for HiROM banks");
 }
 
+void NativeTimerEdges() {
+  for (bool pal : {false, true})
+    for (uint8_t mode : {0, 0x80}) {
+      Fixture f;
+      auto &c = f.chip;
+      c.SetPal(pal);
+      c.WriteSa1(0x2210, mode);
+      c.Advance(20);
+      Set(c, 0x2214, 0);
+      c.WriteSa1(0x2210, mode | 2);
+      c.Advance(1);
+      Check(!(c.ReadSa1(0x2301) & 0x40),
+            "Enabling a vertical compare inside a line waits for horizontal counter zero");
+    }
+}
+
 void Timers() {
+  {
     Fixture f;
     auto& c = f.chip;
     Set(c, 0x2212, 3);
     c.WriteSa1(0x2210, 1);
-    c.Advance(11);
-    Check(!(c.ReadSa1(0x2301) & 0x40), "H timer does not fire before its compare dot");
+    c.Advance(12);
+    Check(!(c.ReadSa1(0x2301) & 0x40), "H compare waits for its native timer step to resume");
     c.Advance(1);
-    Check((c.ReadSa1(0x2301) & 0x40) != 0, "H timer fires at four master clocks per dot even while CPU reset is held");
+    Check(c.ReadSa1(0x2301) & 0x40, "H compare publishes at master clock 13 for dot three");
     c.WriteSa1(0x220b, 0x40);
-    c.Advance(1);
-    Check(!(c.ReadSa1(0x2301) & 0x40), "Acknowledgment within a compare dot does not immediately reassert");
+    c.Advance(2);
+    Check(!(c.ReadSa1(0x2301) & 0x40), "Acknowledgment does not reassert halfway through a dot");
     c.Advance(1364);
-    Check((c.ReadSa1(0x2301) & 0x40) != 0, "H compare repeats on the next scanline");
-    c.WriteSa1(0x2211, 0);
-    c.WriteSa1(0x220b, 0x40);
+    Check(c.ReadSa1(0x2301) & 0x40, "H compare repeats on the next scanline");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
     Set(c, 0x2214, 1);
     c.WriteSa1(0x2210, 2);
-    c.Advance(1363);
-    Check(!(c.ReadSa1(0x2301) & 0x40), "V-only compare waits for the selected scanline");
+    c.Advance(1364);
+    Check(!(c.ReadSa1(0x2301) & 0x40), "V-only compare waits for the completed line");
     c.Advance(1);
-    Check((c.ReadSa1(0x2301) & 0x40) != 0, "V-only compare fires at the start of the scanline");
+    Check(c.ReadSa1(0x2301) & 0x40, "V-only compare fires at horizontal counter zero");
     c.WriteSa1(0x220b, 0x40);
     c.Advance(100);
-    Check(!(c.ReadSa1(0x2301) & 0x40), "V-only IRQ stays acknowledged for the rest of the matching line");
-    c.WriteSa1(0x2211, 0); c.WriteSa1(0x2210, 3); Set(c, 0x2212, 2);
-    c.Advance(1371);
+    Check(!(c.ReadSa1(0x2301) & 0x40), "V-only IRQ stays acknowledged for the rest of the line");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    Set(c, 0x2212, 2);
+    Set(c, 0x2214, 1);
+    c.WriteSa1(0x2210, 3);
+    c.Advance(1372);
     Check(!(c.ReadSa1(0x2301) & 0x40), "Combined H/V compare requires both coordinates");
     c.Advance(1);
-    Check((c.ReadSa1(0x2301) & 0x40) != 0, "Combined H/V compare fires at the selected dot");
-    c.WriteSa1(0x2210, 0x80); c.WriteSa1(0x2211, 0);
-    c.Advance(511 * 4);
-    Check(c.ReadSa1(0x2302) == 0xff && c.ReadSa1(0x2303) == 1 && Get(c, 0x2304) == 0, "Linear counter exposes all nine horizontal bits");
+    Check(c.ReadSa1(0x2301) & 0x40, "Combined H/V compare publishes the matching native edge");
+  }
+  {
+    Fixture f;
+    auto &c = f.chip;
+    c.WriteSa1(0x2210, 0x80);
+    c.Advance(511 * 4 + 1);
+    Check(Get(c, 0x2302) == 511 && Get(c, 0x2304) == 0,
+          "Linear counters expose all nine horizontal bits");
     c.Advance(4);
-    Check(Get(c, 0x2304) == 0 && c.ReadSa1(0x2303) == 1, "Counter high bytes remain latched across a rollover");
-    Check(c.ReadSa1(0x2302) == 0 && Get(c, 0x2304) == 1, "Reading H low atomically refreshes the H/V latch");
+    Check(Get(c, 0x2304) == 0 && c.ReadSa1(0x2303) == 1,
+          "Counter high bytes stay latched across a rollover");
+    Check(c.ReadSa1(0x2302) == 0 && Get(c, 0x2304) == 1,
+          "Reading H low atomically refreshes the H/V latch");
     c.Advance(511 * 2048);
-    Check(c.ReadSa1(0x2302) == 0 && Get(c, 0x2304) == 0, "Linear counter wraps its nine-bit vertical coordinate");
-    c.SetPal(true); c.WriteSa1(0x2210, 0); c.WriteSa1(0x2211, 0);
-    c.Advance(311 * 1364);
-    c.ReadSa1(0x2302);
-    Check(Get(c, 0x2304) == 311, "PAL timer uses 312 lines");
-    c.Advance(1364); c.ReadSa1(0x2302);
-    Check(Get(c, 0x2304) == 0, "PAL timer frame wraps");
-    Set(c, 0x2212, 511); c.WriteSa1(0x2210, 1); c.WriteSa1(0x220b, 0x40);
-    c.Advance(312 * 1364);
-    Check(!(c.ReadSa1(0x2301) & 0x40), "An out-of-range HV compare never fires");
+    Check(c.ReadSa1(0x2302) == 0 && Get(c, 0x2304) == 0,
+          "Linear counters wrap their nine-bit vertical coordinate");
+  }
+  for (bool pal : {false, true})
+    for (uint8_t mode : {0, 0x80}) {
+      Fixture whole, pieces;
+      for (auto *f : {&whole, &pieces}) {
+        f->chip.SetPal(pal);
+        f->chip.WriteSa1(0x2210, mode);
+      }
+      const uint32_t width = mode ? 2048 : 1364;
+      const uint32_t height = mode ? 512 : pal ? 312 : 262;
+      const uint32_t total = width * height * 2 + 3;
+      whole.chip.Advance(total);
+      uint32_t remaining = total;
+      unsigned next = 1;
+      while (remaining) {
+        const auto clocks = std::min(remaining, next);
+        pieces.chip.Advance(clocks);
+        remaining -= clocks;
+        next = (next * 7) % 251 + 1;
+      }
+      const auto published = ((total - 1) / 2) * 2;
+      for (auto *f : {&whole, &pieces}) {
+        Check(Get(f->chip, 0x2302) == (published % width) / 4 &&
+                  Get(f->chip, 0x2304) == (published / width) % height,
+              "Native counters retain exact regional wraps across odd scheduler partitions");
+      }
+      Fixture invalid;
+      invalid.chip.SetPal(pal);
+      invalid.chip.WriteSa1(0x2210, mode | 1);
+      Set(invalid.chip, 0x2212, 512);
+      invalid.chip.Advance(width * height + 1);
+      Check(!(invalid.chip.ReadSa1(0x2301) & 0x40),
+            "Out-of-range timer targets never alias a valid nine-bit coordinate");
+    }
+  {
+    Fixture f;
+    f.chip.WriteSa1(0x2210, 0x80);
+    f.chip.Advance(2021);
+    f.chip.WriteSa1(0x2210, 0);
+    Check(Get(f.chip, 0x2302) == 505, "Changing timer mode preserves the live counter");
+    f.chip.Advance(2);
+    Check(Get(f.chip, 0x2302) == 0 && Get(f.chip, 0x2304) == 1,
+          "The next HV step resets a counter beyond its line limit");
+  }
 }
 
 void ConfigureDma(Sa1& c, uint8_t control, uint32_t source, uint32_t destination, uint16_t length) {
@@ -473,12 +679,55 @@ void ConfigureDma(Sa1& c, uint8_t control, uint32_t source, uint32_t destination
     Set(c, 0x2235, destination, (control & 4) ? 3 : 2);
 }
 
+void NativeDmaTiming() {
+  const unsigned edges[4][5][2] = {
+      {{3, 5}, {5, 9}, {7, 13}, {3, 5}, {5, 7}},
+      {{5, 9}, {5, 9}, {5, 9}, {9, 17}, {9, 13}},
+      {{5, 9}, {5, 9}, {7, 13}, {9, 17}, {9, 13}},
+      {{5, 9}, {5, 9}, {7, 13}, {9, 17}, {9, 13}},
+  };
+  for (unsigned kind = 0; kind < 4; ++kind)
+    for (unsigned owner = 0; owner < 5; ++owner) {
+      Fixture f;
+      f.rom[0x100] = 0x51;
+      f.rom[0x101] = 0x52;
+      f.ram[0x200] = 0x61;
+      f.ram[0x201] = 0x62;
+      f.chip.WriteCpu(0x2229, 0xff);
+      f.chip.WriteCpu(0x3400, 0x71);
+      f.chip.WriteCpu(0x3401, 0x72);
+      const bool bwram = kind == 1 || kind == 3;
+      const uint8_t control = kind == 0 ? 0x80 : kind == 1 ? 0x84 : kind == 2 ? 0x81 : 0x86;
+      const uint32_t source = kind < 2 ? 0xc00100 : kind == 2 ? 0x200 : 0x400;
+      ConfigureDma(f.chip, control, source, bwram ? 0x1000 : 0x600, 2);
+      for (unsigned master = 1; master <= 24; ++master) {
+        const auto console = owner == 1   ? 0xc00000
+                             : owner == 2 ? 0x3000
+                             : owner == 3 ? 0x400000
+                             : owner == 4 ? (master <= 4   ? 0x3000
+                                             : master <= 8 ? 0x400000
+                                                           : 0)
+                                          : 0;
+        f.chip.Advance(1, console);
+        const auto value = [&](unsigned offset) {
+          return bwram ? f.ram[0x1000 + offset] : f.chip.ReadSa1(0x600 + offset);
+        };
+        const uint8_t first = kind < 2 ? 0x51 : kind == 2 ? 0x61 : 0x71;
+        Check(value(0) == (master < edges[kind][owner][0] ? 0 : first) &&
+                  value(1) == (master < edges[kind][owner][1] ? 0 : first + 1),
+              "DMA data publication retains native memory phases and rechecks changing ownership");
+        Check(bool(f.chip.ReadSa1(0x2301) & 0x20) == (master >= edges[kind][owner][1]),
+              "DMA completion IRQ follows the final memory store");
+      }
+    }
+}
+
 void Dma() {
     Fixture f;
     auto& c = f.chip;
     for (unsigned i = 0; i < 6; ++i) f.rom[0x100 + i] = static_cast<uint8_t>(0x51 + i);
     ConfigureDma(c, 0x80, 0xc00100, 0x7fd, 6);
-    c.Advance(1);
+    c.Advance(2);
     Check(c.DmaActive() && c.ReadSa1(0x7fd) == 0, "DMA waits for a complete byte cycle");
     c.Advance(1);
     Check(c.ReadSa1(0x7fd) == 0x51 && !(c.ReadSa1(0x2301) & 0x20), "DMA progressively transfers bytes before its completion IRQ");
@@ -489,23 +738,29 @@ void Dma() {
     Check(!c.DmaActive() && (c.ReadSa1(0x2301) & 0x20) && !c.CpuIrqPending(), "Normal DMA raises the SA-1 completion flag only");
 
     c.WriteSa1(0x220b, 0x20);
+    c.Reset();
     f.rom[0xffffe] = 0x71; f.rom[0xfffff] = 0x82;
     f.rom[0x300000] = 0x93; f.rom[0x300001] = 0xa4;
     c.WriteCpu(0x2221, 3);
-    ConfigureDma(c, 0x80, 0xcffffe, 0x500, 4); c.Advance(8);
+    ConfigureDma(c, 0x80, 0xcffffe, 0x500, 4);
+    c.Advance(9);
     Check(Get(c, 0x500, 4) == 0xa4938271, "DMA redecodes ROM mapping across a one-megabyte bank boundary");
 
+    c.Reset();
     c.WriteSa1(0x222a, 0xff);
     Set(c, 0x7fe, 0x1234);
     Set(c, 0, 0x5678);
     ConfigureDma(c, 0x86, 0x7fe, 0x3ffff, 4); c.Advance(15);
     Check(c.DmaActive(), "BW-RAM transfers take four clocks per byte");
-    c.Advance(1);
+    c.Advance(2);
     Check(f.ram.back() == 0x34 && f.ram[0] == 0x12 && f.ram[1] == 0x78 && f.ram[2] == 0x56, "IRAM-to-BW-RAM DMA wraps both independent physical ports");
-    ConfigureDma(c, 0x81, 0x3ffff, 0x700, 4); c.Advance(16);
+    c.Reset();
+    ConfigureDma(c, 0x81, 0x3ffff, 0x700, 4);
+    c.Advance(17);
     Check(Get(c, 0x700, 4) == 0x56781234, "BW-RAM-to-IRAM DMA reads shared save storage");
 
     c.WriteSa1(0x220b, 0x20);
+    c.Reset();
     ConfigureDma(c, 0x80, 0xc00100, 0x600, 4); c.Advance(1);
     c.WriteSa1(0x2230, 0); c.Advance(20);
     Check(!c.DmaActive() && c.ReadSa1(0x600) == 0 && !(c.ReadSa1(0x2301) & 0x20), "Disabling DMA cancels an unfinished byte without a completion interrupt");
@@ -630,7 +885,8 @@ void ExecutableProgram() {
     for (unsigned i = 0; i < iramProgram.size(); ++i) c.WriteCpu(0x3300 + i, iramProgram[i]);
     c.WriteCpu(0x2200, 0x20); SetCpu(c, 0x2203, 0x300); c.WriteCpu(0x2200, 0);
     c.Advance(100);
-    Check(c.CpuRegisters().stp && c.CpuRegisters().e && f.ram[0x100] == 0x6c, "Reset releases STP, resets CPU mode, and executes a program from low IRAM");
+    Check(c.CpuRegisters().stp && !c.CpuRegisters().e && f.ram[0x100] == 0x6c,
+          "Reset releases STP, retains CPU mode, and executes a program from low IRAM");
 }
 
 void Interrupts() {
@@ -657,35 +913,54 @@ void Interrupts() {
     auto& l = latency.chip;
     latency.Code(0x8000, {0x58,0x78,0xea,0xea});
     latency.Code(0x8100, {0xdb});
-    l.WriteSa1(0x222a, 0xff); l.WriteSa1(0x220a, 0x80);
+    l.WriteSa1(0x220a, 0x80);
     SetCpu(l, 0x2207, 0x8100); latency.Start();
+    l.WriteSa1(0x222a, 0xff);
     l.Advance(4); // CLI samples the previous set-I state.
     Check(l.CpuRegisters().pc == 0x8001, "CLI completes before an IRQ can be taken");
     l.WriteCpu(0x2200, 0x80); l.Advance(4); // SEI samples clear I before setting it.
-    Check(l.CpuRegisters().pc == 0x8002 && (l.CpuRegisters().p & 4), "SEI samples IRQ before its final-cycle I update");
+    Check(l.CpuRegisters().pc == 0x8002 && !(l.CpuRegisters().p & 4),
+          "SEI samples IRQ before its pending final-cycle I update");
     l.Advance(1);
-    Check(l.CpuRegisters().pc == 0x8100 && !l.CpuRegisters().stp, "A latched IRQ is taken even after SEI sets I");
+    Check(l.CpuRegisters().pc == 0x8002 && (l.CpuRegisters().p & 4),
+          "SEI sets I when its final bus phase resumes");
+    l.Advance(10);
+    Check(l.CpuRegisters().pc == 0x8101 && !l.CpuRegisters().stp,
+          "A latched IRQ is taken even after SEI sets I");
 
     Fixture cli;
     auto& q = cli.chip;
     cli.Code(0x8000, {0x58,0xea,0xdb});
-    q.WriteSa1(0x222a, 0xff); q.WriteSa1(0x220a, 0x80); SetCpu(q, 0x2207, 0x8100);
-    cli.Start(); q.WriteCpu(0x2200, 0x80); q.Advance(4);
+    q.WriteSa1(0x220a, 0x80);
+    SetCpu(q, 0x2207, 0x8100);
+    cli.Start();
+    q.WriteSa1(0x222a, 0xff);
+    q.WriteCpu(0x2200, 0x80);
+    q.Advance(4);
     Check(q.CpuRegisters().pc == 0x8001, "Already asserted IRQ is delayed through CLI");
     q.Advance(4);
     Check(q.CpuRegisters().pc == 0x8002, "One instruction after CLI executes before the pending IRQ");
     q.Advance(1);
-    Check(q.CpuRegisters().pc == 0x8100, "CLI-delayed IRQ then enters its programmed vector");
+    Check(q.CpuRegisters().pc == 0x8002, "CLI-delayed IRQ begins with its pending dummy read");
+    q.Advance(10);
+    Check(q.CpuRegisters().pc == 0x8101, "CLI-delayed IRQ then enters its programmed vector");
 
     Fixture plp;
     auto& p = plp.chip;
     plp.Code(0x8000, {0x58,0xa9,0x34,0x48,0x28,0xea});
-    p.WriteSa1(0x222a, 0xff); p.WriteSa1(0x220a, 0x80); SetCpu(p, 0x2207, 0x8100);
-    plp.Start(); p.Advance(14); // CLI + LDA + PHA.
+    p.WriteSa1(0x220a, 0x80);
+    SetCpu(p, 0x2207, 0x8100);
+    plp.Start();
+    p.WriteSa1(0x222a, 0xff);
+    p.Advance(14);                          // CLI + LDA + PHA.
     p.WriteCpu(0x2200, 0x80); p.Advance(8); // PLP samples I before pulling the set-I status.
-    Check(p.CpuRegisters().pc == 0x8005 && (p.CpuRegisters().p & 4), "PLP restores I after its final-cycle IRQ sample");
+    Check(p.CpuRegisters().pc == 0x8005 && !(p.CpuRegisters().p & 4),
+          "PLP samples IRQ before its pending status read");
     p.Advance(1);
-    Check(p.CpuRegisters().pc == 0x8100, "An IRQ sampled by PLP survives the pulled I flag");
+    Check(p.CpuRegisters().pc == 0x8005 && (p.CpuRegisters().p & 4),
+          "PLP restores I after its final bus phase resumes");
+    p.Advance(10);
+    Check(p.CpuRegisters().pc == 0x8101, "An IRQ sampled by PLP survives the pulled I flag");
 
     Set(p, 0x220c, 0xabcd); Set(p, 0x220e, 0x9876); p.WriteSa1(0x2209, 0x50);
     for (uint32_t vector : {0xffeau, 0xfffau})
@@ -716,9 +991,10 @@ void Synchronization() {
           "Instruction clock debt makes fragmented and batched scheduling equivalent");
     Check(whole.chip.MasterClocks() == 10003 && pieces.chip.MasterClocks() == 10003,
           "Master clock accounting retains the exact scheduler budget");
-    const uint16_t pc = pieces.chip.CpuRegisters().pc;
     pieces.chip.WriteCpu(0x2200, 0x40); pieces.chip.Advance(1000);
-    Check(pieces.chip.CpuRegisters().pc == pc, "Console WAIT freezes instruction execution");
+    const uint16_t pc = pieces.chip.CpuRegisters().pc;
+    pieces.chip.Advance(64);
+    Check(pieces.chip.CpuRegisters().pc == pc, "Console WAIT holds execution between instructions");
     pieces.chip.WriteCpu(0x2200, 0); pieces.chip.Advance(100);
     Check(pieces.chip.ReadSa1(0x20) != whole.chip.ReadSa1(0x20), "WAIT release resumes execution without a reset");
 }
@@ -762,6 +1038,9 @@ void ExecutableDmaAndTimer() {
 
 int main() {
     try {
+      BusPhases();
+      ExecutionLifecycle();
+      ResetControl();
       TransferTiming();
       MemoryTiming();
       HardwareInterruptTiming();
@@ -769,7 +1048,9 @@ int main() {
       Mapping();
       Arithmetic();
       VariableBits();
+      NativeTimerEdges();
       Timers();
+      NativeDmaTiming();
       Dma();
       CharacterConversion();
       ExecutableProgram();

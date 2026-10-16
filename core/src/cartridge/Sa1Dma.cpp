@@ -23,30 +23,41 @@ void Sa1::StartDma() {
     }
     dma_.sourceDevice = source;
     dma_.destinationBwram = bwram;
-    dma_.clocksRemaining = (source == 0 && !bwram) ? 2 : 4;
     dma_.active = true;
 }
 
 void Sa1::StepDma() {
-    const uint32_t budget = static_cast<uint32_t>(requestedClocks_ - executedClocks_);
-    const uint8_t clocks = static_cast<uint8_t>(std::min<uint32_t>(budget, dma_.clocksRemaining));
-    Clock(clocks);
-    dma_.clocksRemaining -= clocks;
-    if (dma_.clocksRemaining) return;
+  Clock(2);
+  if (dma_.sourceDevice == 0 && !dma_.destinationBwram) {
+    if (CpuIramConflict() || CpuRomConflict())
+      Clock(2);
+    if (CpuIramConflict())
+      Clock(2);
+  } else {
+    Clock(2);
+    if (CpuBwramConflict() || (dma_.sourceDevice != 0 && CpuIramConflict()))
+      Clock(2);
+    if (CpuBwramConflict())
+      Clock(2);
+  }
+  if (!dma_.active)
+    return;
 
-    uint8_t value = 0;
-    if (dma_.sourceDevice == 0) {
-        uint32_t offset;
-        if (RomOffset(dma_.source, offset)) value = ReadRom(offset, regs().mdr);
-        else value = regs().mdr;
-        dma_.source = (dma_.source + 1) & 0xffffff;
-    } else if (dma_.sourceDevice == 1) {
-        value = ReadBwram(dma_.source);
-        dma_.source = (dma_.source + 1) & 0x3ffff;
-    } else {
-        value = iram_[dma_.source & 0x7ff];
-        dma_.source = (dma_.source + 1) & 0x7ff;
-    }
+  uint8_t value = 0;
+  if (dma_.sourceDevice == 0) {
+    uint32_t offset;
+    if (RomOffset(dma_.source, offset))
+      value = ReadRom(offset, regs().mdr);
+    else
+      value = regs().mdr;
+    dma_.source = (dma_.source + 1) & 0xffffff;
+  } else if (dma_.sourceDevice == 1) {
+    value = ReadBwram(dma_.source);
+    dma_.source = (dma_.source + 1) & 0x3ffff;
+  } else {
+    value = iram_[dma_.source & 0x7ff];
+    dma_.source = (dma_.source + 1) & 0x7ff;
+  }
     // DMA owns these memory ports; CPU write-enable masks gate CPU writes.
     if (dma_.destinationBwram) {
         WriteBwram(dma_.destination, value, Side::Sa1, true);
@@ -63,8 +74,6 @@ void Sa1::StepDma() {
     if (!dma_.remaining) {
         dma_.active = false;
         sa1Flags_ |= 0x20;
-    } else {
-        dma_.clocksRemaining = (dma_.sourceDevice == 0 && !dma_.destinationBwram) ? 2 : 4;
     }
 }
 

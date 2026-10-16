@@ -25,6 +25,14 @@ jobs:
           -o execution-context-tests
       - name: Test
         run: ./execution-context-tests
+      - name: Build POSIX SA-1 core tests
+        run: >-
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -pthread -Icore/include
+          core/src/cpu/Processor65816.cpp core/src/cartridge/Sa1.cpp
+          core/src/cartridge/Sa1Arithmetic.cpp core/src/cartridge/Sa1Dma.cpp
+          core/src/system/ExecutionContext.cpp tests/test_sa1.cpp -o sa1-tests
+      - name: Test SA-1 core
+        run: ./sa1-tests
   windows:
     runs-on: windows-2022
     timeout-minutes: 20

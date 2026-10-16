@@ -7,20 +7,27 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace snes::core {
+
+namespace detail {
+class ExecutionContext;
+}
 
 class Sa1 final : private Processor65816 {
 public:
     // The cartridge owns both spans. They must remain valid until Reset(rom, ram).
     Sa1(std::span<const uint8_t> rom, std::span<uint8_t> bwram);
+    ~Sa1();
     void Reset();
     void Reset(std::span<const uint8_t> rom, std::span<uint8_t> bwram);
 
     uint8_t ReadCpu(uint32_t address, uint8_t openBus = 0);
     void WriteCpu(uint32_t address, uint8_t value);
     // The console address latch determines contention with cartridge memory.
+    // After the first Advance, advancement, Reset and destruction use that thread.
     void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
     bool CpuIrqPending() const noexcept;
     void SetPal(bool enabled) noexcept;
@@ -45,7 +52,6 @@ private:
         uint32_t destination = 0;
         uint32_t remaining = 0;
         uint8_t sourceDevice = 0;
-        uint8_t clocksRemaining = 0;
         bool destinationBwram = false;
         bool active = false;
     };
@@ -70,7 +76,6 @@ private:
     uint16_t latchedH_ = 0;
     uint16_t latchedV_ = 0;
     uint16_t videoLines_ = 262;
-    bool timerMatch_ = false;
 
     uint64_t arithmeticResult_ = 0;
     bool arithmeticOverflow_ = false;
@@ -86,6 +91,9 @@ private:
     uint8_t conversionRows_ = 0;
     uint8_t conversionBuffer_ = 0;
 
+    // Destroy the suspended stack before the memory and register state it uses.
+    std::unique_ptr<detail::ExecutionContext> execution_;
+
     void idle() override;
     void idleBranch() override;
     void idleJump() override;
@@ -99,7 +107,10 @@ private:
     void InterruptProcessor(Interrupt type);
     bool Sa1IrqPending() const noexcept;
     bool Sa1NmiPending() const noexcept;
-    uint8_t AccessClocks(uint32_t address) const noexcept;
+    void ClockAccess(uint32_t address);
+    bool CpuRomConflict() const noexcept;
+    bool CpuBwramConflict() const noexcept;
+    bool CpuIramConflict() const noexcept;
 
     uint8_t ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io = true);
     void WriteMemory(uint32_t address, uint8_t value, Side side);

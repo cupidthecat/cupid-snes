@@ -5,37 +5,25 @@
 namespace snes::core {
 
 void Sa1::AdvanceTimer(uint32_t masterClocks) {
-    const uint8_t control = registers_[0x10];
-    const uint32_t width = (control & 0x80) ? 512 : 341;
-    const uint32_t height = (control & 0x80) ? 512 : videoLines_;
-    const uint32_t hTarget = RegisterWord(0x12) & 0x1ff;
-    const uint32_t vTarget = RegisterWord(0x14) & 0x1ff;
-    const uint32_t oldDot = hClocks_ / 4;
-    const uint32_t position = vCounter_ * width + oldDot;
-    const uint64_t fractional = uint64_t(hClocks_ & 3) + masterClocks;
-    const uint64_t dots = fractional / 4;
-    const auto matches = [&](uint32_t h, uint32_t v) {
-        return (control & 3) && (!(control & 1) || h == hTarget) &&
-               (!(control & 2) || v == vTarget);
-    };
-
-    // Find an entry into the comparator's matching interval, even when one
-    // scheduler call crosses several lines or frames. Acknowledging a V-only
-    // interrupt in the matching line must not immediately reassert it.
-    if (masterClocks && !timerMatch_ && matches(oldDot, vCounter_)) sa1Flags_ |= 0x40;
-    if ((control & 3) && (!(control & 1) || hTarget < width) &&
-        (!(control & 2) || vTarget < height)) {
-        const uint32_t period = (control & 2) ? width * height : width;
-        const uint32_t target = ((control & 2) ? vTarget * width : 0) +
-                                ((control & 1) ? hTarget : 0);
-        uint32_t distance = (target + period - (position % period)) % period;
-        if (!distance) distance = period;
-        if (dots >= distance) sa1Flags_ |= 0x40;
-    }
-    const uint32_t next = static_cast<uint32_t>((position + dots) % (width * height));
-    vCounter_ = static_cast<uint16_t>(next / width);
-    hClocks_ = static_cast<uint16_t>((next % width) * 4 + (fractional & 3));
-    timerMatch_ = matches(hClocks_ / 4, vCounter_);
+  const auto control = registers_[0x10];
+  hClocks_ += static_cast<uint16_t>(masterClocks);
+  if (control & 0x80) {
+    vCounter_ = static_cast<uint16_t>((vCounter_ + (hClocks_ >> 11)) & 0x1ff);
+    hClocks_ &= 0x7ff;
+  } else if (hClocks_ >= 1364) {
+    hClocks_ = 0;
+    if (++vCounter_ >= videoLines_)
+      vCounter_ = 0;
+  }
+  if (!(control & 3))
+    return;
+  const bool horizontal = hClocks_ == uint32_t(RegisterWord(0x12)) * 4;
+  const bool vertical = vCounter_ == RegisterWord(0x14);
+  const bool match = (control & 3) == 1   ? horizontal
+                     : (control & 3) == 2 ? vertical && !hClocks_
+                                          : (control & 3) == 3 && horizontal && vertical;
+  if (match)
+    sa1Flags_ |= 0x40;
 }
 
 void Sa1::StartArithmetic() {

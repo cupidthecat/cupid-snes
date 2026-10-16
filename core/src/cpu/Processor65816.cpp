@@ -135,8 +135,8 @@ uint8_t Processor65816::pullN() {
 }
 
 void Processor65816::pushN(uint8_t data) {
-    write(r.s, data);
-    r.s--;
+  const auto address = r.s--;
+  write(address, data);
 }
 
 uint8_t Processor65816::readDirect(uint32_t address) {
@@ -1237,7 +1237,7 @@ void Processor65816::instructionCallShort() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
     idle();
-    uint16_t returnAddr = static_cast<uint16_t>(r.pc - 1);
+    uint16_t returnAddr = --r.pc;
     push(hi(returnAddr));
     lastCycle();
     push(lo(returnAddr));
@@ -1252,7 +1252,7 @@ void Processor65816::instructionCallLong() {
     pushN(r.pb);
     idle();
     uint8_t ab = fetch();
-    uint16_t returnAddr = static_cast<uint16_t>(r.pc - 1);
+    uint16_t returnAddr = --r.pc;
     pushN(hi(returnAddr));
     lastCycle();
     pushN(lo(returnAddr));
@@ -1398,7 +1398,8 @@ void Processor65816::instructionBlockMove16(int adjust) {
 // BRK / COP - Software Interrupt
 void Processor65816::instructionInterrupt(uint16_t vector) {
     fetch();
-    if (!r.e) pushN(r.pb);
+    if (!r.e)
+      push(r.pb);
     push(hi(r.pc));
     push(lo(r.pc));
     push(r.p);
@@ -1652,7 +1653,7 @@ void Processor65816::enterInterrupt(Interrupt type) {
     idle();
 
     if (!r.e)
-      pushN(r.pb);
+      push(r.pb);
     push(hi(r.pc));
     push(lo(r.pc));
     push(r.e ? (r.p & ~0x10) : r.p); // Clear B flag in emulation mode
