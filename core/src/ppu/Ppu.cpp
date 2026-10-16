@@ -12,6 +12,7 @@
 
 #include "snes/core/Ppu.hpp"
 #include "snes/core/PpuBackground.hpp"
+#include "snes/core/PpuObject.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -35,7 +36,7 @@ bool PpuDebugEnabled() {
 
 // Constructor / Reset
 Ppu::Ppu()
-    : background_(std::make_unique<PpuBackground>()),
+    : background_(std::make_unique<PpuBackground>()), object_(std::make_unique<PpuObject>()),
       vram_(std::make_unique<uint16_t[]>(VramWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
       output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
@@ -47,7 +48,8 @@ Ppu::~Ppu() = default;
 
 void Ppu::Reset(bool retainVram) {
   background_->Reset();
-  backgroundClock_ = 0;
+  object_->Reset();
+  pipelineClock_ = 0;
   // Clear memory
   if (!retainVram)
     std::memset(vram_.get(), 0, VramWords * sizeof(uint16_t));
@@ -57,14 +59,13 @@ void Ppu::Reset(bool retainVram) {
   // Reset IO to power-on defaults
   io_ = IO{};
   latch_ = Latch{};
+  object_->BeginLine(0, io_.obj);
 
   // Clear rendering state
   lineStart_ = 0;
   lineCount_ = 0;
   for (auto &events : rasterEvents_)
     events.clear();
-  vramSnapshotCount_ = 0;
-  vramDirty_ = true;
   mosaicCounterLine_ = 0xffff;
   std::memset(output_.get(), 0, static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
 
@@ -91,7 +92,8 @@ void Ppu::FrameBegin() {
   frameOverscan_ = io_.overscan;
   displayInterlace_ = io_.interlace;
   background_->BeginLine(0, fieldId_, io_);
-  backgroundClock_ = 0;
+  object_->BeginLine(0, io_.obj);
+  pipelineClock_ = 0;
 
   io_.obj.rangeOver = false;
   io_.obj.timeOver = false;
@@ -101,7 +103,6 @@ void Ppu::FrameBegin() {
   lineCount_ = 0;
   for (auto &events : rasterEvents_)
     events.clear();
-  vramSnapshotCount_ = 0;
   mosaicCounterLine_ = 0xffff;
 }
 
@@ -122,59 +123,19 @@ void Ppu::AdvanceMosaicCounter(uint16_t line) noexcept {
 
 void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
   if (currentLine_ != vcounter) {
-    SynchronizeBackground(1080);
+    SynchronizePipeline(1368);
     currentLine_ = vcounter;
     currentHClock_ = 0;
-    backgroundClock_ = 0;
+    pipelineClock_ = 0;
     AdvanceMosaicCounter(vcounter);
     background_->BeginLine(vcounter, fieldId_, io_);
+    object_->BeginLine(vcounter, io_.obj);
+    if (vcounter == VDisp() && !io_.displayDisable)
+      OamAddressReset();
     if (vcounter > 0 && vcounter < MaxVisibleLines)
-      lines_[vcounter].backgroundHires = false;
+      lines_[vcounter].sampledHires = false;
   }
     AdvanceMosaicCounter(vcounter);
-    if (vcounter > 0 && vcounter < VDisp()) {
-        UpdateObjectOverflow(vcounter);
-    }
-}
-
-void Ppu::UpdateObjectOverflow(uint16_t line) {
-    if (line == 0 || line >= VDisp()) return;
-
-    ParseOam();
-    const auto& obj = io_.obj;
-    const uint8_t y = static_cast<uint8_t>(line);
-    int itemCount = 0;
-    int tileCount = 0;
-
-    for (int n = 0; n < 128; ++n) {
-        const uint8_t index = static_cast<uint8_t>((obj.first + n) & 127);
-        const auto& object = objects_[index];
-        const uint8_t width = object.size ? kObjLargeWidth[obj.baseSize]
-                                          : kObjSmallWidth[obj.baseSize];
-        uint8_t height = object.size ? kObjLargeHeight[obj.baseSize]
-                                     : kObjSmallHeight[obj.baseSize];
-        if (!object.size && obj.interlace && obj.baseSize >= 6) height = 16;
-
-        if (object.x > 256 && object.x + width - 1 < 512) continue;
-        const uint32_t effectiveHeight = height >> static_cast<uint32_t>(obj.interlace);
-        const uint32_t objectY = object.y;
-        const bool inRange = (y >= objectY && y < objectY + effectiveHeight) ||
-            (objectY + effectiveHeight >= 256 && y < ((objectY + effectiveHeight) & 0xff));
-        if (!inRange) continue;
-
-        if (itemCount >= 32) {
-            io_.obj.rangeOver = true;
-            break;
-        }
-        ++itemCount;
-
-        const uint16_t sx = object.x & 511;
-        for (int tileX = 0; tileX < width / 8; ++tileX) {
-            const uint16_t objectX = static_cast<uint16_t>((sx + tileX * 8) & 511);
-            if (sx != 256 && objectX >= 256 && objectX + 7 < 512) continue;
-            if (++tileCount > 34) io_.obj.timeOver = true;
-        }
-    }
 }
 
 void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO& before) {
@@ -313,11 +274,10 @@ void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
 void Ppu::ScanlineBegin(uint16_t line) {
   if (currentLine_ != line)
     SetCurrentLine(line);
-  SynchronizeBackground(512);
+  SynchronizePipeline(512);
   AdvanceMosaicCounter(line);
-  UpdateObjectOverflow(line);
 
-  // Preserve the memory and register state used by this scanline.
+  // Retain screen registers for final composition.
   if (line > 0 && line < 240) {
     auto &cache = lines_[line];
     cache.y = line;
@@ -326,11 +286,6 @@ void Ppu::ScanlineBegin(uint16_t line) {
 
     if (line >= VDisp()) {
       cache.io.displayDisable = true;
-    } else {
-      std::memcpy(cache.cgram, cgram_.data(), sizeof(cache.cgram));
-      cache.vram = SnapshotVram();
-      ParseOam();
-      cache.objects = objects_;
     }
 
     if (lineCount_ == 0)
@@ -341,10 +296,7 @@ void Ppu::ScanlineBegin(uint16_t line) {
 
 void Ppu::VBlankBegin() {
   if (currentLine_ > 0 && currentLine_ < VDisp())
-    SynchronizeBackground(1080);
-  if (!io_.displayDisable) {
-    OamAddressReset();
-  }
+    SynchronizePipeline(1368);
 
     // Render all cached scanlines
     RenderFrame();
@@ -377,31 +329,11 @@ void Ppu::WriteVram(bool highByte, uint8_t data) {
         return;
     }
     uint16_t addr = TranslatedVramAddress();
-    const uint16_t previous = vram_[addr];
     if (!highByte) {
         vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
     } else {
         vram_[addr] = (vram_[addr] & 0x00FF) | (static_cast<uint16_t>(data) << 8);
     }
-    vramDirty_ |= vram_[addr] != previous;
-}
-
-std::span<const uint16_t> Ppu::SnapshotVram() {
-    if (vramSnapshotCount_ != 0 && !vramDirty_) {
-        const auto& previous = *vramSnapshots_[vramSnapshotCount_ - 1];
-        if (!vramExternallyMutable_ ||
-            std::equal(previous.begin(), previous.end(), vram_.get())) {
-            return previous;
-        }
-    }
-
-    if (vramSnapshotCount_ == vramSnapshots_.size()) {
-        vramSnapshots_.push_back(std::make_unique<VramSnapshot>());
-    }
-    auto& snapshot = *vramSnapshots_[vramSnapshotCount_++];
-    std::copy_n(vram_.get(), VramWords, snapshot.begin());
-    vramDirty_ = false;
-    return snapshot;
 }
 
 // OAM helpers
@@ -409,8 +341,8 @@ std::span<const uint16_t> Ppu::SnapshotVram() {
 uint8_t Ppu::ReadOam(uint16_t address) {
     address &= 0x03FF;
     // During active display, use latched address
-    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp()) {
-        address = latch_.oamAddress & 0x03FF;
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+      address = latch_.oamAddress & 0x03FF;
     }
     if (address & 0x200) address &= 0x21F;
     return oam_[address];
@@ -418,9 +350,9 @@ uint8_t Ppu::ReadOam(uint16_t address) {
 
 void Ppu::WriteOam(uint16_t address, uint8_t data) {
     address &= 0x03FF;
-    // During active display, writes go to a fixed address ($0218)
-    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp()) {
-        address = 0x0218;
+    // The object pipeline owns the OAM address during active display.
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+      address = latch_.oamAddress & 0x03FF;
     }
     if (address & 0x200) address &= 0x21F;
     oam_[address] = data;
@@ -476,7 +408,7 @@ void Ppu::LatchCounters(uint16_t hcounter, uint16_t vcounter) {
 //
 // Read the selected register and apply its read-side effects.
 uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
-  SynchronizeBackground(currentHClock_);
+  SynchronizePipeline(currentHClock_);
   switch (addr & 0xFFFF) {
 
   // Write-only registers - return PPU1 MDR
@@ -643,7 +575,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 //
 // Update the selected register and apply its write-side effects.
 void Ppu::WriteIO(uint32_t addr, uint8_t data) {
-  SynchronizeBackground(currentHClock_);
+  SynchronizePipeline(currentHClock_);
   switch (addr & 0xFFFF) {
 
   // $2100 - INIDISP (display control)

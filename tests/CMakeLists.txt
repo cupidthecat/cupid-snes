@@ -222,3 +222,7 @@ endif()
 add_executable(snes_ppu_background_tests test_ppu_background.cpp)
 target_link_libraries(snes_ppu_background_tests PRIVATE snes_core)
 add_test(NAME snes_ppu_background_tests COMMAND snes_ppu_background_tests)
+
+add_executable(snes_ppu_object_tests test_ppu_objects.cpp)
+target_link_libraries(snes_ppu_object_tests PRIVATE snes_core)
+add_test(NAME snes_ppu_object_tests COMMAND snes_ppu_object_tests)

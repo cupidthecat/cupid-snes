@@ -70,7 +70,7 @@ The smoke tool's arguments and exit codes are documented in [Cartridge compatibi
 
 ## Current limits
 
-The emulator is not cycle exact. SA-1 advancement can finish a whole instruction, graphics memory uses per-line snapshots with timed spans for selected registers, and several cartridge chips are modeled at the command or board-protocol level. BS-X live reception and SoundLink audio are not implemented. Light-gun input uses scheduled beam positions rather than modeling the optical sensor.
+The emulator is not cycle exact. SA-1 advancement can finish a whole instruction, complete PPU memory-port arbitration still needs work, and several cartridge chips are modeled at the command or board-protocol level. Backgrounds and objects use clocked fetch state. BS-X live reception and SoundLink audio are not implemented. Light-gun input uses scheduled beam positions rather than modeling the optical sensor.
 
 Passing a mapper test, recognizing a chip, or getting visible output from a smoke run is not the same as full game compatibility. The detailed notes call out the limits for each subsystem:
 
@@ -82,7 +82,7 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 
 [Rendering and LoROM checks](docs/accuracy-notes.md) covers coordinate handling, ROM mapping, and their regression tests.
 
-[Cartridge, PPU, and DMA regression checks](docs/hardware-regressions.md) covers DSP-1 addressing, ROM mirrors, counter latching, palette access, OAM, overscan timing, and indirect HDMA termination. [Background fetch timing](docs/background-fetch.md) describes tile latches, scroll latency, and mode changes.
+[Cartridge, PPU, and DMA regression checks](docs/hardware-regressions.md) covers DSP-1 addressing, ROM mirrors, counter latching, palette access, OAM, overscan timing, and indirect HDMA termination. [Background fetch timing](docs/background-fetch.md) and [object fetch timing](docs/object-fetch.md) describe the clocked graphics pipeline.
 
 [CPU regression checks](docs/cpu-regressions.md) covers stop and wait states, interrupt entry, and stack boundaries.
 
@@ -92,6 +92,6 @@ Passing a mapper test, recognizing a chip, or getting visible output from a smok
 
 [S-DD1, DMA timing, and video output](docs/dma-video-and-sdd1.md) covers decompression, expanded cartridge images, DMA stalls, high resolution, interlace, tests, and remaining hardware gaps.
 
-[Light guns and raster memory](docs/light-guns-and-raster.md) covers Super Scope, Justifiers, MACS rifle, aiming controls, beam latches, and scanline memory snapshots.
+[Light guns and raster memory](docs/light-guns-and-raster.md) covers Super Scope, Justifiers, MACS rifle, aiming controls, beam latches, and graphics-memory timing.
 
 [Clocked cartridge processors](docs/clocked-cartridge-processors.md) covers DSP and ST firmware files, processor clocks, board maps, and saves. [ST010 cartridge support](docs/st010.md) describes the fallback math commands.

@@ -1,6 +1,6 @@
 # Performance checks
 
-The renderer shares unchanged VRAM snapshots across scanlines and keeps raster events in separate lists for each line. This removes repeated 64 KiB copies and searches through unrelated register writes. The CPU bus fix and optional MSU-1 mixer were included in the same comparison.
+The September measurements below evaluated VRAM snapshot sharing and per-line raster event lists. The CPU bus fix and optional MSU-1 mixer were included in that comparison. Clocked background and object fetches have since replaced the full VRAM snapshots; raster event lists still retain screen-register changes for composition. These older measurements do not describe the current core's throughput.
 
 ## Local measurements, 2026-09-15
 

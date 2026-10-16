@@ -5,8 +5,8 @@
 #pragma once
 // Ppu.hpp - SNES PPU register model + scanline renderer
 //
-// Covers all PPU I/O registers $2100–$213F and a scanline-based rendering
-// pipeline for backgrounds, sprites, windows, and color math.
+// Covers all PPU I/O registers $2100–$213F, clocked layer fetches,
+// and per-line composition with windows and color math.
 //
 // Write registers: $2100–$2133
 // Read  registers: $2134–$213F
@@ -17,8 +17,8 @@
 //   CGRAM - 512 bytes (256 × 15-bit colors stored as uint16_t)
 //
 // Rendering:
-//   Clocked background fetches, cached object rows, windows, and color math
-//   Output: 256×224(240) pixels as uint32_t RGBA8888
+//   Clocked background and object fetches, windows, and color math
+//   Output: 256/512 pixels wide, 224/239 lines, or interlaced fields
 //
 
 #include <array>
@@ -32,6 +32,7 @@
 namespace snes::core {
 
 class PpuBackground;
+class PpuObject;
 
 // Ppu - PPU register model
 class Ppu {
@@ -57,8 +58,8 @@ public:
     /// Called at the start of each frame (V=0).
     void FrameBegin();
 
-    /// Called at the start of each visible scanline (V=1..vdisp-1).
-    /// Retains object memory and screen registers for final composition.
+    /// Called at H=512 on each visible scanline (V=1..vdisp-1).
+    /// Retains screen registers for final composition.
     void ScanlineBegin(uint16_t line);
 
     /// Called at V=vdisp (start of vblank).
@@ -108,9 +109,8 @@ public:
     void SetVDispCallback(VDispCallback cb) { onVDisp_ = std::move(cb); }
 
     // Direct memory access - for DMA, testing, rendering
-    uint16_t* VramData() noexcept {
-        vramExternallyMutable_ = true;
-        return vram_.get();
+    uint16_t *VramData() noexcept {
+      return vram_.get();
     }
     const uint16_t* VramData() const noexcept { return vram_.get(); }
     static constexpr size_t VramWords = 32768; // 64KB / 2
@@ -317,39 +317,14 @@ public:
         bool     size      = false; // 0=small, 1=large
     };
 
-    /// Sprite evaluation result - which OAM entries are on this line.
-    struct ObjectItem {
-        bool    valid  = false;
-        uint8_t index  = 0;
-        uint8_t width  = 0;
-        uint8_t height = 0;
-    };
-
-    /// Sprite tile data for rendering.
-    struct ObjectTile {
-        bool     valid    = false;
-        uint16_t x        = 0;
-        uint8_t  priority = 0;
-        uint8_t  palette  = 0;
-        bool     hflip    = false;
-        uint32_t data     = 0; // packed 4bpp tile row (32 bits = 2 VRAM words)
-    };
-
     /// Per-scanline rendering state - snapshotted at cache time.
     struct Line {
         uint16_t y       = 0; // Hardware vcounter; first visible line is 1.
         bool     fieldID = false;
 
         IO       io;                              // Snapshot of PPU IO
-        uint16_t cgram[CgramColors] = {};         // Snapshot of palette
-        std::span<const uint16_t> vram;
-        std::array<Object, 128> objects{};
-
-        ObjectItem items[128]  = {};
-        ObjectTile tiles[128]  = {};
-
-        Pixel backgroundAbove[256] = {}, backgroundBelow[256] = {};
-        bool backgroundHires = false;
+        Pixel sampledAbove[256] = {}, sampledBelow[256] = {};
+        bool sampledHires = false;
         Pixel    above[256] = {};                 // Main screen line buffer
         Pixel    below[256] = {};                 // Sub screen line buffer
         bool     windowAbove[256] = {};           // Color window for main screen
@@ -413,9 +388,6 @@ private:
     /// Write VRAM byte (lowByte=false → low, true → high)
     void WriteVram(bool highByte, uint8_t data);
 
-    /// Keep one immutable copy per VRAM revision until the frame is rendered.
-    std::span<const uint16_t> SnapshotVram();
-
     /// Read a byte from OAM (10-bit address space, 544 bytes)
     uint8_t ReadOam(uint16_t address);
 
@@ -437,10 +409,6 @@ private:
     /// Advance the per-line mosaic phase once, whether invoked by the timing
     /// line-start hook or by direct scanline tests.
     void AdvanceMosaicCounter(uint16_t line) noexcept;
-
-    /// Evaluate the current line's 32-object / 34-tile limits and update the
-    /// sticky status flags independently of OBJ screen enables.
-    void UpdateObjectOverflow(uint16_t line);
 
     /// Record a visible-line register change for span-based raster rendering.
     void RecordRasterEvent(RasterEventType type, uint8_t index, const IO& before);
@@ -464,22 +432,9 @@ private:
     /// Render one IO state over a logical 256-dot span of a cached scanline.
     void RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch);
 
-    /// Render all sprites into the line buffers.
-    void RenderObjects(Line& line, const ObjectIO& obj);
-
-    /// Compute window mask for a BG/OBJ layer.
-    void RenderWindow(const Line& line, const WindowLayer& wl, bool enable,
-                      bool output[256]);
-
     /// Compute window mask for color math.
     void RenderWindowColor(const Line& line, const WindowColor& wc,
                            uint8_t mask, bool output[256]);
-
-    /// Priority-based pixel plot.
-    static void PlotAbove(Line& line, int x, uint8_t source,
-                          uint8_t priority, uint16_t color);
-    static void PlotBelow(Line& line, int x, uint8_t source,
-                          uint8_t priority, uint16_t color);
 
     /// Color math compositing for a single pixel.
     uint16_t CompositePixel(const Line &line, int x, ColorMathLatch &latch) const;
@@ -498,12 +453,13 @@ private:
     /// Build the brightness lookup table.
     void BuildLightTable();
 
-    void SynchronizeBackground(uint16_t clock);
-    void StoreBackgroundPixel(unsigned x);
+    void SynchronizePipeline(uint16_t clock);
+    void StorePipelinePixel(unsigned x);
 
     // State
     std::unique_ptr<PpuBackground> background_;
-    uint16_t backgroundClock_ = 0;
+    std::unique_ptr<PpuObject> object_;
+    uint16_t pipelineClock_ = 0;
     IO    io_;
     Latch latch_;
 
@@ -516,22 +472,15 @@ private:
     // CGRAM - 256 × 15-bit colors
     std::array<uint16_t, CgramColors> cgram_{};
 
-    // Parsed OAM objects (128 entries, built from raw OAM before rendering)
+    // Parsed OAM objects for explicit inspection and diagnostic output.
     std::array<Object, 128> objects_{};
 
-    // Per-scanline rendering cache. Tile memory is shared by unchanged lines.
+    // Retained layer samples and screen state for final composition.
     static constexpr int MaxVisibleLines = 240;
     std::unique_ptr<Line[]> lines_;
     int lineStart_ = 0;
     int lineCount_ = 0;
     std::array<std::vector<RasterEvent>, MaxVisibleLines> rasterEvents_;
-    using VramSnapshot = std::array<uint16_t, VramWords>;
-    std::vector<std::unique_ptr<VramSnapshot>> vramSnapshots_;
-    size_t vramSnapshotCount_ = 0;
-    bool vramDirty_ = true;
-    // A caller can retain VramData() across frames and reset. Compare memory
-    // before sharing a snapshot once a mutable pointer has escaped.
-    bool vramExternallyMutable_ = false;
 
     // Mosaic progression normally happens from SetCurrentLine at H=0.  Direct
     // renderer tests may call ScanlineBegin instead, so guard against a second

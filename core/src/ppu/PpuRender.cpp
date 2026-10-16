@@ -1,13 +1,12 @@
 // snes emulator
 // core/src/ppu/PpuRender.cpp
-// Compose retained background samples, object rows, and color math.
+// Compose retained layer samples and screen color math.
 
 // PpuRender.cpp - SNES PPU scanline rendering pipeline
 //
 // Implements the scanline rendering pipeline:
 //   - IO state snapshot per visible scanline
-//   - Retained background samples from the clocked fetch and shift stages
-//   - Sprite rendering (128 OAM evaluation, 32-per-line, 4bpp tiles)
+//   - Retained background and object samples from their fetch stages
 //   - Window masking (BG/OBJ layer windows + color math windows)
 //   - Priority-based compositing with above/below (main/sub) screens
 //   - Color math (add/subtract with saturation, halve, per-layer enable)
@@ -106,7 +105,7 @@ void Ppu::RenderFrame() {
     bool hires = false, interlace = displayInterlace_, overscan = false;
     for (int i = 0; i < lineCount_; ++i) {
         const auto& registers = lines_[lineStart_ + i].io;
-        hires |= lines_[lineStart_ + i].backgroundHires;
+        hires |= lines_[lineStart_ + i].sampledHires;
         hires |= registers.pseudoHires || registers.bgMode == 5 || registers.bgMode == 6;
         overscan |= registers.overscan;
     }
@@ -148,7 +147,6 @@ void Ppu::RenderFrame() {
 
     lineStart_ = 0;
     lineCount_ = 0;
-    vramSnapshotCount_ = 0;
     gRenderFrame++;
 }
 
@@ -202,10 +200,9 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
     return;
   }
 
-  // Background samples have already crossed the fetch and shift stages.
-  std::copy_n(line.backgroundAbove, 256, line.above);
-  std::copy_n(line.backgroundBelow, 256, line.below);
-  RenderObjects(line, line.io.obj);
+  // Layer samples have already crossed their evaluation and fetch stages.
+  std::copy_n(line.sampledAbove, 256, line.above);
+  std::copy_n(line.sampledBelow, 256, line.below);
 
   // Step 3: Compute color windows
   RenderWindowColor(line, line.io.col.window, line.io.col.window.aboveMask, line.windowAbove);
@@ -243,22 +240,6 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
   }
 }
 
-// PlotAbove / PlotBelow - priority-based pixel merge
-
-void Ppu::PlotAbove(Line& line, int x, uint8_t source,
-                    uint8_t priority, uint16_t color) {
-    if (priority > line.above[x].priority) {
-        line.above[x] = {source, priority, color};
-    }
-}
-
-void Ppu::PlotBelow(Line& line, int x, uint8_t source,
-                    uint8_t priority, uint16_t color) {
-    if (priority > line.below[x].priority) {
-        line.below[x] = {source, priority, color};
-    }
-}
-
 // DirectColor - BG1 direct color mode (modes 3/4)
 
 uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
@@ -268,232 +249,6 @@ uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
         ((paletteColor << 2) & 0x001C) + ((paletteIndex <<  1) & 0x0002) +  // R
         ((paletteColor << 4) & 0x0380) + ((paletteIndex <<  5) & 0x0040) +  // G
         ((paletteColor << 7) & 0x6000) + ((paletteIndex << 10) & 0x1000));  // B
-}
-
-// RenderObjects - sprite rendering
-//
-
-void Ppu::RenderObjects(Line& line, const ObjectIO& obj) {
-    if (!obj.aboveEnable && !obj.belowEnable) return;
-
-    // Phase 1: Sprite evaluation - find which sprites are on this scanline
-    bool winAbove[256], winBelow[256];
-    RenderWindow(line, obj.window, obj.window.aboveEnable, winAbove);
-    RenderWindow(line, obj.window, obj.window.belowEnable, winBelow);
-
-    int itemCount = 0;
-    int tileCount = 0;
-    constexpr int ItemLimit = 32;
-    constexpr int TileLimit = 34;
-    // Clear items/tiles
-    for (int i = 0; i < 128; i++) {
-        line.items[i] = {false, 0, 0, 0};
-        line.tiles[i] = {};
-    }
-
-    uint16_t y = static_cast<uint16_t>(line.y & 0xFF);
-
-    for (int n = 0; n < 128; n++) {
-        uint8_t idx = static_cast<uint8_t>((obj.first + n) & 127);
-        const auto& object = line.objects[idx];
-
-        // Determine sprite dimensions
-        uint8_t w, h;
-        if (!object.size) {
-            w = kObjSmallWidth[obj.baseSize];
-            h = kObjSmallHeight[obj.baseSize];
-            if (obj.interlace && obj.baseSize >= 6) h = 16; // hardware quirk
-        } else {
-            w = kObjLargeWidth[obj.baseSize];
-            h = kObjLargeHeight[obj.baseSize];
-        }
-
-        // Off-screen X check: if sprite starts beyond 256 and doesn't wrap onto screen
-        if (object.x > 256 && static_cast<int>(object.x) + w - 1 < 512) continue;
-
-        // Y range check in 8-bit space (raw OAM Y and wrapped scanline).
-        uint32_t effectiveH = h >> static_cast<uint32_t>(obj.interlace);
-        uint32_t objY = object.y;
-        uint32_t lineY = y;
-
-        // Check Y range (with 8-bit wrapping)
-        bool inRange = false;
-        if (lineY >= objY && lineY < objY + effectiveH) {
-            inRange = true;
-        } else if (objY + effectiveH >= 256 && lineY < ((objY + effectiveH) & 0xFF)) {
-            inRange = true;
-        }
-
-        if (!inRange) continue;
-
-        if (itemCount >= ItemLimit) break;
-        line.items[itemCount] = {true, idx, w, h};
-        itemCount++;
-    }
-
-    // Phase 2: Tile fetching (reverse order - lower index = higher priority)
-    for (int n = itemCount - 1; n >= 0; n--) {
-        const auto& item = line.items[n];
-        if (!item.valid) continue;
-
-        const auto& object = line.objects[item.index];
-
-        uint32_t w = item.width;
-        uint32_t h = item.height;
-        uint32_t tileWidth = w >> 3; // tiles across
-
-        // Compute Y within sprite
-        int spriteY = static_cast<int>((y - object.y) & 0xFF);
-        if (obj.interlace) spriteY <<= 1;
-
-        // V-flip: non-square sprites flip within each width-sized block
-        if (object.vflip) {
-            if (w == h) {
-                spriteY = static_cast<int>(h - 1) - spriteY;
-            } else if (spriteY < static_cast<int>(w)) {
-                spriteY = static_cast<int>(w - 1) - spriteY;
-            } else {
-                spriteY = static_cast<int>(w) + static_cast<int>(w - 1)
-                        - (spriteY - static_cast<int>(w));
-            }
-        }
-
-        // Interlace field offset
-        if (obj.interlace) {
-            spriteY = !object.vflip ? spriteY + static_cast<int>(line.fieldID)
-                                    : spriteY - static_cast<int>(line.fieldID);
-        }
-
-        uint32_t sx = static_cast<uint32_t>(object.x) & 0x1FF;
-        spriteY &= 0xFF;
-
-        // Tile data base address
-        uint16_t tiledataAddr = obj.tiledataAddress;
-        if (object.nameselect) {
-            // OBSEL nameselect selects an alternate character page at
-            // ((1 + nameselect) << 12) words from the base tile data address.
-            tiledataAddr += static_cast<uint16_t>((1u + obj.nameselect) << 12);
-        }
-
-        uint16_t characterX = object.character & 0x0F;
-        uint16_t characterY = static_cast<uint16_t>(
-            (((object.character >> 4) + (static_cast<uint32_t>(spriteY) >> 3)) & 0x0F) << 4);
-
-        for (uint32_t tileX = 0; tileX < tileWidth; tileX++) {
-            uint32_t objectX = (sx + (tileX << 3)) & 0x1FF;
-            // Skip tiles entirely off-screen (x=256 sprites are not skipped)
-            if (sx != 256 && objectX >= 256 && objectX + 7 < 512) continue;
-
-            if (tileCount >= TileLimit) break;
-
-            uint32_t mirrorX = object.hflip ? (tileWidth - 1 - tileX) : tileX;
-            uint16_t address = tiledataAddr +
-                static_cast<uint16_t>(
-                    ((characterY + ((characterX + mirrorX) & 15)) << 4));
-            address = (address & 0x7FF0) + static_cast<uint16_t>(spriteY & 7);
-
-            ObjectTile tile;
-            tile.valid    = true;
-            tile.x        = static_cast<uint16_t>(objectX);
-            tile.priority = object.priority;
-            tile.palette  = static_cast<uint8_t>(128 + (object.palette << 4));
-            tile.hflip    = object.hflip;
-
-            // 4bpp tile data (2 VRAM words = 32 bits)
-            uint32_t d = 0;
-            d  = static_cast<uint32_t>(line.vram[(address + 0) & 0x7FFF]) <<  0;
-            d |= static_cast<uint32_t>(line.vram[(address + 8) & 0x7FFF]) << 16;
-            tile.data = d;
-
-            line.tiles[tileCount] = tile;
-            tileCount++;
-        }
-    }
-
-    // Phase 3: Pixel decode into temporary buffers
-    uint8_t paletteArr[256] = {};
-    uint8_t priorityArr[256] = {};
-
-    for (int n = 0; n < tileCount && n < TileLimit; n++) {
-        const auto& tile = line.tiles[n];
-        if (!tile.valid) continue;
-
-        uint32_t tileX = tile.x;
-        for (int px = 0; px < 8; px++) {
-            tileX &= 511;
-            if (tileX < 256) {
-                uint32_t shift = tile.hflip ? static_cast<uint32_t>(px)
-                                            : (7 - static_cast<uint32_t>(px));
-                uint32_t color = 0;
-                color  = (tile.data >> (shift +  0)) & 1;
-                color += (tile.data >> (shift +  7)) & 2;
-                color += (tile.data >> (shift + 14)) & 4;
-                color += (tile.data >> (shift + 21)) & 8;
-
-                if (color != 0) {
-                    paletteArr[tileX] = tile.palette + static_cast<uint8_t>(color);
-                    priorityArr[tileX] = obj.priority[tile.priority];
-                }
-            }
-            tileX++;
-        }
-    }
-
-    // Phase 4: Plot to above/below
-    for (int x = 0; x < 256; x++) {
-        if (priorityArr[x] == 0) continue;
-
-        // OBJ1 = palettes 0-3 (indices < 192), OBJ2 = palettes 4-7 (indices >= 192)
-        uint8_t src = (paletteArr[x] < 192) ? Source::OBJ1 : Source::OBJ2;
-        uint16_t color = line.cgram[paletteArr[x]];
-
-        if (obj.aboveEnable && !winAbove[x])
-            PlotAbove(line, x, src, priorityArr[x], color);
-        if (obj.belowEnable && !winBelow[x])
-            PlotBelow(line, x, src, priorityArr[x], color);
-    }
-}
-
-// RenderWindow - compute window mask for a BG/OBJ layer
-//
-// output[x] = true means pixel is INSIDE the window → will be clipped
-
-void Ppu::RenderWindow(const Line& line, const WindowLayer& wl, bool enable,
-                       bool output[256]) {
-    if (!enable || (!wl.oneEnable && !wl.twoEnable)) {
-        std::memset(output, 0, 256 * sizeof(bool));
-        return;
-    }
-
-    if (wl.oneEnable && !wl.twoEnable) {
-        // Only window 1
-        for (int x = 0; x < 256; x++) {
-            bool inside = (x >= line.io.window.oneLeft && x <= line.io.window.oneRight);
-            output[x] = inside ^ wl.oneInvert;
-        }
-        return;
-    }
-
-    if (!wl.oneEnable && wl.twoEnable) {
-        // Only window 2
-        for (int x = 0; x < 256; x++) {
-            bool inside = (x >= line.io.window.twoLeft && x <= line.io.window.twoRight);
-            output[x] = inside ^ wl.twoInvert;
-        }
-        return;
-    }
-
-    // Both windows enabled - combine with mask logic
-    for (int x = 0; x < 256; x++) {
-        bool one = (x >= line.io.window.oneLeft && x <= line.io.window.oneRight) ^ wl.oneInvert;
-        bool two = (x >= line.io.window.twoLeft && x <= line.io.window.twoRight) ^ wl.twoInvert;
-        switch (wl.mask) {
-        case 0: output[x] = one | two;   break; // OR
-        case 1: output[x] = one & two;   break; // AND
-        case 2: output[x] = one ^ two;   break; // XOR
-        case 3: output[x] = !(one ^ two); break; // XNOR
-        }
-    }
 }
 
 // RenderWindowColor - compute window mask for color math
