@@ -183,6 +183,137 @@ void ModifyFlagSampling() {
       }
 }
 
+void IndexedIndirectPointerBank() {
+  struct ObservedBus : Bus {
+    uint32_t lowAddress = ~0u, highAddress = ~0u;
+    std::vector<uint32_t> addresses;
+    uint8_t Read(uint32_t address) override {
+      addresses.push_back(address);
+      if (address == lowAddress)
+        return 0x34;
+      if (address == highAddress)
+        return 0x12;
+      return Bus::Read(address);
+    }
+  };
+  struct Case {
+    bool emulation;
+    uint16_t direct;
+    uint8_t operand, index;
+    uint32_t low, high;
+  };
+  const Case cases[] = {
+      {true, 0xffff, 2, 0xff, 0x10100, 0x10101}, {true, 0xffff, 1, 0, 0x10000, 0x10001},
+      {true, 0xfeff, 1, 0xff, 0xffff, 0xff00},   {true, 0xff00, 0xff, 0xff, 0xfffe, 0xffff},
+      {false, 0xffff, 2, 0xff, 0x100, 0x101},    {true, 0, 0xff, 1, 0, 1}};
+  for (uint8_t opcode : {0x01, 0x21, 0x41, 0x61, 0x81, 0xa1, 0xc1, 0xe1})
+    for (const auto &test : cases) {
+      ObservedBus bus;
+      SnesCpu cpu(bus);
+      Boot(cpu, bus);
+      auto &r = cpu.regs();
+      r.e = test.emulation;
+      r.p = 0x35;
+      r.a = 0xab42;
+      r.x = test.index;
+      r.d = test.direct;
+      bus.lowAddress = test.low;
+      bus.highAddress = test.high;
+      bus.ram[0x8000] = opcode;
+      bus.ram[0x8001] = test.operand;
+      bus.addresses.clear();
+      cpu.Step();
+      Check("Indexed indirect operand-read count", unsigned(bus.addresses.size()),
+            opcode == 0x81 ? 4 : 5);
+      if (bus.addresses.size() >= 4) {
+        Check("Indexed indirect pointer low retains its address carry", bus.addresses[2], test.low);
+        Check("Indexed indirect pointer high retains its selected page", bus.addresses[3],
+              test.high);
+      }
+      const auto address =
+          opcode == 0x81 ? (bus.writes.empty() ? 0 : bus.writes.back()) : bus.addresses.back();
+      Check("Indexed indirect data uses the fetched pointer", address, 0x1234);
+    }
+}
+
+void InterruptVectorBusState() {
+  struct ObservedBus : Bus {
+    SnesCpu *cpu = nullptr;
+    std::vector<uint32_t> pc;
+    uint8_t Read(uint32_t address) override {
+      if (cpu && address >= 0xffe0 && address <= 0xffff)
+        pc.push_back((uint32_t(cpu->regs().pb) << 16) | cpu->regs().pc);
+      return Bus::Read(address);
+    }
+  };
+  for (unsigned kind = 0; kind < 4; ++kind)
+    for (bool emulation : {false, true})
+      for (uint8_t bank : {0, 0x12}) {
+        ObservedBus bus;
+        SnesCpu cpu(bus);
+        Boot(cpu, bus);
+        auto &r = cpu.regs();
+        r.e = emulation;
+        r.p = 0x39;
+        r.pb = bank;
+        bus.ram[0x8000] = kind == 0 ? 0x00 : kind == 1 ? 0x02 : 0xea;
+        const uint16_t vectors[2][4] = {{0xffe6, 0xffe4, 0xffea, 0xffee},
+                                        {0xfffe, 0xfff4, 0xfffa, 0xfffe}};
+        const uint16_t vector = vectors[emulation][kind];
+        bus.ram[vector] = 0x34;
+        bus.ram[vector + 1] = 0x12;
+        if (kind == 2)
+          cpu.RequestNmi();
+        if (kind == 3)
+          cpu.SetIrqLevel(true);
+        if (kind >= 2) {
+          cpu.Step();
+          cpu.SetIrqLevel(false);
+        }
+        const unsigned returnPc = kind < 2 ? 0x8002 : 0x8001;
+        bus.cpu = &cpu;
+        std::vector<uint32_t> sampledPc;
+        cpu.SetInterruptPollCallback([&] {
+          sampledPc.push_back((uint32_t(r.pb) << 16) | r.pc);
+          return false;
+        });
+        cpu.Step();
+        Check("Interrupt vector-read count", unsigned(bus.pc.size()), 2);
+        if (bus.pc.size() == 2) {
+          Check("The low vector read retains the program bank and return PC", bus.pc[0],
+                (uint32_t(bank) << 16) | returnPc);
+          Check("The high vector read observes the fetched PC low byte", bus.pc[1],
+                (uint32_t(bank) << 16) | 0x8034);
+        }
+        Check("Interrupt sample count", unsigned(sampledPc.size()), 1);
+        if (sampledPc.size() == 1)
+          Check("Interrupt sampling observes the partial vector and live program bank",
+                sampledPc[0], (uint32_t(bank) << 16) | 0x8034);
+        Check("Interrupt clears its program bank after fetching the vector", r.pb, 0);
+      }
+  ObservedBus bus;
+  SnesCpu cpu(bus);
+  cpu.Reset();
+  bus.ram[0xfffc] = 0x34;
+  bus.ram[0xfffd] = 0x12;
+  bus.cpu = &cpu;
+  std::vector<uint32_t> sampledPc;
+  cpu.SetInterruptPollCallback([&] {
+    sampledPc.push_back((uint32_t(cpu.regs().pb) << 16) | cpu.regs().pc);
+    return false;
+  });
+  cpu.Step();
+  Check("Reset vector-read count", unsigned(bus.pc.size()), 2);
+  if (bus.pc.size() == 2) {
+    Check("Reset retains its PC before the low vector read", bus.pc[0], 0);
+    Check("Reset publishes PC low before the high vector read", bus.pc[1], 0x34);
+  }
+  Check("Reset interrupt sample count", unsigned(sampledPc.size()), 1);
+  if (sampledPc.size() == 1)
+    Check("Reset sampling observes the fetched PC low byte", sampledPc[0], 0x34);
+  Check("Reset publishes the complete vector", cpu.regs().pc, 0x1234);
+}
+
 void InterruptStack() {
     // Exercise every byte of an interrupt frame across the page boundary.
     for (bool emulation : {false, true}) {
@@ -520,6 +651,8 @@ int main(int argc, char** argv) {
       CallBusState();
       StackPullBusState();
       ModifyFlagSampling();
+      IndexedIndirectPointerBank();
+      InterruptVectorBusState();
       InterruptStack();
       ExtendedStackInstructions();
       WaitInterrupt();

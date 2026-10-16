@@ -155,13 +155,13 @@ void Processor65816::writeDirect(uint32_t address, uint8_t data) {
 }
 
 uint8_t Processor65816::readDirectX(uint32_t address, uint32_t offset) {
-    // The (direct,X) addressing mode has a bug:
-    // when E=1 and D&0xFF!=0, the high byte wraps within the page.
-    if (r.e && (r.d & 0xFF)) {
-        uint16_t base = static_cast<uint16_t>(r.d + address);
-        return read((base & 0xFFFF00) | ((base + offset) & 0xFF));
-    }
-    return readDirect(address + offset);
+  // An unaligned direct page wraps pointer-byte offsets within its selected
+  // page in emulation mode. The page selection retains the address carry.
+  if (r.e && (r.d & 0xFF)) {
+    uint32_t base = r.d + address;
+    return read((base & 0xFFFF00) | ((base + offset) & 0xFF));
+  }
+  return readDirect(address + offset);
 }
 
 uint8_t Processor65816::readDirectN(uint32_t address) {
@@ -1398,19 +1398,20 @@ void Processor65816::instructionBlockMove16(int adjust) {
 
 // BRK / COP - Software Interrupt
 void Processor65816::instructionInterrupt(uint16_t vector) {
-    fetch();
-    if (!r.e)
-      push(r.pb);
-    push(hi(r.pc));
-    push(lo(r.pc));
-    push(r.p);
-    r.p |= FlagI;  // Set interrupt disable
-    r.p &= ~FlagD; // Clear decimal mode
-    r.pb = 0x00;
-    uint8_t pcl = read(vector + 0);
-    lastCycle();
-    uint8_t pch = read(vector + 1);
-    r.pc = makeWord(pcl, pch);
+  fetch();
+  if (!r.e)
+    push(r.pb);
+  push(hi(r.pc));
+  push(lo(r.pc));
+  push(r.p);
+  r.p |= FlagI;  // Set interrupt disable
+  r.p &= ~FlagD; // Clear decimal mode
+  uint8_t pcl = read(vector + 0);
+  r.pc = static_cast<uint16_t>((r.pc & 0xff00) | pcl);
+  lastCycle();
+  uint8_t pch = read(vector + 1);
+  r.pc = makeWord(pcl, pch);
+  r.pb = 0x00;
 }
 
 // STP - Stop Processor
