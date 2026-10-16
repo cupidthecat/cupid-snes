@@ -1,4 +1,5 @@
 #include "snes/core/SuperFx.hpp"
+#include "snes/core/Timing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <vector>
 
 using snes::core::SuperFx;
+using snes::core::Timing;
 
 namespace {
 void Check(bool condition, const char* message) {
@@ -115,6 +117,42 @@ void CacheFillAndInternalRam() {
   bytes.chip.Advance(84);
   Check(bytes.chip.ReadCpu(0x3100) == 0xa5 && bytes.chip.ReadCpu(0x3101) == 1,
         "A cache fill samples each byte on its own bus edge before later CPU cache stores");
+}
+
+void MasterClockSynchronization() {
+  for (bool pal : {false, true}) {
+    for (bool fast : {false, true}) {
+      Fixture f;
+      f.chip.SetPal(pal);
+      f.Reg(14, 0x234);
+      f.chip.AdvanceMasterClocks(0);
+      Check((f.chip.ReadCpu(0x3030) & 0x40) != 0,
+            "A zero-clock master interval does not start work");
+      f.chip.AdvanceMasterClocks(1);
+      Check((f.chip.ReadCpu(0x3030) & 0x40) == 0,
+            "A positive fractional interval starts the native step's buffered work");
+      f.chip.Reset();
+      f.chip.WriteCpu(0x303a, 0x18);
+      f.chip.WriteCpu(0x3039, fast);
+      f.Cache({0, 1});
+      f.Start(0);
+      const uint64_t hz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+      const auto deadline = (2 * (fast ? 1u : 2u) * hz) / SuperFx::ClockFrequency + 1;
+      f.chip.AdvanceMasterClocks(static_cast<uint32_t>(deadline - 1));
+      Check(!f.chip.CpuIrqPending(),
+            "The master clock retains the reset processor's pending fetch");
+      f.chip.AdvanceMasterClocks(1);
+      Check(f.chip.CpuIrqPending(), "The selected region survives a processor reset");
+    }
+  }
+  Fixture mixed;
+  mixed.Cache({0, 1});
+  mixed.Start(0);
+  mixed.chip.AdvanceMasterClocks(1);
+  mixed.chip.Advance(1);
+  Check(mixed.Reg(15) == 0, "Both clock domains share the pending step's fractional balance");
+  mixed.chip.AdvanceMasterClocks(1);
+  Check(mixed.Reg(15) == 1, "A later interval completes the shared pending fetch");
 }
 
 void RegistersAndMapping() {
@@ -977,6 +1015,7 @@ void CacheBoundaryAndClockModes() {
 int main() {
     try {
       CacheFillAndInternalRam();
+      MasterClockSynchronization();
       RegistersAndMapping();
       ExpandedCpuWindows();
       ArithmeticMatrix();

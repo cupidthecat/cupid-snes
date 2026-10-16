@@ -198,8 +198,6 @@ private:
     RomHeader header_{};
     uint32_t romCrc32_ = 0;
     bool memselFast_ = false;
-    uint32_t masterClockHz_ = 21'477'272;
-    uint32_t superFxClockRemainder_ = 0;
     size_t slotSize_[2]{};
     size_t slotOffset_[2]{};
     std::vector<uint8_t> memoryPack_;

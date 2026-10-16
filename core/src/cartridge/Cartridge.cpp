@@ -6,7 +6,6 @@
 
 #include "snes/core/Logging.hpp"
 #include "snes/core/Sdd1.hpp"
-#include "snes/core/Timing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -566,7 +565,6 @@ void Cartridge::Reset() {
   if (necDsp_)
     necDsp_->Reset();
   memselFast_ = false;
-  superFxClockRemainder_ = 0;
   flashProgram_ = flashVendor_ = flashExtendedStatus_ = flashStatus_ = false;
   flashCommand_ = 0;
   sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
@@ -756,11 +754,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
     necDsp_->Advance(masterClocks);
   if (sa1_)
     sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing);
-  if (superFx_) {
-    const auto clocks = uint64_t(masterClocks) * SuperFx::ClockFrequency + superFxClockRemainder_;
-    superFxClockRemainder_ = static_cast<uint32_t>(clocks % masterClockHz_);
-    superFx_->Advance(clocks / masterClockHz_);
-  }
+  if (superFx_)
+    superFx_->AdvanceMasterClocks(masterClocks);
 }
 
 void Cartridge::SetPal(bool pal) {
@@ -772,8 +767,8 @@ void Cartridge::SetPal(bool pal) {
     armDsp_->SetPal(pal);
   if (necDsp_)
     necDsp_->SetPal(pal);
-  masterClockHz_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
-  superFxClockRemainder_ = 0;
+  if (superFx_)
+    superFx_->SetPal(pal);
   if (sa1_)
     sa1_->SetPal(pal);
 }

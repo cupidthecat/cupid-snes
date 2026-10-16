@@ -153,6 +153,178 @@ void SuperFxOscillator() {
   }
 }
 
+void SuperFxMasterBoundaries() {
+  struct Edge {
+    bool pal, fast;
+    uint32_t clock;
+    uint16_t pc, stoppedPc, followingPc;
+  };
+  constexpr Edge edges[]{{false, true, 5369318, 1, 2, 0},
+                         {false, false, 5369318, 0, 1, 1},
+                         {true, true, 4256274, 0, 1, 0},
+                         {true, false, 4256274, 1, 2, 0}};
+  for (const auto &edge : edges) {
+    for (unsigned action = 0; action < 3; ++action) {
+      auto cart = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+      Check(cart.has_value(), "The master-clock boundary fixture loads");
+      cart->SetPal(edge.pal);
+      cart->Write(0x3039, edge.fast);
+      cart->Write(0x303a, 0x18);
+      for (unsigned byte = 0; byte < 16; ++byte)
+        cart->Write(0x3100 + byte, byte == 0 ? 5 : byte == 1 ? 0xfe : 1);
+      cart->Write(0x301e, 0);
+      cart->Write(0x301f, 0);
+      cart->AdvanceHardware(edge.clock - 2);
+      cart->AdvanceHardware(2);
+      Check(cart->Read(0x301e) == edge.pc && cart->Read(0x301f) == 0,
+            "An exact oscillator boundary retains the suspended fetch before CPU access");
+      cart->AdvanceHardware(0);
+      Check(cart->Read(0x301e) == edge.pc, "A zero-clock synchronization cannot finish the fetch");
+      if (action == 1)
+        cart->Write(0x3030, 0);
+      if (action == 2) {
+        cart->Write(0x301e, 0x10);
+        cart->Write(0x301f, 0);
+      }
+      cart->AdvanceHardware(2);
+      const unsigned expected = action == 1   ? edge.stoppedPc
+                                : action == 2 ? 0x11
+                                              : edge.followingPc;
+      Check(cart->Read(0x301e) == expected && cart->Read(0x301f) == 0,
+            "The CPU boundary write takes effect before the pending instruction resumes");
+    }
+  }
+}
+
+void SuperFxFirstFraction() {
+  for (bool pal : {false, true}) {
+    auto cart = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+    Check(cart.has_value(), "The initial fractional-clock fixture loads");
+    cart->SetPal(pal);
+    cart->Write(0x303a, 0x18);
+    cart->Write(0x301c, 0x34);
+    cart->Write(0x301d, 2);
+    cart->AdvanceHardware(0);
+    Check((cart->Read(0x3030) & 0x40) != 0, "Zero elapsed time leaves the ROM request pending");
+    cart->AdvanceHardware(1);
+    Check((cart->Read(0x3030) & 0x40) == 0,
+          "The first native step settles its buffered access before yielding its clocks");
+  }
+}
+
+void SuperFxStoppedMasterEdge() {
+  for (bool pal : {false, true}) {
+    for (bool fast : {false, true}) {
+      auto cart = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+      Check(cart.has_value(), "The stopped clock-boundary fixture loads");
+      cart->SetPal(pal);
+      cart->Write(0x3039, fast);
+      cart->Write(0x303a, 0x18);
+      for (unsigned byte = 0; byte < 16; ++byte)
+        cart->Write(0x3100 + byte, byte ? 1 : 0);
+      cart->AdvanceHardware(pal ? 12768822 : 16107954);
+      cart->Write(0x301e, 0);
+      cart->Write(0x301f, 0);
+      const uint64_t hz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+      const auto stop = (2 * (fast ? 1u : 2u) * hz) / SuperFx::ClockFrequency + 1;
+      cart->AdvanceHardware(static_cast<uint32_t>(stop - 1));
+      Check(!cart->CpuIrqPending(), "Restarted STOP retains both pipeline fetch waits");
+      cart->AdvanceHardware(1);
+      Check(cart->CpuIrqPending(), "GO at an idle boundary does not insert another idle interval");
+    }
+  }
+}
+
+void SuperFxExactIrqEdge() {
+  struct Edge {
+    bool pal, fast;
+    uint32_t clock;
+  };
+  constexpr Edge edges[]{{false, true, 5369318},
+                         {false, false, 10738636},
+                         {true, true, 8512548},
+                         {true, false, 4256274}};
+  for (const auto &edge : edges) {
+    auto cart = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+    Check(cart.has_value(), "The exact IRQ boundary fixture loads");
+    cart->SetPal(edge.pal);
+    cart->Write(0x3039, edge.fast);
+    cart->Write(0x303a, 0x18);
+    for (unsigned byte = 0; byte < 16; ++byte)
+      cart->Write(0x3100 + byte, byte ? 1 : 0);
+    const unsigned lead = edge.fast ? 4 : 6;
+    cart->AdvanceHardware(edge.clock - lead);
+    cart->Write(0x301e, 0);
+    cart->Write(0x301f, 0);
+    cart->AdvanceHardware(lead);
+    Check(!cart->CpuIrqPending(), "An exact clock edge precedes STOP's IRQ update");
+    cart->AdvanceHardware(0);
+    Check(!cart->CpuIrqPending(), "Zero elapsed time does not raise the deferred STOP IRQ");
+    cart->AdvanceHardware(1);
+    Check(cart->CpuIrqPending(), "The first later master clock exposes the STOP IRQ");
+  }
+}
+
+void SuperFxCacheFillEdge() {
+  struct Edge {
+    bool pal, fast;
+    uint32_t clock;
+  };
+  constexpr Edge edges[]{{false, true, 10738636},
+                         {false, false, 16107954},
+                         {true, true, 4256274},
+                         {true, false, 12768822}};
+  for (const auto &edge : edges) {
+    for (bool deny : {false, true}) {
+      auto rom = Rom(0x20, 0x15);
+      const unsigned byte = edge.fast ? 1 : 0;
+      rom[byte] = 0x5a;
+      auto cart = Cartridge::FromRomImage(rom, nullptr, nullptr, nullptr);
+      Check(cart.has_value(), "The cache-fill boundary fixture loads");
+      cart->SetPal(edge.pal);
+      cart->Write(0x3039, edge.fast);
+      cart->Write(0x303a, 0x18);
+      const unsigned lead = edge.fast ? 12 : 8;
+      cart->AdvanceHardware(edge.clock - lead);
+      cart->Write(0x301e, 0);
+      cart->Write(0x301f, 0);
+      cart->AdvanceHardware(lead);
+      cart->Write(0x3100 + byte, 0xa5);
+      if (deny)
+        cart->Write(0x303a, 8);
+      cart->AdvanceHardware(1);
+      Check(cart->Read(0x3100 + byte) == (deny ? 0xa5 : 0x5a),
+            "A cache-fill read commits after CPU writes at its exact clock edge");
+      if (deny)
+        cart->Write(0x303a, 0x18);
+      cart->AdvanceHardware(128);
+      Check(cart->Read(0x3100 + byte) == 0x5a,
+            "The suspended cache-fill read retains its address until ROM access is granted");
+    }
+  }
+}
+
+void SuperFxMasterReset() {
+  for (bool pal : {false, true}) {
+    auto cart = Cartridge::FromRomImage(Rom(0x20, 0x15), nullptr, nullptr, nullptr);
+    Check(cart.has_value(), "The regional reset fixture loads");
+    cart->SetPal(pal);
+    cart->AdvanceHardware(17);
+    cart->Reset();
+    cart->Write(0x3039, 1);
+    for (unsigned byte = 0; byte < 512; ++byte)
+      cart->Write(0x3100 + byte, byte == 127 ? 0 : 1);
+    cart->Write(0x301e, 0);
+    cart->Write(0x301f, 0);
+    const uint64_t hz = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+    const auto stop = (129 * hz) / SuperFx::ClockFrequency + 1;
+    cart->AdvanceHardware(static_cast<uint32_t>(stop - 1));
+    Check(!cart->CpuIrqPending(), "Reset clears the preceding processor clock balance");
+    cart->AdvanceHardware(1);
+    Check(cart->CpuIrqPending(), "Reset retains the selected region's master clock frequency");
+  }
+}
+
 void CoprocessorBusSynchronization() {
   for (bool write : {false, true}) {
     auto machine = Machine(Rom(0x20, 0x15));
@@ -310,6 +482,12 @@ int main() {
     Sa1Integration();
     Sa1Expansion();
     SuperFxOscillator();
+    SuperFxMasterBoundaries();
+    SuperFxFirstFraction();
+    SuperFxStoppedMasterEdge();
+    SuperFxExactIrqEdge();
+    SuperFxCacheFillEdge();
+    SuperFxMasterReset();
     CoprocessorBusSynchronization();
     SuperFxBufferedBus();
     SuperFxIntegration();
