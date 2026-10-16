@@ -165,6 +165,34 @@ void CartridgeAtScanlineBoundary() {
   }
 }
 
+void InterlaceFrameLatch() {
+  for (bool pal : {false, true}) {
+    auto machine = Machine(pal);
+    auto &timing = machine->GetTiming();
+    auto &ppu = machine->GetPpu();
+    machine->GetBus().Write(0x2133, 1);
+    while (timing.VCounter() < 128)
+      machine->GetCpu()->idle();
+    Check(!ppu.Interlace() && !timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
+          "Interlace written inside the initial field waits for the next frame latch");
+    while (timing.FrameCount() == 0)
+      machine->GetCpu()->idle();
+    Check(ppu.Interlace(), "The frame edge latches interlace before the next counter sample");
+    while (timing.VCounter() < 128)
+      machine->GetCpu()->idle();
+    Check(timing.Interlace(), "The counter samples the frame's latched interlace mode");
+    machine->GetBus().Write(0x2133, 0);
+    Check(ppu.Interlace(), "Disabling interlace retains the current field's display mode");
+    while (timing.FrameCount() == 1)
+      machine->GetCpu()->idle();
+    Check(!ppu.Interlace(), "The following frame latches the disabled mode");
+    while (timing.VCounter() < 128)
+      machine->GetCpu()->idle();
+    Check(!timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
+          "The counter samples the new mode without extending the field");
+  }
+}
+
 void ReloadAndDebuggerOperations() {
   unsigned writes = 0;
   auto machine = Machine();
@@ -250,6 +278,7 @@ int main() {
     BoundaryDelivery();
     DmaAcrossFields();
     CartridgeAtScanlineBoundary();
+    InterlaceFrameLatch();
     ReloadAndDebuggerOperations();
     ManualClocksAtDisplayEvent();
   } catch (const std::exception &error) {

@@ -108,11 +108,10 @@ void Ppu::ParseOam() {
 void Ppu::RenderFrame() {
     if (lineCount_ == 0) return;
 
-    bool hires = false, interlace = false, overscan = false;
+    bool hires = false, interlace = displayInterlace_, overscan = false;
     for (int i = 0; i < lineCount_; ++i) {
         const auto& registers = lines_[lineStart_ + i].io;
         hires |= registers.pseudoHires || registers.bgMode == 5 || registers.bgMode == 6;
-        interlace |= registers.interlace;
         overscan |= registers.overscan;
     }
     const uint16_t width = hires ? 512 : 256;

@@ -63,7 +63,9 @@ public:
     void VBlankBegin();
 
     // Display state queries
-    bool Interlace()    const noexcept { return io_.interlace; }
+    bool Interlace() const noexcept {
+      return displayInterlace_;
+    }
     bool Overscan()     const noexcept { return io_.overscan; }
     bool FrameOverscan() const noexcept { return frameOverscan_; }
     uint16_t FrameWidth() const noexcept { return frameWidth_; }
@@ -565,8 +567,9 @@ private:
     // Interlace field ID (toggled each frame)
     bool fieldId_ = false;
 
-    // Overscan state latched at frame start (matches render-time frame state)
+    // Display modes latched at frame start.
     bool frameOverscan_ = false;
+    bool displayInterlace_ = false;
     uint16_t frameWidth_ = 256;
     uint16_t frameHeight_ = 224;
     bool frameInterlace_ = false;

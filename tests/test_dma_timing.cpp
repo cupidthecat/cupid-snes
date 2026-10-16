@@ -257,14 +257,19 @@ void FieldTimingAndPresentation() {
             Check(timing.FrameCount() == frame - 1, "StepFrame stops at each display event");
             Check(timing.VCounter() == 225 && timing.HCounter() == 0,
                   "The display deadline is exact inside a CPU cycle");
-            Check(video.frame.width == 512 && video.frame.height == 448 && video.frame.pixels.size() == 512 * 448,
-                  "Presentation retains hires pixels and interlaced fields");
-            Check(timing.Interlace(), "SETINI reaches video timing");
+            const uint32_t height = frame == 1 ? 224 : 448;
+            Check(video.frame.width == 512 && video.frame.height == height &&
+                      video.frame.pixels.size() == 512 * height,
+                  "Presentation retains hires pixels and latches interlace at the frame edge");
+            Check(timing.Interlace() == (frame > 1),
+                  "The timing counter samples the frame's latched display mode");
             const uint64_t completed = frame - 1;
-            const uint64_t pairs = completed / 2;
             const uint64_t base = pal ? 312 : 262;
-            const uint64_t expected = pairs * ((base * 2 + 1) * 1364 + (pal ? 4 : 0)) +
-                                      (completed % 2 ? (base + 1) * 1364 : 0) + 225 * 1364;
+            const uint64_t following = completed ? completed - 1 : 0;
+            const uint64_t expected = (completed ? base * 1364 : 0) +
+                                      (following / 2) * ((base * 2 + 1) * 1364 + (pal ? 4 : 0)) +
+                                      (following % 2 ? base * 1364 + (pal ? 4 : 0) : 0) +
+                                      225 * 1364;
             Check(timing.MasterClocksElapsed() == expected,
                   "Interlaced long and short fields have correct duration");
         }

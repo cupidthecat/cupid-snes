@@ -67,6 +67,7 @@ void Ppu::Reset() {
     cpuPio_ = 0xFF;
     fieldId_ = false;
     frameOverscan_ = false;
+    displayInterlace_ = false;
     frameWidth_ = 256;
     frameHeight_ = 224;
     frameInterlace_ = false;
@@ -80,6 +81,7 @@ void Ppu::FrameBegin() {
     // Toggle interlace field each frame
     fieldId_ = !fieldId_;
     frameOverscan_ = io_.overscan;
+    displayInterlace_ = io_.interlace;
 
     io_.obj.rangeOver = false;
     io_.obj.timeOver  = false;
