@@ -456,6 +456,28 @@ void RamInstructions() {
     }
 }
 
+void CpuRomBufferRestart() {
+  for (bool fast : {false, true}) {
+    Fixture f;
+    const unsigned coreCost = fast ? 1 : 2;
+    const unsigned resultClock = coreCost + (fast ? 5 : 6);
+    f.chip.WriteCpu(0x3039, fast);
+    f.rom[0x234] = 0x85;
+    f.Cache({1, 0xef, 0, 1});
+    f.Reg(14, 0x234);
+    f.Start(0);
+    f.chip.Advance(2 * coreCost);
+    Check((f.chip.ReadCpu(0x3030) & 0x40) != 0,
+          "The first instruction restarts a ROM read requested by a CPU R14 write");
+    f.chip.Advance(resultClock - 2 * coreCost - 1);
+    Check(f.Reg(0) == 0, "GETB waits for the restarted ROM read");
+    f.chip.Advance(1);
+    Check(f.Reg(0) == 0x85, "GETB samples the completed ROM read without an extra restart");
+    f.chip.Advance(coreCost);
+    Check(!f.Running(), "STOP follows GETB after the restarted read completes");
+  }
+}
+
 void RomBufferInstructions() {
     for (unsigned mode = 0; mode < 4; ++mode) {
         Fixture f;
@@ -762,6 +784,7 @@ int main() {
       TransfersAndSpecialOperations();
       BranchesAndPipeline();
       RamInstructions();
+      CpuRomBufferRestart();
       RomBufferInstructions();
       PixelsAndScreenModes();
       PixelPlaneWriteTimes();

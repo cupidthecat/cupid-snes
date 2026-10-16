@@ -408,7 +408,7 @@ struct SuperFx::Impl {
           }
             const uint8_t opcode = pipeline;
             pipeline = co_await Fetch{*this, r[15]};
-            pcWritten = r14Written = false;
+            pcWritten = false;
             const unsigned mode = (status >> 8) & 3;
             const unsigned n = opcode & 15;
             const uint16_t input = r[source];
@@ -647,7 +647,11 @@ struct SuperFx::Impl {
                 }
             }
             if (clearPrefix) ClearPrefix();
-            if (r14Written) StartRomRead();
+            // CPU R14 writes remain pending through opcode fetches.
+            if (r14Written) {
+              r14Written = false;
+              StartRomRead();
+            }
             if (!pcWritten) ++r[15];
         }
     }
@@ -683,7 +687,10 @@ struct SuperFx::Impl {
             const unsigned n = (address >> 1) & 15;
             r[n] = (address & 1) ? uint16_t((r[n] & 0xff) | (uint16_t(value) << 8))
                                  : uint16_t((r[n] & 0xff00) | value);
-            if (n == 14) StartRomRead();
+            if (n == 14) {
+              r14Written = true;
+              StartRomRead();
+            }
             if (address == 0x301f) status |= Go;
             return;
         }
