@@ -10,7 +10,7 @@ The core implementation is grouped by the hardware area it models:
 | `core/src/dma` | General DMA and HDMA |
 | `core/src/io` | CPU I/O registers, interrupts, controller protocols, and automatic polling |
 | `core/src/memory` | The unified 24-bit memory bus |
-| `core/src/ppu` | PPU registers, clocked background fetches, retained object rows, and composition |
+| `core/src/ppu` | PPU registers, clocked background and object fetches, layer sampling, and composition |
 | `core/src/system` | Emulator lifecycle and logging |
 | `core/src/timing` | Master clock and video-region timing |
 

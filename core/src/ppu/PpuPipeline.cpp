@@ -1,4 +1,5 @@
 #include "snes/core/PpuBackground.hpp"
+#include "snes/core/PpuObject.hpp"
 
 #include <algorithm>
 
@@ -24,25 +25,27 @@ bool Blocked(const Ppu::WindowLayer &layer, const Ppu::WindowPos &window, unsign
 }
 } // namespace
 
-void Ppu::SynchronizeBackground(uint16_t clock) {
-  const uint16_t end = std::min<uint16_t>(clock, 1080);
+void Ppu::SynchronizePipeline(uint16_t clock) {
+  const uint16_t end = std::min<uint16_t>(clock, 1368);
   if (currentLine_ > 240) {
-    backgroundClock_ = end;
+    pipelineClock_ = end;
     return;
   }
-  while (backgroundClock_ < end) {
-    const auto h = backgroundClock_;
-    backgroundClock_ += 2;
-    if (background_->Clock(h, io_, PpuBackground::Vram{vram_.get(), VramWords}) &&
+  while (pipelineClock_ < end) {
+    const auto h = pipelineClock_;
+    pipelineClock_ += 2;
+    if ((h <= 1016 && !(h & 7)) || h >= 1080)
+      object_->Clock(h, fieldId_, io_, latch_, oam_, PpuObject::Vram{vram_.get(), VramWords});
+    if (h < 1080 && background_->Clock(h, io_, PpuBackground::Vram{vram_.get(), VramWords}) &&
         currentLine_ > 0 && currentLine_ < VDisp() && currentLine_ < MaxVisibleLines)
-      StoreBackgroundPixel((h - 58) / 4);
+      StorePipelinePixel((h - 58) / 4);
   }
 }
 
-void Ppu::StoreBackgroundPixel(unsigned x) {
+void Ppu::StorePipelinePixel(unsigned x) {
   auto &line = lines_[currentLine_];
   const bool hires = io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
-  line.backgroundHires |= hires;
+  line.sampledHires |= hires;
   if (io_.displayDisable)
     return;
   Pixel above{COL, 0, cgram_[0]}, below{COL, 0, hires ? cgram_[0] : io_.col.fixedColor};
@@ -66,8 +69,20 @@ void Ppu::StoreBackgroundPixel(unsigned x) {
                 direct ? DirectColor(pixel.group, pixel.palette) : cgram_[pixel.palette]};
     }
   }
-  line.backgroundAbove[x] = above;
-  line.backgroundBelow[x] = below;
+  const auto pixel = object_->Pixel(x);
+  if (pixel.palette) {
+    const auto &obj = io_.obj;
+    const auto priority = obj.priority[pixel.priority];
+    const bool blocked =
+        (obj.window.oneEnable || obj.window.twoEnable) && Blocked(obj.window, io_.window, x);
+    const Pixel resolved{pixel.palette < 192 ? OBJ1 : OBJ2, priority, cgram_[pixel.palette]};
+    if (obj.aboveEnable && priority > above.priority && !(blocked && obj.window.aboveEnable))
+      above = resolved;
+    if (obj.belowEnable && priority > below.priority && !(blocked && obj.window.belowEnable))
+      below = resolved;
+  }
+  line.sampledAbove[x] = above;
+  line.sampledBelow[x] = below;
 }
 
 } // namespace snes::core

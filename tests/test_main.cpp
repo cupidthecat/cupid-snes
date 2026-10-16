@@ -2494,7 +2494,8 @@ int main() {
         // Returns the RGBA8888 row pointer for the rendered scanline.
         auto renderOneScanline = [](Ppu& ppu, uint16_t line) -> const uint32_t* {
             ppu.FrameBegin();
-            ppu.ScanlineBegin(static_cast<uint16_t>(line + 1));
+            for (uint16_t v = 1; v <= line + 1; ++v)
+              ppu.ScanlineBegin(v);
             ppu.VBlankBegin();
             return ppu.OutputData() + static_cast<size_t>(line) * Ppu::OutputWidth;
             // Visible line 0 maps to vcounter 1, which renders to output row 0.
@@ -3152,7 +3153,8 @@ int main() {
         // Helper: render one scanline and return the output row pointer
         auto renderOneScanline = [](Ppu& ppu, uint16_t line) -> const uint32_t* {
             ppu.FrameBegin();
-            ppu.ScanlineBegin(static_cast<uint16_t>(line + 1));
+            for (uint16_t v = 1; v <= line + 1; ++v)
+              ppu.ScanlineBegin(v);
             ppu.VBlankBegin();
             return ppu.OutputData() + static_cast<size_t>(line) * Ppu::OutputWidth;
         };
@@ -3764,7 +3766,8 @@ int main() {
 
         auto renderOneScanline = [](Ppu& ppu, uint16_t line) -> const uint32_t* {
             ppu.FrameBegin();
-            ppu.ScanlineBegin(static_cast<uint16_t>(line + 1));
+            for (uint16_t v = 1; v <= line + 1; ++v)
+              ppu.ScanlineBegin(v);
             ppu.VBlankBegin();
             return ppu.OutputData() + static_cast<size_t>(line) * Ppu::OutputWidth;
         };
@@ -4309,7 +4312,8 @@ int main() {
 
         auto renderOneScanline = [](Ppu& ppu, uint16_t line) -> const uint32_t* {
             ppu.FrameBegin();
-            ppu.ScanlineBegin(static_cast<uint16_t>(line + 1));
+            for (uint16_t v = 1; v <= line + 1; ++v)
+              ppu.ScanlineBegin(v);
             ppu.VBlankBegin();
             return ppu.OutputData() + static_cast<size_t>(line) * Ppu::OutputWidth;
         };
@@ -4869,7 +4873,8 @@ int main() {
 
         auto renderOneScanline = [](Ppu& ppu, uint16_t line) -> const uint32_t* {
             ppu.FrameBegin();
-            ppu.ScanlineBegin(static_cast<uint16_t>(line + 1));
+            for (uint16_t v = 1; v <= line + 1; ++v)
+              ppu.ScanlineBegin(v);
             ppu.VBlankBegin();
             return ppu.OutputData() + static_cast<size_t>(line) * Ppu::OutputWidth;
         };

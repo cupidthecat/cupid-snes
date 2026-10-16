@@ -548,68 +548,68 @@ void RasterMemoryChanges() {
     }
 }
 
-void VramSnapshotLifetime() {
-    auto ppu = std::make_unique<Ppu>();
+void VramWriteLifetime() {
+  auto ppu = std::make_unique<Ppu>();
+  ppu->WriteIO(0x210b, 1);
+  ppu->WriteIO(0x212c, 1);
+  ppu->WriteIO(0x2133, 4);
+  ppu->WriteIO(0x2115, 0x80);
+  ppu->CgramData()[1] = 0x001f;
+  ppu->CgramData()[2] = 0x03e0;
+
+  auto writeTile = [&](uint16_t row) {
+    ppu->WriteIO(0x2116, 0x00);
+    ppu->WriteIO(0x2117, 0x10);
+    for (int y = 0; y < 8; ++y) {
+      ppu->WriteIO(0x2118, static_cast<uint8_t>(row));
+      ppu->WriteIO(0x2119, static_cast<uint8_t>(row >> 8));
+    }
+  };
+
+  // Exercise unchanged runs and uploads on every overscan line, then
+  // repeat the capture over several further frames.
+  for (unsigned block : {239u, 13u, 1u, 239u}) {
+    ppu->FrameBegin();
+    for (uint16_t line = 1; line < 240; ++line) {
+      ppu->SetCurrentLine(line);
+      ppu->SetCurrentHClock(0);
+      if ((line - 1) % block == 0) {
+        ppu->WriteIO(0x2100, 0x8f);
+        writeTile(((line - 1) / block) % 2 ? 0xff00 : 0x00ff);
+        ppu->WriteIO(0x2100, 0x0f);
+      }
+      ppu->ScanlineBegin(line);
+      // Active-display writes must not alter any line's tile memory.
+      writeTile(0xffff);
+    }
+    ppu->VBlankBegin();
+    for (int y = 0; y < 239; ++y) {
+      const uint16_t expected = (y / block) % 2 ? 0x03e0 : 0x001f;
+      Expect(Pixel(*ppu, 0, y) == expected && Pixel(*ppu, 255, y) == expected,
+             "VRAM port writes preserve every captured row across frames");
+    }
+  }
+
+  // A debugger can retain a writable pointer, including across a reset.
+  auto *memory = ppu->VramData();
+  for (int pass = 0; pass < 2; ++pass) {
+    ppu->Reset();
+    ppu->WriteIO(0x2100, 0x0f);
     ppu->WriteIO(0x210b, 1);
     ppu->WriteIO(0x212c, 1);
-    ppu->WriteIO(0x2133, 4);
-    ppu->WriteIO(0x2115, 0x80);
     ppu->CgramData()[1] = 0x001f;
     ppu->CgramData()[2] = 0x03e0;
-
-    auto writeTile = [&](uint16_t row) {
-        ppu->WriteIO(0x2116, 0x00);
-        ppu->WriteIO(0x2117, 0x10);
-        for (int y = 0; y < 8; ++y) {
-            ppu->WriteIO(0x2118, static_cast<uint8_t>(row));
-            ppu->WriteIO(0x2119, static_cast<uint8_t>(row >> 8));
-        }
-    };
-
-    // Exercise both unchanged runs and a distinct memory revision on every
-    // overscan line, then reuse that storage over several further frames.
-    for (unsigned block : {239u, 13u, 1u, 239u}) {
-        ppu->FrameBegin();
-        for (uint16_t line = 1; line < 240; ++line) {
-            ppu->SetCurrentLine(line);
-            ppu->SetCurrentHClock(0);
-            if ((line - 1) % block == 0) {
-                ppu->WriteIO(0x2100, 0x8f);
-                writeTile(((line - 1) / block) % 2 ? 0xff00 : 0x00ff);
-                ppu->WriteIO(0x2100, 0x0f);
-            }
-            ppu->ScanlineBegin(line);
-            // Active-display writes must not alter any line's tile memory.
-            writeTile(0xffff);
-        }
-        ppu->VBlankBegin();
-        for (int y = 0; y < 239; ++y) {
-            const uint16_t expected = (y / block) % 2 ? 0x03e0 : 0x001f;
-            Expect(Pixel(*ppu, 0, y) == expected && Pixel(*ppu, 255, y) == expected,
-                   "VRAM port writes preserve every captured row across frames");
-        }
+    ppu->FrameBegin();
+    for (uint16_t line = 1; line <= 16; ++line) {
+      for (int row = 0; row < 8; ++row)
+        memory[0x1000 + row] = line <= 8 ? 0x00ff : 0xff00;
+      ppu->ScanlineBegin(line);
     }
-
-    // A debugger can retain a writable pointer, including across a reset.
-    auto* memory = ppu->VramData();
-    for (int pass = 0; pass < 2; ++pass) {
-        ppu->Reset();
-        ppu->WriteIO(0x2100, 0x0f);
-        ppu->WriteIO(0x210b, 1);
-        ppu->WriteIO(0x212c, 1);
-        ppu->CgramData()[1] = 0x001f;
-        ppu->CgramData()[2] = 0x03e0;
-        ppu->FrameBegin();
-        for (uint16_t line = 1; line <= 16; ++line) {
-            for (int row = 0; row < 8; ++row)
-                memory[0x1000 + row] = line <= 8 ? 0x00ff : 0xff00;
-            ppu->ScanlineBegin(line);
-        }
-        ppu->VBlankBegin();
-        for (int y = 0; y < 16; ++y)
-            Expect(Pixel(*ppu, 0, y) == (y < 8 ? 0x001f : 0x03e0),
-                   "Retained mutable VRAM pointers remain coherent after reset");
-    }
+    ppu->VBlankBegin();
+    for (int y = 0; y < 16; ++y)
+      Expect(Pixel(*ppu, 0, y) == (y < 8 ? 0x001f : 0x03e0),
+             "Retained mutable VRAM pointers remain coherent after reset");
+  }
 }
 
 void ScreenWriteClock() {
@@ -1210,33 +1210,35 @@ void HiresCompositingLatches() {
 }
 
 void ObjectOverflowAndStat77() {
-    {
-        Ppu ppu;
-        ppu.WriteIO(0x2100, 0x8f); // Forced blank; OBJ is absent from TM/TS.
-        for (int i = 0; i < 128; ++i) ppu.OamData()[4 * i + 1] = 240;
-        for (int i = 0; i < 33; ++i) {
-            ppu.OamData()[4 * i + 0] = static_cast<uint8_t>((i * 7) & 0xff);
-            ppu.OamData()[4 * i + 1] = 0;
-        }
-        ppu.FrameBegin();
-        ppu.SetCurrentLine(1);
-        Expect((ppu.ReadIO(0x213e, 0) & 0x40) != 0,
-               "Range-over updates live even with forced blank and OBJ display disabled");
+  for (bool blank : {false, true}) {
+    Ppu ppu;
+    ppu.WriteIO(0x2100, blank ? 0x8f : 0x0f); // OBJ is absent from TM/TS.
+    for (int i = 0; i < 128; ++i)
+      ppu.OamData()[4 * i + 1] = 240;
+    for (int i = 0; i < 33; ++i) {
+      ppu.OamData()[4 * i + 0] = static_cast<uint8_t>((i * 7) & 0xff);
+      ppu.OamData()[4 * i + 1] = 0;
     }
-    {
-        Ppu ppu;
-        ppu.WriteIO(0x2100, 0x8f);
-        ppu.WriteIO(0x2101, static_cast<uint8_t>(3 << 5)); // 16x16 small objects, two tiles each.
-        for (int i = 0; i < 128; ++i) ppu.OamData()[4 * i + 1] = 240;
-        for (int i = 0; i < 18; ++i) {
-            ppu.OamData()[4 * i + 0] = static_cast<uint8_t>((i * 13) & 0xff);
-            ppu.OamData()[4 * i + 1] = 0;
-        }
-        ppu.FrameBegin();
-        ppu.SetCurrentLine(1);
-        Expect((ppu.ReadIO(0x213e, 0) & 0x80) != 0,
-               "Time-over updates live after the 34th fetched OBJ tile");
+    ppu.FrameBegin();
+    ppu.SetCurrentHClock(1360);
+    Expect(bool(ppu.ReadIO(0x213e, 0) & 0x40) == !blank,
+           "Forced blank suppresses evaluation while OBJ screen enables leave it running");
+  }
+  for (bool blank : {false, true}) {
+    Ppu ppu;
+    ppu.WriteIO(0x2100, blank ? 0x8f : 0x0f);
+    ppu.WriteIO(0x2101, static_cast<uint8_t>(3 << 5)); // 16x16 small objects, two tiles each.
+    for (int i = 0; i < 128; ++i)
+      ppu.OamData()[4 * i + 1] = 240;
+    for (int i = 0; i < 18; ++i) {
+      ppu.OamData()[4 * i + 0] = static_cast<uint8_t>((i * 13) & 0xff);
+      ppu.OamData()[4 * i + 1] = 0;
     }
+    ppu.FrameBegin();
+    ppu.SetCurrentHClock(1360);
+    Expect(bool(ppu.ReadIO(0x213e, 0) & 0x80) == !blank,
+           "Time-over is latched after the fetch interval only when evaluation ran");
+  }
     {
         Ppu ppu;
         ppu.GetLatch().ppu1.mdr = 0x10;
@@ -1258,7 +1260,7 @@ int main() {
     RasterSpanSampling();
     MixedWidthsAndFields();
     RasterMemoryChanges();
-    VramSnapshotLifetime();
+    VramWriteLifetime();
     ScreenWriteClock();
     Mode7WriteClock();
     RasterStageOrdering();
