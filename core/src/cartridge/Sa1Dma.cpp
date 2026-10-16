@@ -18,7 +18,7 @@ void Sa1::StartDma() {
     // A zero-length request completes without touching either memory port.
     if (!dma_.remaining) {
         dma_.active = false;
-        sa1Flags_ |= 0x20;
+        RaiseSa1Interrupt(0x20);
         return;
     }
     dma_.sourceDevice = source;
@@ -73,7 +73,7 @@ void Sa1::StepDma() {
     registers_[0x39] = static_cast<uint8_t>(dma_.remaining >> 8);
     if (!dma_.remaining) {
         dma_.active = false;
-        sa1Flags_ |= 0x20;
+        RaiseSa1Interrupt(0x20);
     }
 }
 
@@ -106,7 +106,7 @@ void Sa1::StartConversion() {
     conversionActive_ = true;
     conversionTile_ = UINT32_MAX;
     ConvertBitmapTile(0);
-    cpuFlags_ |= 0x20;
+    RaiseCpuInterrupt(0x20);
 }
 
 void Sa1::ConvertBitmapTile(uint32_t tile) {

@@ -64,8 +64,8 @@ private:
     std::array<uint8_t, 256> registers_{};
     uint8_t cpuFlags_ = 0;
     uint8_t sa1Flags_ = 0;
-    bool nmiServiced_ = false;
-    bool sampledIrq_ = false;
+    bool cpuIrqLevel_ = false;
+    bool interruptPending_ = false;
 
     uint64_t requestedClocks_ = 0;
     uint64_t executedClocks_ = 0;
@@ -79,9 +79,7 @@ private:
 
     uint64_t arithmeticResult_ = 0;
     bool arithmeticOverflow_ = false;
-    uint32_t bitAddress_ = 0;
     uint8_t bitOffset_ = 0;
-    uint16_t bitResult_ = 0;
 
     Transfer dma_{};
     bool conversionActive_ = false;
@@ -101,16 +99,21 @@ private:
     void write(uint32_t address, uint8_t value) override;
     void lastCycle() override;
     bool interruptPending() const override;
+    void instructionStop() override;
+    void instructionWait() override;
     void Clock(uint32_t masterClocks);
     void StepProcessor();
     void ResetProcessor();
-    void InterruptProcessor(Interrupt type);
+    void InterruptProcessor();
     bool Sa1IrqPending() const noexcept;
     bool Sa1NmiPending() const noexcept;
+    void RaiseSa1Interrupt(uint8_t source) noexcept;
+    void RaiseCpuInterrupt(uint8_t source) noexcept;
     void ClockAccess(uint32_t address);
     bool CpuRomConflict() const noexcept;
     bool CpuBwramConflict() const noexcept;
     bool CpuIramConflict() const noexcept;
+    uint8_t ReadBitByte(uint32_t address) const;
 
     uint8_t ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io = true);
     void WriteMemory(uint32_t address, uint8_t value, Side side);
@@ -133,7 +136,7 @@ private:
 
     void AdvanceTimer(uint32_t masterClocks);
     void StartArithmetic();
-    void RefreshBitResult();
+    uint16_t ReadBitResult() const;
     void AdvanceBits();
     void StartDma();
     void StepDma();

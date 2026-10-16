@@ -304,9 +304,16 @@ void HardwareInterruptTiming() {
 void RegistersAndProtection() {
     Fixture f;
     auto& c = f.chip;
-    Check(c.ReadCpu(0x230e) == 0x23, "Version code is available to the console CPU");
-    Check(c.ReadSa1(0x230e, 0x65) == 0x65, "SA-1 cannot read the console-only version port");
-    Check(c.ReadCpu(0x2200, 0x6d) == 0x6d && c.ReadSa1(0x2220, 0x5b) == 0x5b, "Write-only registers return open bus");
+    for (uint8_t openBus : {0, 0x5a, 0xa5, 0xff}) {
+      Check(c.ReadCpu(0x230e, openBus) == openBus,
+            "The unpopulated console version port retains open bus");
+      for (uint16_t address = 0x2200; address < 0x2400; ++address) {
+        if (address < 0x2301 || address > 0x230d)
+          Check(c.ReadSa1(address, openBus) == 0xff,
+                "Undecoded SA-1 I/O reads return the fixed bus value");
+      }
+    }
+    Check(c.ReadCpu(0x2200, 0x6d) == 0x6d, "Console write-only registers retain open bus");
     c.WriteCpu(0x2209, 0x80);
     Check(c.ReadCpu(0x2300) == 0, "Console writes cannot assert their own cartridge IRQ");
     c.WriteSa1(0x2200, 0x80);
@@ -319,7 +326,8 @@ void RegistersAndProtection() {
     c.WriteCpu(0x2201, 0x80);
     Check(c.CpuIrqPending(), "Enabling an already latched console IRQ asserts the line");
     c.WriteCpu(0x2201, 0);
-    Check(!c.CpuIrqPending() && (c.ReadCpu(0x2300) & 0x80), "Masking an IRQ preserves its status flag");
+    Check(c.CpuIrqPending() && (c.ReadCpu(0x2300) & 0x80),
+          "Masking an IRQ preserves its status flag and asserted line");
     c.WriteCpu(0x2202, 0x80); c.WriteCpu(0x2201, 0x80);
     Check(!c.CpuIrqPending(), "Acknowledging a masked IRQ prevents it from reappearing on enable");
 
@@ -506,7 +514,7 @@ void Arithmetic() {
 void VariableBits() {
     Fixture f;
     auto& c = f.chip;
-    constexpr unsigned source = 0xfffc;
+    constexpr unsigned source = 0xfffd;
     for (unsigned i = 0; i < 160; ++i) f.rom[source + i] = static_cast<uint8_t>(i * 59 + 0x93);
     const auto expected = [&](unsigned bit) {
         uint16_t result = 0;
@@ -518,41 +526,124 @@ void VariableBits() {
     };
     c.WriteSa1(0x2258, 0x85);
     Set(c, 0x2259, 0xc0fffd, 3);
-    Check(Get(c, 0x230c) == expected(0) && Get(c, 0x230c) == expected(0),
-          "Bit reader ignores the address low bit and address writes clear automatic mode");
+    Check(c.ReadSa1(0x230c) == uint8_t(expected(0)) && c.ReadSa1(0x230c) == uint8_t(expected(0)) &&
+              Get(c, 0x230c) == expected(0) && Get(c, 0x230c) == expected(5),
+          "Odd byte addresses and address writes retain automatic mode");
     for (unsigned length = 1; length <= 16; ++length) {
+        c.WriteSa1(0x2258, static_cast<uint8_t>(length & 15));
         Set(c, 0x2259, 0xc0fffd, 3);
         for (unsigned bit = 0; bit < 160; bit += length) {
             Check(Get(c, 0x230c) == expected(bit), "Manual variable-bit reads cross both word and ROM-bank boundaries");
             Check(Get(c, 0x230c) == expected(bit), "Manual port reads do not consume bits");
             c.WriteSa1(0x2258, static_cast<uint8_t>(length & 15));
         }
-        Set(c, 0x2259, 0xc0fffd, 3);
         c.WriteSa1(0x2258, static_cast<uint8_t>(0x80 | (length & 15)));
-        for (unsigned bit = length; bit < 160; bit += length) {
+        Set(c, 0x2259, 0xc0fffd, 3);
+        for (unsigned bit = 0; bit < 160; bit += length) {
             Check(c.ReadSa1(0x230c) == uint8_t(expected(bit)) && c.ReadSa1(0x230c) == uint8_t(expected(bit)), "Low data reads do not advance the automatic stream");
             Check(Get(c, 0x230c) == expected(bit), "Automatic stream advances after returning the high byte");
         }
     }
 
     Fixture mapped(0x800000);
-    mapped.rom[0x0122] = 0x34; mapped.rom[0x0123] = 0x12;
-    mapped.rom[0x7122] = 0xef; mapped.rom[0x7123] = 0xbe;
-    mapped.rom[0x8122] = 0x78; mapped.rom[0x8123] = 0x56;
-    mapped.rom[0x400122] = 0xbc; mapped.rom[0x400123] = 0x9a;
+    mapped.rom[0x0123] = 0x34;
+    mapped.rom[0x0124] = 0x12;
+    mapped.rom[0x8123] = 0x78;
+    mapped.rom[0x8124] = 0x56;
+    mapped.rom[0x400123] = 0xbc;
+    mapped.rom[0x400124] = 0x9a;
     Set(mapped.chip, 0x2259, 0x000123, 3);
-    Check(Get(mapped.chip, 0x230c) == 0x1234, "Bit reader mirrors low system windows to their LoROM half");
+    Check(Get(mapped.chip, 0x230c) == 0, "Low bit-reader addresses select IRAM");
     Set(mapped.chip, 0x2259, 0x010123, 3);
-    Check(Get(mapped.chip, 0x230c) == 0x1234, "Bit reader mirrors non-ROM blocks in other LoROM banks to bank zero");
+    Check(Get(mapped.chip, 0x230c) == 0, "Low IRAM bit-reader windows retain bank mirrors");
     Set(mapped.chip, 0x2259, 0x3f7123, 3);
-    Check(Get(mapped.chip, 0x230c) == 0xbeef, "Bit reader maps every non-ROM 32K block to bank zero while preserving its block offset");
+    Check(Get(mapped.chip, 0x230c) == 0, "The low BW-RAM bit-reader window reads physical RAM");
     Set(mapped.chip, 0x2259, 0x418123, 3);
-    Check(Get(mapped.chip, 0x230c) == 0x1234, "Bit reader mirrors banks 40-7F to bank-zero LoROM");
+    Check(Get(mapped.chip, 0x230c) == 0, "Linear BW-RAM bit-reader banks retain RAM decoding");
     mapped.chip.WriteCpu(0x2220, 0x84);
-    Set(mapped.chip, 0x2259, 0x000123, 3);
+    Set(mapped.chip, 0x2259, 0x008123, 3);
     Check(Get(mapped.chip, 0x230c) == 0x9abc, "Bit reader follows Super MMC projection for LoROM windows");
     Set(mapped.chip, 0x2259, 0xc00123, 3);
     Check(Get(mapped.chip, 0x230c) == 0x9abc, "Bit reader follows Super MMC projection for HiROM banks");
+}
+
+void BitReaderWindows() {
+  Fixture f;
+  auto &c = f.chip;
+  f.rom[0x120] = 0x56;
+  f.rom[0x121] = 0x78;
+  f.ram[0x6120] = 0xbc;
+  f.ram[0x6121] = 0x9a;
+  c.WriteSa1(0x222a, 0xff);
+  Set(c, 0x120, 0x3412);
+  c.WriteSa1(0x2225, 0x85);
+  for (uint32_t address : {0x000120u, 0x013120u, 0x800120u}) {
+    Set(c, 0x2259, address, 3);
+    Check(Get(c, 0x230c) == 0x3412, "The bit reader uses both IRAM windows and bank mirrors");
+  }
+  for (uint32_t address : {0x006120u, 0x806120u, 0x406120u}) {
+    Set(c, 0x2259, address, 3);
+    Check(Get(c, 0x230c) == 0x9abc,
+          "Bit reads use physical BW-RAM addresses independently of its processor window mode");
+  }
+  for (uint32_t address : {0x000820u, 0x500120u, 0x600120u, 0x7e0120u}) {
+    Set(c, 0x2259, address, 3);
+    Check(Get(c, 0x230c) == 0xffff, "Unmapped bit-reader windows return the fixed bus value");
+  }
+  for (uint32_t address : {0x008120u, 0xc00120u}) {
+    Set(c, 0x2259, address, 3);
+    Check(Get(c, 0x230c) == 0x7856, "Bit reads retain ROM projection on both cartridge windows");
+  }
+}
+
+void BitReaderLiveState() {
+  Fixture f;
+  auto &c = f.chip;
+  c.WriteSa1(0x222a, 0xff);
+  Set(c, 0x120, 0x1234);
+  Set(c, 0x2259, 0x120, 3);
+  Check(Get(c, 0x230c) == 0x1234, "A bit read samples shared IRAM");
+  Set(c, 0x120, 0xabcd);
+  Check(Get(c, 0x230c) == 0xabcd, "A repeated bit read observes live IRAM writes");
+  Set(c, 0x2259, 0x406120, 3);
+  f.ram[0x6120] = 0x12;
+  f.ram[0x6121] = 0x34;
+  Check(Get(c, 0x230c) == 0x3412, "A bit read observes live BW-RAM writes");
+  f.ram[0x6121] = 0x56;
+  Check(Get(c, 0x230c) == 0x5612, "BW-RAM changes do not need a bit-address rewrite");
+  f.rom[0x120] = 0x78;
+  f.rom[0x121] = 0x56;
+  f.rom[0x100120] = 0xbc;
+  f.rom[0x100121] = 0x9a;
+  Set(c, 0x2259, 0xc00120, 3);
+  Check(Get(c, 0x230c) == 0x5678, "A bit read uses the current ROM bank");
+  c.WriteCpu(0x2220, 1);
+  Check(Get(c, 0x230c) == 0x9abc, "A ROM bank change takes effect on the next bit read");
+
+  Fixture partial;
+  auto &p = partial.chip;
+  partial.rom[0x121] = 0x66;
+  partial.rom[0x122] = 0x77;
+  partial.rom[0x123] = 0x88;
+  partial.rom[0x221] = 0xab;
+  partial.rom[0x222] = 0xcd;
+  partial.rom[0x223] = 0xef;
+  partial.rom[0x10221] = 0xf1;
+  partial.rom[0x10222] = 0xe2;
+  partial.rom[0x10223] = 0xd3;
+  Set(p, 0x2259, 0xc00120, 3);
+  p.WriteSa1(0x2258, 3);
+  p.WriteSa1(0x2259, 0x21);
+  Check(Get(p, 0x230c) == ((0x887766 >> 3) & 0xffff),
+        "Writing the low bit-address byte preserves its sub-byte offset");
+  p.WriteSa1(0x225a, 2);
+  Check(Get(p, 0x230c) == ((0xefcdab >> 3) & 0xffff),
+        "Writing the middle bit-address byte updates the live cursor");
+  p.WriteSa1(0x2258, 0x85);
+  p.WriteSa1(0x225b, 0xc1);
+  Check(p.ReadSa1(0x230c) == 0xf1 && p.ReadSa1(0x230d) == 0xe2 &&
+            p.ReadSa1(0x230c) == ((0xd3e2f1 >> 5) & 0xff),
+        "Writing the high address byte resets the bit offset and retains automatic mode");
 }
 
 void NativeTimerEdges() {
@@ -877,8 +968,10 @@ void ExecutableProgram() {
     c.WriteCpu(0x2202, 0x80);
     Check(!c.CpuIrqPending(), "Console acknowledges program completion");
     const auto stoppedPc = c.CpuRegisters().pc;
-    c.WriteCpu(0x2200, 0x90); c.Advance(200);
-    Check(c.CpuRegisters().stp && c.CpuRegisters().pc == stoppedPc, "Neither IRQ nor NMI can release STP");
+    c.WriteCpu(0x2200, 0x80);
+    c.Advance(200);
+    Check(c.CpuRegisters().stp && c.CpuRegisters().pc == stoppedPc,
+          "A masked IRQ does not release STP");
 
     c.WriteCpu(0x2229, 0xff);
     const std::array<uint8_t, 7> iramProgram{0xa9,0x6c,0x8f,0x00,0x01,0x40,0xdb};
@@ -892,13 +985,17 @@ void ExecutableProgram() {
 void Interrupts() {
     Fixture f;
     auto& c = f.chip;
-    f.Code(0x8000, {0xa9,0xff,0x8d,0x2a,0x22,0xa9,0xf0,0x8d,0x0a,0x22,0x58,0xcb,0xe6,0x10,0xdb});
+    f.Code(0x8000, {0xa9, 0xff, 0x8d, 0x2a, 0x22, 0xa9, 0x90, 0x8d, 0x0b, 0x22, 0x8d, 0x0a, 0x22,
+                    0x58, 0xcb, 0xe6, 0x10, 0xdb});
     f.Code(0x8100, {0xe6,0x20,0xa9,0xe0,0x8d,0x0b,0x22,0x40});
     f.Code(0x8200, {0xe6,0x21,0xa9,0x10,0x8d,0x0b,0x22,0x40});
     SetCpu(c, 0x2205, 0x8200); SetCpu(c, 0x2207, 0x8100);
     f.Start(); c.Advance(100);
     Check(c.CpuRegisters().wai && c.ReadSa1(0x10) == 0, "WAI suspends the instruction following it");
-    c.WriteCpu(0x2200, 0x90); c.Advance(200);
+    c.WriteCpu(0x2200, 0x90);
+    c.Advance(2);
+    c.WriteCpu(0x2200, 0x80);
+    c.Advance(198);
     Check(c.ReadSa1(0x20) == 1 && c.ReadSa1(0x21) == 1 && c.ReadSa1(0x10) == 1 && c.CpuRegisters().stp,
           "NMI and IRQ use independent programmable vectors and return through the protected IRAM stack");
 
@@ -906,8 +1003,9 @@ void Interrupts() {
     masked.Code(0x8000, {0xcb,0xa9,0x73,0xdb});
     masked.chip.WriteSa1(0x220a, 0x80); masked.Start(); masked.chip.Advance(20);
     masked.chip.WriteCpu(0x2200, 0x80); masked.chip.Advance(20);
-    Check(masked.chip.CpuRegisters().stp && masked.chip.CpuRegisters().a == 0x73,
-          "Enabled IRQ wakes WAI with I set without taking the IRQ vector");
+    Check(masked.chip.CpuRegisters().wai && !masked.chip.CpuRegisters().stp &&
+              masked.chip.CpuRegisters().a == 0,
+          "SA-1 WAI retains the processor I mask for an enabled IRQ");
 
     Fixture latency;
     auto& l = latency.chip;
@@ -970,6 +1068,119 @@ void Interrupts() {
     Check(p.ReadCpu(0xfffc) == 0xea && p.ReadCpu(0xffe4) == 0xea, "Vector control leaves reset and COP vectors intact");
 }
 
+void NativeInterruptSampling() {
+  for (unsigned kind = 0; kind < 8; ++kind) {
+    Fixture f;
+    auto &c = f.chip;
+    if (kind == 0 || kind == 6)
+      f.Code(0x8000, {0xcb, 0xa9, 0x73, 0xdb});
+    else if (kind == 1)
+      f.Code(0x8000, {0x58, 0xcb, 0xa9, 0x73, 0xdb});
+    else if (kind == 5)
+      f.Code(0x8000, {0x58, 0xea, 0x80, 0xfd});
+    else if (kind == 7)
+      f.Code(0x8000, {0xdb});
+    else
+      f.Code(0x8000, {0xea, 0x80, 0xfd});
+    for (uint16_t vector : {0x8100, 0x8200, 0x8300})
+      f.Code(vector, {0xdb});
+    SetCpu(c, 0x2205, 0x8100);
+    SetCpu(c, 0x2207, 0x8200);
+    c.WriteSa1(0x220a, kind == 0 || kind == 1 || kind == 5 ? 0x80 : 0x10);
+    f.Start();
+    c.WriteSa1(0x222a, 0xff);
+    for (unsigned master = 1; master <= 64; ++master) {
+      if ((kind == 0 || kind == 1) && master == 21)
+        c.WriteCpu(0x2200, 0x80);
+      if (kind == 2 && master == 4)
+        c.WriteCpu(0x2200, 0x10);
+      if (kind == 2 && master == 6)
+        c.WriteCpu(0x2200, 0);
+      if ((kind == 3 || kind == 4) && master == 3)
+        c.WriteCpu(0x2200, 0x10);
+      if (kind == 3 && master == 4)
+        SetCpu(c, 0x2205, 0x8300);
+      if (kind == 4 && master == 4)
+        c.WriteSa1(0x220b, 0x10);
+      if ((kind == 3 || kind == 4) && master == 5)
+        c.WriteCpu(0x2200, 0);
+      if (kind == 5 && master == 5)
+        c.WriteCpu(0x2200, 0x80);
+      if (kind == 5 && master == 8)
+        SetCpu(c, 0x2207, 0x8300);
+      if (kind == 5 && master == 9) {
+        c.WriteSa1(0x220b, 0x80);
+        c.WriteCpu(0x2200, 0);
+      }
+      if (kind == 6 && master == 21)
+        c.WriteCpu(0x2200, 0x50);
+      if (kind == 6 && master == 41)
+        c.WriteCpu(0x2200, 0x10);
+      if (kind == 7 && master == 21)
+        c.WriteCpu(0x2200, 0x10);
+      if (kind == 7 && master == 23)
+        c.WriteCpu(0x2200, 0);
+      if (kind == 7 && master == 25)
+        c.WriteSa1(0x220b, 0x10);
+      if (kind == 7 && master == 41)
+        c.WriteCpu(0x2200, 0x20);
+      if (kind == 7 && master == 43)
+        c.WriteCpu(0x2200, 0);
+      c.Advance(1);
+      const auto &r = c.CpuRegisters();
+      if (kind == 0 && master >= 21)
+        Check(r.wai && !r.stp && r.a == 0, "A masked SA-1 IRQ retains WAI");
+      if (kind == 1 && master == 27)
+        Check(!r.wai && r.pc == 0x8002 && r.s == 0x1ff,
+              "WAI completes its final idle before hardware interrupt stack writes");
+      if (kind == 1 && master == 41)
+        Check(r.pc == 0x8201 && r.stp, "An accepted IRQ leaves WAI through its vector");
+      if (kind == 2)
+        Check(r.pc >= 0x8000 && r.pc <= 0x8003 && !r.stp,
+              "An NMI pulse between sampling phases does not start an interrupt");
+      if ((kind == 3 || kind == 4) && master == 15)
+        Check(
+            r.pc == 0x8101,
+            "A sampled NMI retains its request and vector across acknowledgment and vector writes");
+      if (kind == 5 && master == 19)
+        Check(r.pc == 0x8201, "A sampled IRQ retains its programmed vector during entry");
+      if (kind == 6 && master == 21)
+        Check(!r.wai && r.pc == 0x8001, "WAI samples NMI while the console hold is asserted");
+      if (kind == 6 && master == 40)
+        Check(r.pc == 0x8001, "Console hold retains the accepted interrupt before entry");
+      if (kind == 6 && master == 55)
+        Check(r.pc == 0x8101 && r.stp, "Console hold release starts the accepted NMI");
+      if (kind == 7 && master == 25)
+        Check(r.stp && !(c.ReadSa1(0x2301) & 0x10),
+              "STOP retains its state while acknowledging an NMI status flag");
+      if (kind == 7 && master == 55)
+        Check(r.pc == 0x8101 && r.stp,
+              "Control reset releases STOP without dropping its sampled interrupt");
+    }
+  }
+}
+
+void ConsoleInterruptLatch() {
+  Fixture f;
+  auto &c = f.chip;
+  c.WriteSa1(0x2209, 0x80);
+  Check((c.ReadCpu(0x2300) & 0x80) && !c.CpuIrqPending(),
+        "A disabled console IRQ retains its status flag");
+  c.WriteCpu(0x2201, 0x80);
+  Check(c.CpuIrqPending(), "Enabling a flagged console IRQ asserts its request");
+  c.WriteCpu(0x2201, 0);
+  Check(c.CpuIrqPending(), "Disabling the enable bit retains an asserted console IRQ");
+  c.WriteSa1(0x2209, 0);
+  Check(c.CpuIrqPending(), "Dropping the cartridge control bit retains its console IRQ");
+  c.WriteSa1(0x2230, 0xb0);
+  c.WriteSa1(0x2236, 0);
+  c.WriteCpu(0x2202, 0x80);
+  Check(c.CpuIrqPending() && (c.ReadCpu(0x2300) & 0xa0) == 0x20,
+        "A masked conversion flag retains the line while another flag is acknowledged");
+  c.WriteCpu(0x2202, 0x20);
+  Check(!c.CpuIrqPending(), "Acknowledging both console status flags releases the line");
+}
+
 void Synchronization() {
     Fixture whole, pieces;
     for (auto* f : {&whole, &pieces}) {
@@ -1004,7 +1215,7 @@ void ExecutableDmaAndTimer() {
     auto& c = f.chip;
     f.Code(0x8000, {
         0xa9,0xff,0x8d,0x2a,0x22, // Stack/IRAM write enable.
-        0xa9,0x20,0x8d,0x0a,0x22,0x58, // DMA IRQ enable and CLI.
+        0xa9, 0x20, 0x8d, 0x0b, 0x22, 0x8d, 0x0a, 0x22, 0x58, // Acknowledge and enable DMA IRQ.
         0xa9,0x80,0x8d,0x30,0x22, // ROM -> IRAM DMA.
         0xa9,0x00,0x8d,0x32,0x22,
         0xa9,0x90,0x8d,0x33,0x22,
@@ -1025,7 +1236,8 @@ void ExecutableDmaAndTimer() {
     Fixture timer;
     auto& t = timer.chip;
     timer.Code(0x8000, {0xa9,0xff,0x8d,0x2a,0x22,0x18,0xfb,
-                       0xa9,0x40,0x8d,0x0a,0x22,0x58,0xcb,0xe6,0x10,0xdb});
+                       0xa9, 0x40, 0x8d,
+                        0x0b, 0x22, 0x8d, 0x0a, 0x22, 0x58, 0xcb, 0xe6, 0x10, 0xdb});
     timer.Code(0x8100, {0xe6,0x20,0xa9,0x40,0x8d,0x0b,0x22,0x9c,0x10,0x22,0x40});
     SetCpu(t, 0x2207, 0x8100); Set(t, 0x2212, 40); t.WriteSa1(0x2210, 1);
     timer.Start(); t.Advance(1000);
@@ -1044,9 +1256,13 @@ int main() {
       TransferTiming();
       MemoryTiming();
       HardwareInterruptTiming();
+      NativeInterruptSampling();
+      ConsoleInterruptLatch();
       RegistersAndProtection();
       Mapping();
       Arithmetic();
+      BitReaderWindows();
+      BitReaderLiveState();
       VariableBits();
       NativeTimerEdges();
       Timers();

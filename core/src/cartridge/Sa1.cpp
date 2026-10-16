@@ -49,14 +49,15 @@ void Sa1::Reset() {
     registers_[0x20 + bank] = bank;
   registers_[0x28] = 0x0f;
   cpuFlags_ = sa1Flags_ = 0;
-  nmiServiced_ = sampledIrq_ = false;
+  cpuIrqLevel_ = false;
+  interruptPending_ = false;
   requestedClocks_ = executedClocks_ = 0;
   cpuAddress_ = 0;
   cpuRefreshing_ = false;
   hClocks_ = vCounter_ = latchedH_ = latchedV_ = 0;
   arithmeticResult_ = 0;
   arithmeticOverflow_ = false;
-  bitAddress_ = bitResult_ = bitOffset_ = 0;
+  bitOffset_ = 0;
   dma_ = {};
   conversionActive_ = false;
   conversionSource_ = conversionDestination_ = 0;
@@ -86,15 +87,42 @@ void Sa1::WriteSa1(uint32_t address, uint8_t value) {
 }
 
 bool Sa1::CpuIrqPending() const noexcept {
-    return (cpuFlags_ & registers_[0x01] & 0xa0) != 0;
+  return cpuIrqLevel_;
+}
+
+void Sa1::RaiseCpuInterrupt(uint8_t source) noexcept {
+  cpuFlags_ |= source;
+  const auto armed = source & registers_[0x01];
+  registers_[0x02] &= static_cast<uint8_t>(~armed);
+  if (armed)
+    cpuIrqLevel_ = true;
 }
 
 bool Sa1::Sa1IrqPending() const noexcept {
-    return (sa1Flags_ & registers_[0x0a] & 0xe0) != 0;
+  const auto acknowledged = registers_[0x0b];
+  return (registers_[0x0a] & ~acknowledged & 0x60) || (registers_[0] & ~acknowledged & 0x80);
 }
 
 bool Sa1::Sa1NmiPending() const noexcept {
-    return (sa1Flags_ & registers_[0x0a] & 0x10) && !nmiServiced_;
+  return (registers_[0] & 0x10) && !(registers_[0x0b] & 0x10);
+}
+
+void Sa1::RaiseSa1Interrupt(uint8_t source) noexcept {
+  sa1Flags_ |= source;
+  registers_[0x0b] &= static_cast<uint8_t>(~(source & registers_[0x0a]));
+}
+
+uint8_t Sa1::ReadBitByte(uint32_t address) const {
+  address &= 0xffffff;
+  if (RomAddress(address)) {
+    uint32_t offset = 0;
+    return RomOffset(address, offset) ? ReadRom(offset, 0) : 0xff;
+  }
+  if (BwramAddress(address, 0x4f))
+    return ReadBwram(address, 0);
+  if (IramAddress(address))
+    return iram_[address & 0x7ff];
+  return 0xff;
 }
 
 void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
@@ -108,8 +136,6 @@ void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing
       for (;;) {
         if (dma_.active)
           StepDma();
-        else if ((registers_[0] & 0x60) || regs().stp)
-          Clock(2);
         else
           StepProcessor();
       }
@@ -119,24 +145,40 @@ void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing
 }
 
 void Sa1::StepProcessor() {
-    if (Sa1NmiPending()) {
-        nmiServiced_ = true;
-        InterruptProcessor(Interrupt::Nmi);
-        return;
-    }
-    const bool irq = Sa1IrqPending();
-    if (sampledIrq_ || (regs().wai && irq && !flagI())) {
-        sampledIrq_ = false;
-        InterruptProcessor(Interrupt::Irq);
-        return;
-    }
-    if (regs().wai) {
-        if (irq) regs().wai = false;
-        idle();
-        sampledIrq_ = Sa1IrqPending() && !flagI();
-        return;
-    }
+  if (regs().wai)
+    instructionWait();
+  else if (regs().stp)
+    instructionStop();
+  else if (registers_[0] & 0x60)
+    Clock(2);
+  else if (interruptPending_) {
+    interruptPending_ = false;
+    InterruptProcessor();
+  } else {
     instruction();
+  }
+}
+
+void Sa1::instructionWait() {
+  regs().wai = true;
+  for (;;) {
+    if (!regs().wai) {
+      idle();
+      return;
+    }
+    lastCycle();
+    idle();
+  }
+}
+
+void Sa1::instructionStop() {
+  regs().stp = true;
+  for (;;) {
+    lastCycle();
+    idle();
+    if (!regs().stp)
+      return;
+  }
 }
 
 void Sa1::ResetProcessor() {
@@ -147,7 +189,7 @@ void Sa1::ResetProcessor() {
   registers_[0x2a] = 0;
 }
 
-void Sa1::InterruptProcessor(Interrupt type) {
+void Sa1::InterruptProcessor() {
   auto &r = regs();
   r.wai = false;
   read((uint32_t(r.pb) << 16) | r.pc);
@@ -159,7 +201,6 @@ void Sa1::InterruptProcessor(Interrupt type) {
   push(r.e ? (r.p & ~0x10) : r.p);
   r.p = (r.p | FlagI) & ~FlagD;
   // The vector is a register value; entry performs no vector-table reads.
-  r.vector = RegisterWord(type == Interrupt::Nmi ? 0x05 : 0x07);
   r.pb = 0;
   r.pc = r.vector;
 }
@@ -224,13 +265,23 @@ void Sa1::write(uint32_t address, uint8_t value) {
 }
 
 void Sa1::lastCycle() {
-    regs().irq = Sa1IrqPending();
-    sampledIrq_ = regs().irq && !flagI();
-    if (regs().wai && (regs().irq || Sa1NmiPending())) regs().wai = false;
+  if (Sa1NmiPending()) {
+    registers_[0x0b] |= 0x10;
+    sa1Flags_ |= 0x10;
+    regs().vector = RegisterWord(0x05);
+  } else if (!flagI() && Sa1IrqPending()) {
+    const auto enabled = registers_[0x0a] & ~registers_[0x0b];
+    sa1Flags_ |= (enabled & 0x40) ? 0x40 : (enabled & 0x20) ? 0x20 : 0x80;
+    regs().vector = RegisterWord(0x07);
+  } else {
+    return;
+  }
+  interruptPending_ = true;
+  regs().wai = false;
 }
 
 bool Sa1::interruptPending() const {
-    return Sa1NmiPending() || (Sa1IrqPending() && !flagI());
+  return interruptPending_;
 }
 
 void Sa1::Clock(uint32_t masterClocks) {
@@ -425,7 +476,6 @@ bool Sa1::WritableRegister(uint16_t address, Side side) noexcept {
 uint8_t Sa1::ReadRegister(uint16_t address, uint8_t openBus, Side side) {
     if (side == Side::Cpu) {
         if (address == 0x2300) return (registers_[0x09] & 0x5f) | (cpuFlags_ & 0xa0);
-        if (address == 0x230e) return 0x23;
         return openBus;
     }
     if (address == 0x2301) return (registers_[0x00] & 15) | (sa1Flags_ & 0xf0);
@@ -440,13 +490,14 @@ uint8_t Sa1::ReadRegister(uint16_t address, uint8_t openBus, Side side) {
     if (address >= 0x2306 && address <= 0x230a)
         return static_cast<uint8_t>(arithmeticResult_ >> ((address - 0x2306) * 8));
     if (address == 0x230b) return arithmeticOverflow_ ? 0x80 : 0;
-    if (address == 0x230c) return static_cast<uint8_t>(bitResult_);
+    if (address == 0x230c)
+      return static_cast<uint8_t>(ReadBitResult());
     if (address == 0x230d) {
-        const uint8_t value = static_cast<uint8_t>(bitResult_ >> 8);
+        const uint8_t value = static_cast<uint8_t>(ReadBitResult() >> 8);
         if (registers_[0x58] & 0x80) AdvanceBits();
         return value;
     }
-    return openBus;
+    return 0xff;
 }
 
 void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
@@ -457,20 +508,28 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
     switch (offset) {
     case 0x00:
         if ((previous & 0x20) && !(value & 0x20)) ResetProcessor();
-        if (value & 0x80) sa1Flags_ |= 0x80;
-        if (value & 0x10) {
-            sa1Flags_ |= 0x10;
-            nmiServiced_ = false;
-        }
+        RaiseSa1Interrupt(value & 0x90);
         break;
-    case 0x02: cpuFlags_ &= static_cast<uint8_t>(~(value & 0xa0)); break;
-    case 0x09: if (value & 0x80) cpuFlags_ |= 0x80; break;
+    case 0x01: {
+      const auto armed = value & ~previous & cpuFlags_ & 0xa0;
+      registers_[0x02] &= static_cast<uint8_t>(~armed);
+      if (armed)
+        cpuIrqLevel_ = true;
+      break;
+    }
+    case 0x02:
+      cpuFlags_ &= static_cast<uint8_t>(~(value & 0xa0));
+      if (!(cpuFlags_ & 0xa0))
+        cpuIrqLevel_ = false;
+      break;
+    case 0x09:
+      RaiseCpuInterrupt(value & 0x80);
+      break;
     case 0x0a:
-        if ((value & 0x10) && !(previous & 0x10)) nmiServiced_ = false;
+        registers_[0x0b] &= static_cast<uint8_t>(~(value & ~previous & sa1Flags_ & 0xf0));
         break;
     case 0x0b:
         sa1Flags_ &= static_cast<uint8_t>(~(value & 0xf0));
-        if (value & 0x10) nmiServiced_ = false;
         break;
     case 0x11:
       hClocks_ = vCounter_ = 0;
@@ -501,13 +560,12 @@ void Sa1::WriteRegister(uint16_t address, uint8_t value, Side side) {
         arithmeticResult_ = 0;
       break;
     case 0x54: StartArithmetic(); break;
-    case 0x58: AdvanceBits(); break;
+    case 0x58:
+      if (!(value & 0x80))
+        AdvanceBits();
+      break;
     case 0x5b:
-        registers_[0x58] = 0;
-        bitAddress_ = RegisterAddress(0x59) & 0xfffffe;
-        StoreAddress(0x59, bitAddress_);
         bitOffset_ = 0;
-        RefreshBitResult();
         break;
     default: break;
     }

@@ -23,7 +23,7 @@ void Sa1::AdvanceTimer(uint32_t masterClocks) {
                      : (control & 3) == 2 ? vertical && !hClocks_
                                           : (control & 3) == 3 && horizontal && vertical;
   if (match)
-    sa1Flags_ |= 0x40;
+    RaiseSa1Interrupt(0x40);
 }
 
 void Sa1::StartArithmetic() {
@@ -57,27 +57,21 @@ void Sa1::StartArithmetic() {
     registers_[0x53] = registers_[0x54] = 0;
 }
 
-void Sa1::RefreshBitResult() {
-    uint32_t bits = 0;
-    for (unsigned byte = 0; byte < 4; ++byte) {
-        uint32_t address = (bitAddress_ + byte) & 0xffffff;
-        const uint8_t bank = static_cast<uint8_t>(address >> 16);
-        if (bank < 0xc0 && ((bank & 0x40) || !(address & 0x8000)))
-            address = 0x008000 | (address & 0x7fff);
-        uint32_t offset = 0;
-        const uint8_t value = RomOffset(address, offset) ? ReadRom(offset, regs().mdr) : regs().mdr;
-        bits |= uint32_t(value) << (byte * 8);
-    }
-    bitResult_ = static_cast<uint16_t>(bits >> bitOffset_);
+uint16_t Sa1::ReadBitResult() const {
+  uint32_t bits = 0;
+  const auto address = RegisterAddress(0x59);
+  for (unsigned byte = 0; byte < 3; ++byte) {
+    const uint8_t value = ReadBitByte(address + byte);
+    bits |= uint32_t(value) << (byte * 8);
+  }
+  return static_cast<uint16_t>(bits >> bitOffset_);
 }
 
 void Sa1::AdvanceBits() {
-    const unsigned length = (registers_[0x58] & 15) ? (registers_[0x58] & 15) : 16;
-    const unsigned position = bitOffset_ + length;
-    bitAddress_ = (bitAddress_ + (position / 16) * 2) & 0xffffff;
-    bitOffset_ = static_cast<uint8_t>(position & 15);
-    StoreAddress(0x59, bitAddress_);
-    RefreshBitResult();
+  const unsigned length = (registers_[0x58] & 15) ? (registers_[0x58] & 15) : 16;
+  const unsigned position = bitOffset_ + length;
+  bitOffset_ = static_cast<uint8_t>(position & 7);
+  StoreAddress(0x59, (RegisterAddress(0x59) + position / 8) & 0xffffff);
 }
 
 } // namespace snes::core
