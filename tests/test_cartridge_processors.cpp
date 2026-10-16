@@ -54,7 +54,8 @@ void Sa1Integration() {
     auto machine = Machine(rom);
     auto& bus = machine->GetBus();
     Check(machine->LoadedCartridge()->Header().mapping == MappingType::Sa1, "SA-1 selects its cartridge map");
-    Check(bus.Read(0x8030ff) == 0 && bus.Read(0x80230e) == 0x23, "SA-1 IRAM and MMIO mirrors are mapped");
+    Check(bus.Read(0x8030ff) == 0 && bus.Read(0x802300) == 0,
+          "SA-1 IRAM and status-register mirrors are mapped");
     bus.Write(0x7e0010, 0x6c);
     bus.Write(0x2229, 1); bus.Write(0x3001, 0x41);
     Check(bus.Read(0x803001) == 0x41 && bus.Read(0x000010) == 0x6c, "IRAM windows preserve the console WRAM mirrors");

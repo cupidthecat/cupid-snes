@@ -17,9 +17,9 @@ The frontend accepts Super Scope, one or two Justifiers, and MACS rifle on conso
 | Trigger | Left mouse button | Right Ctrl |
 | Start | Enter | Backspace |
 | Offscreen aim | Hold O or move outside the picture | Hold U |
-| Scope cursor | Right mouse button | — |
-| Scope turbo switch | T toggles | — |
-| Scope pause | P | — |
+| Scope cursor | Right mouse button | None |
+| Scope turbo switch | T toggles | None |
+| Scope pause | P | None |
 
 Green and magenta crosshairs show the two aim positions. They are drawn over the displayed picture and are absent from saved probe frames. Unfocused windows release the gun buttons and report offscreen aim. The frontend rejects a relative mouse on port one when port two uses a gun, since both would need the same host pointer.
 

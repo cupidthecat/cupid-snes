@@ -103,6 +103,86 @@ void CallBusState() {
   }
 }
 
+void StackPullBusState() {
+  struct ObservedBus : Bus {
+    SnesCpu *cpu = nullptr;
+    std::vector<std::array<uint16_t, 5>> state;
+    uint8_t Read(uint32_t address) override {
+      if (cpu && (address & 0xffff) >= 0x1f1 && (address & 0xffff) <= 0x1f4) {
+        const auto &r = cpu->regs();
+        state.push_back({r.a, r.x, r.y, r.d, r.pc});
+      }
+      return Bus::Read(address);
+    }
+  };
+  for (uint8_t opcode : {0x68, 0xfa, 0x7a, 0x2b, 0x40}) {
+    for (bool emulation : {false, true}) {
+      if (emulation && opcode != 0x2b && opcode != 0x40)
+        continue;
+      ObservedBus bus;
+      SnesCpu cpu(bus);
+      Boot(cpu, bus);
+      auto &r = cpu.regs();
+      r.e = emulation;
+      r.p = emulation ? 0x34 : 0;
+      r.a = r.x = r.y = r.d = 0xabcd;
+      r.s = 0x1f0;
+      bus.ram[0x8000] = opcode;
+      bus.ram[0x1f1] = opcode == 0x40 ? 0 : 0x34;
+      bus.ram[0x1f2] = opcode == 0x40 ? 0x34 : 0x12;
+      bus.ram[0x1f3] = 0x12;
+      bus.ram[0x1f4] = 0x23;
+      bus.cpu = &cpu;
+      cpu.Step();
+      const unsigned count = opcode == 0x40 ? (emulation ? 3 : 4) : 2;
+      Check("Pull bus sample count", unsigned(bus.state.size()), count);
+      if (bus.state.size() != count)
+        continue;
+      if (opcode == 0x40) {
+        Check("RTI publishes PC low before reading PC high", bus.state[2][4], 0x8034);
+        if (!emulation)
+          Check("Native RTI publishes both PC bytes before reading PB", bus.state[3][4], 0x1234);
+      } else {
+        const unsigned reg = opcode == 0x68 ? 0 : opcode == 0xfa ? 1 : opcode == 0x7a ? 2 : 3;
+        Check("A word pull retains its register before the first read", bus.state[0][reg], 0xabcd);
+        Check("A word pull publishes its low byte before the second read", bus.state[1][reg],
+              0xab34);
+      }
+    }
+  }
+}
+
+void ModifyFlagSampling() {
+  for (uint8_t opcode :
+       {0x06, 0x0e, 0x16, 0x1e, 0x26, 0x2e, 0x36, 0x3e, 0x46, 0x4e, 0x56, 0x5e, 0x66, 0x6e,
+        0x76, 0x7e, 0xc6, 0xce, 0xd6, 0xde, 0xe6, 0xee, 0xf6, 0xfe, 0x04, 0x0c, 0x14, 0x1c})
+    for (uint8_t value : {0, 1, 0x80, 0xff})
+      for (bool emulation : {false, true}) {
+        Bus bus;
+        SnesCpu cpu(bus);
+        Boot(cpu, bus);
+        cpu.regs().e = emulation;
+        cpu.regs().p = 0x34;
+        cpu.regs().a = 0xaa;
+        cpu.regs().x = 3;
+        cpu.regs().d = 0x200;
+        bus.ram[0x8000] = opcode;
+        bus.ram[0x8001] = 0x10;
+        bus.ram[0x8002] = 2;
+        bus.ram[0x210] = bus.ram[0x213] = value;
+        unsigned samples = 0, status = 0;
+        cpu.SetInterruptPollCallback([&] {
+          ++samples;
+          status = cpu.regs().p;
+          return false;
+        });
+        cpu.Step();
+        Check("Memory modification samples one interrupt phase", samples, 1);
+        Check("Byte memory modification publishes flags before interrupt sampling", status,
+              cpu.regs().p);
+      }
+}
+
 void InterruptStack() {
     // Exercise every byte of an interrupt frame across the page boundary.
     for (bool emulation : {false, true}) {
@@ -438,6 +518,8 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "stop") Stop();
     else {
       CallBusState();
+      StackPullBusState();
+      ModifyFlagSampling();
       InterruptStack();
       ExtendedStackInstructions();
       WaitInterrupt();

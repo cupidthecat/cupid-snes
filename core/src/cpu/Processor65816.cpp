@@ -1046,8 +1046,8 @@ void Processor65816::instructionBankModify8(Alu8 op) {
     uint16_t addr = makeWord(al, ah);
     uint8_t data = readBank(addr);
     idle();
-    lastCycle();
     data = (this->*op)(data);
+    lastCycle();
     writeBank(addr, data);
 }
 
@@ -1073,8 +1073,8 @@ void Processor65816::instructionBankIndexedModify8(Alu8 op) {
     idle();
     uint8_t data = readBank(addr + r.x);
     idle();
-    lastCycle();
     data = (this->*op)(data);
+    lastCycle();
     writeBank(addr + r.x, data);
 }
 
@@ -1099,8 +1099,8 @@ void Processor65816::instructionDirectModify8(Alu8 op) {
     idle2();
     uint8_t data = readDirect(dp);
     idle();
-    lastCycle();
     data = (this->*op)(data);
+    lastCycle();
     writeDirect(dp, data);
 }
 
@@ -1124,8 +1124,8 @@ void Processor65816::instructionDirectIndexedModify8(Alu8 op) {
     idle();
     uint8_t data = readDirect(dp + r.x);
     idle();
-    lastCycle();
     data = (this->*op)(data);
+    lastCycle();
     writeDirect(dp + r.x, data);
 }
 
@@ -1288,15 +1288,16 @@ void Processor65816::instructionReturnInterrupt() {
     if (r.e) r.p |= (FlagM | FlagX);
     if (xf()) { r.x &= 0xFF; r.y &= 0xFF; }
     uint8_t pcl = pull();
+    r.pc = static_cast<uint16_t>((r.pc & 0xff00) | pcl);
     if (r.e) {
         lastCycle();
         uint8_t pch = pull();
-        r.pc = makeWord(pcl, pch);
+        r.pc = static_cast<uint16_t>((r.pc & 0xff) | (uint16_t(pch) << 8));
     } else {
         uint8_t pch = pull();
+        r.pc = static_cast<uint16_t>((r.pc & 0xff) | (uint16_t(pch) << 8));
         lastCycle();
         r.pb = pull();
-        r.pc = makeWord(pcl, pch);
     }
     idleJump();
 }
@@ -1568,9 +1569,10 @@ void Processor65816::instructionPull16(uint16_t& reg) {
     idle();
     idle();
     uint8_t dl = pull();
+    reg = static_cast<uint16_t>((reg & 0xff00) | dl);
     lastCycle();
     uint8_t dh = pull();
-    reg = makeWord(dl, dh);
+    reg = static_cast<uint16_t>((reg & 0xff) | (uint16_t(dh) << 8));
     setNZ16(reg);
 }
 
@@ -1579,9 +1581,10 @@ void Processor65816::instructionPullD() {
     idle();
     idle();
     uint8_t dl = pullN();
+    r.d = static_cast<uint16_t>((r.d & 0xff00) | dl);
     lastCycle();
     uint8_t dh = pullN();
-    r.d = makeWord(dl, dh);
+    r.d = static_cast<uint16_t>((r.d & 0xff) | (uint16_t(dh) << 8));
     setNZ16(r.d);
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
 }

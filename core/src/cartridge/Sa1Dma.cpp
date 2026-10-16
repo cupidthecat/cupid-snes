@@ -1,80 +1,86 @@
 // snes emulator
 // SA-1 normal DMA and packed/unpacked character conversion.
 #include "snes/core/Sa1.hpp"
+#include "snes/core/detail/ExecutionContext.hpp"
 
 #include <algorithm>
 
 namespace snes::core {
 
 void Sa1::StartDma() {
-    const uint8_t control = registers_[0x30];
-    const uint8_t source = control & 3;
-    const bool bwram = (control & 4) != 0;
-    // Same-device transfers and the fourth source selection are not defined.
-    if (source == 3 || (source == 1 && bwram) || (source == 2 && !bwram)) return;
-    dma_.source = RegisterAddress(0x32);
-    dma_.destination = RegisterAddress(0x35);
-    dma_.remaining = RegisterWord(0x38);
-    // A zero-length request completes without touching either memory port.
-    if (!dma_.remaining) {
-        dma_.active = false;
-        sa1Flags_ |= 0x20;
-        return;
-    }
-    dma_.sourceDevice = source;
-    dma_.destinationBwram = bwram;
-    dma_.active = true;
+  const auto count = RegisterWord(0x38);
+  const auto route = registers_[0x30] & 7;
+  if (!count || route == 2 || route == 3 || route == 5 || route == 7) {
+    // An unselected port pair consumes the count without memory cycles.
+    StoreAddress(0x32, RegisterAddress(0x32) + count);
+    StoreAddress(0x35, RegisterAddress(0x35) + count);
+    registers_[0x38] = registers_[0x39] = 0xff;
+    dmaActive_ = false;
+    RaiseSa1Interrupt(0x20);
+    return;
+  }
+  dmaActive_ = true;
+  if (execution_ && execution_->Running())
+    while (dmaActive_)
+      StepDma();
 }
 
 void Sa1::StepDma() {
-  Clock(2);
-  if (dma_.sourceDevice == 0 && !dma_.destinationBwram) {
-    if (CpuIramConflict() || CpuRomConflict())
-      Clock(2);
-    if (CpuIramConflict())
-      Clock(2);
-  } else {
-    Clock(2);
-    if (CpuBwramConflict() || (dma_.sourceDevice != 0 && CpuIramConflict()))
-      Clock(2);
-    if (CpuBwramConflict())
-      Clock(2);
-  }
-  if (!dma_.active)
+  const auto remaining = RegisterWord(0x38);
+  const auto next = static_cast<uint16_t>(remaining - 1);
+  registers_[0x38] = static_cast<uint8_t>(next);
+  registers_[0x39] = static_cast<uint8_t>(next >> 8);
+  if (!remaining) {
+    dmaActive_ = false;
+    RaiseSa1Interrupt(0x20);
     return;
-
-  uint8_t value = 0;
-  if (dma_.sourceDevice == 0) {
-    uint32_t offset;
-    if (RomOffset(dma_.source, offset))
-      value = ReadRom(offset, regs().mdr);
-    else
-      value = regs().mdr;
-    dma_.source = (dma_.source + 1) & 0xffffff;
-  } else if (dma_.sourceDevice == 1) {
-    value = ReadBwram(dma_.source);
-    dma_.source = (dma_.source + 1) & 0x3ffff;
-  } else {
-    value = iram_[dma_.source & 0x7ff];
-    dma_.source = (dma_.source + 1) & 0x7ff;
   }
-    // DMA owns these memory ports; CPU write-enable masks gate CPU writes.
-    if (dma_.destinationBwram) {
-        WriteBwram(dma_.destination, value, Side::Sa1, true);
-        dma_.destination = (dma_.destination + 1) & 0x3ffff;
+  const auto source = RegisterAddress(0x32);
+  const auto destination = RegisterAddress(0x35);
+  const auto openBus = regs().mdr;
+  StoreAddress(0x32, source + 1);
+  StoreAddress(0x35, destination + 1);
+
+  // Control writes can change the port pair while a memory cycle is suspended.
+  for (uint8_t route : {4, 0, 1, 6}) {
+    if ((registers_[0x30] & 7) != route)
+      continue;
+    const bool toBwram = (route & 4) != 0;
+    const auto device = route & 3;
+    Clock(2);
+    if (route == 0) {
+      if (CpuIramConflict() || CpuRomConflict())
+        Clock(2);
+      if (CpuIramConflict())
+        Clock(2);
     } else {
-        iram_[dma_.destination & 0x7ff] = value;
-        dma_.destination = (dma_.destination + 1) & 0x7ff;
+      Clock(2);
+      if (CpuBwramConflict() || (device != 0 && CpuIramConflict()))
+        Clock(2);
+      if (CpuBwramConflict())
+        Clock(2);
     }
-    --dma_.remaining;
-    StoreAddress(0x32, dma_.source);
-    StoreAddress(0x35, dma_.destination);
-    registers_[0x38] = static_cast<uint8_t>(dma_.remaining);
-    registers_[0x39] = static_cast<uint8_t>(dma_.remaining >> 8);
-    if (!dma_.remaining) {
-        dma_.active = false;
-        sa1Flags_ |= 0x20;
+    uint8_t value = openBus;
+    if (device == 0) {
+      uint32_t offset;
+      if (RomOffset(source, offset))
+        value = ReadRom(offset, openBus);
+    } else if (device == 1) {
+      value = ReadBwram(source, openBus);
+    } else {
+      value = iram_[source & 0x7ff];
     }
+    // DMA owns the memory port, independently of processor write protection.
+    if (toBwram)
+      WriteBwram(destination, value, Side::Sa1, true);
+    else
+      iram_[destination & 0x7ff] = value;
+  }
+  if (!RegisterWord(0x38)) {
+    registers_[0x38] = registers_[0x39] = 0xff;
+    dmaActive_ = false;
+    RaiseSa1Interrupt(0x20);
+  }
 }
 
 uint8_t Sa1::ConversionDepth() const noexcept {
@@ -99,40 +105,37 @@ void Sa1::WritePlanarTile(const std::array<uint8_t, 64>& pixels, uint16_t destin
 }
 
 void Sa1::StartConversion() {
-    const unsigned rowBytes = (8 * ConversionDepth()) << ((registers_[0x31] >> 2) & 7);
-    conversionSource_ = (RegisterAddress(0x32) & 0x3ffff) & ~(rowBytes - 1);
-    const unsigned bufferSize = 16 * ConversionDepth();
-    conversionDestination_ = static_cast<uint16_t>((RegisterWord(0x35) & 0x7ff) & ~(bufferSize - 1));
-    conversionActive_ = true;
-    conversionTile_ = UINT32_MAX;
-    ConvertBitmapTile(0);
-    cpuFlags_ |= 0x20;
+  conversionActive_ = true;
+  RaiseCpuInterrupt(0x20);
 }
 
 void Sa1::ConvertBitmapTile(uint32_t tile) {
-    const unsigned depth = ConversionDepth();
-    const unsigned width = 1u << ((registers_[0x31] >> 2) & 7);
-    const uint32_t tileRow = tile / width;
-    const uint32_t tileColumn = tile % width;
-    std::array<uint8_t, 64> pixels{};
-    for (unsigned y = 0; y < 8; ++y) {
-        const uint32_t sourceRow = conversionSource_ + (tileRow * 8 + y) * width * depth + tileColumn * depth;
-        for (unsigned x = 0; x < 8; ++x) {
-            const unsigned bit = x * depth;
-            pixels[y * 8 + x] = static_cast<uint8_t>((ReadBwram(sourceRow + bit / 8) >> (bit & 7)) & ((1u << depth) - 1));
-        }
+  const unsigned depth = ConversionDepth();
+  const unsigned width = 1u << std::min((registers_[0x31] >> 2) & 7, 5);
+  const uint32_t tileRow = tile / width;
+  const uint32_t tileColumn = tile % width;
+  const auto source = RegisterAddress(0x32);
+  const auto mask = static_cast<uint32_t>(bwram_.size()) - 1;
+  std::array<uint8_t, 64> pixels{};
+  for (unsigned y = 0; y < 8; ++y) {
+    const uint32_t sourceRow = source + (tileRow * 8 + y) * width * depth + tileColumn * depth;
+    for (unsigned x = 0; x < 8; ++x) {
+      const unsigned bit = x * depth;
+      pixels[y * 8 + x] = static_cast<uint8_t>(
+          (ReadBwram((sourceRow + bit / 8) & mask) >> (bit & 7)) & ((1u << depth) - 1));
     }
-    const uint16_t destination = static_cast<uint16_t>(conversionDestination_ + (tile & 1) * depth * 8);
-    WritePlanarTile(pixels, destination);
-    conversionTile_ = tile;
+  }
+  WritePlanarTile(pixels, RegisterWord(0x35));
 }
 
 uint8_t Sa1::ReadConverted(uint32_t offset) {
-    const unsigned tileBytes = 8 * ConversionDepth();
-    const uint32_t position = (offset - conversionSource_) & 0x3ffff;
-    const uint32_t tile = position / tileBytes;
-    if (tile != conversionTile_) ConvertBitmapTile(tile);
-    return iram_[(conversionDestination_ + (tile & 1) * tileBytes + position % tileBytes) & 0x7ff];
+  const unsigned tileBytes = 8 * ConversionDepth();
+  if (!(offset & (tileBytes - 1))) {
+    const auto mask = static_cast<uint32_t>(bwram_.size()) - 1;
+    const uint32_t tile = ((offset - RegisterAddress(0x32)) & mask) / tileBytes;
+    ConvertBitmapTile(tile);
+  }
+  return iram_[(RegisterWord(0x35) + (offset & (tileBytes - 1))) & 0x7ff];
 }
 
 void Sa1::PushConversionRows() {

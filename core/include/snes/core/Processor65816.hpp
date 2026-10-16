@@ -284,8 +284,9 @@ protected:
     void instructionBlockMove8(int adjust);   // MVN/MVP
     void instructionBlockMove16(int adjust);
     void instructionInterrupt(uint16_t vector); // BRK/COP
-    void instructionStop();               // STP
-    void instructionWait();               // WAI
+    // A native scheduler can retain the halted instruction's live stack.
+    virtual void instructionStop();       // STP
+    virtual void instructionWait();       // WAI
     void instructionExchangeCE();         // XCE
     void instructionSetFlag(uint8_t flag);
     void instructionClearFlag(uint8_t flag);

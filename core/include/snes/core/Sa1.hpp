@@ -41,20 +41,13 @@ public:
     void WriteSa1(uint32_t address, uint8_t value);
     const Processor65816::Registers& CpuRegisters() const noexcept { return regs(); }
     uint64_t MasterClocks() const noexcept { return requestedClocks_; }
-    bool DmaActive() const noexcept { return dma_.active; }
+    bool DmaActive() const noexcept {
+      return dmaActive_;
+    }
 
 private:
     enum class Side { Cpu, Sa1 };
     static constexpr uint64_t AccumulatorMask = (uint64_t{1} << 40) - 1;
-
-    struct Transfer {
-        uint32_t source = 0;
-        uint32_t destination = 0;
-        uint32_t remaining = 0;
-        uint8_t sourceDevice = 0;
-        bool destinationBwram = false;
-        bool active = false;
-    };
 
     std::span<const uint8_t> rom_;
     std::span<const uint8_t> expansion_;
@@ -64,8 +57,8 @@ private:
     std::array<uint8_t, 256> registers_{};
     uint8_t cpuFlags_ = 0;
     uint8_t sa1Flags_ = 0;
-    bool nmiServiced_ = false;
-    bool sampledIrq_ = false;
+    bool cpuIrqLevel_ = false;
+    bool interruptPending_ = false;
 
     uint64_t requestedClocks_ = 0;
     uint64_t executedClocks_ = 0;
@@ -79,15 +72,10 @@ private:
 
     uint64_t arithmeticResult_ = 0;
     bool arithmeticOverflow_ = false;
-    uint32_t bitAddress_ = 0;
     uint8_t bitOffset_ = 0;
-    uint16_t bitResult_ = 0;
 
-    Transfer dma_{};
+    bool dmaActive_ = false;
     bool conversionActive_ = false;
-    uint32_t conversionSource_ = 0;
-    uint16_t conversionDestination_ = 0;
-    uint32_t conversionTile_ = UINT32_MAX;
     uint8_t conversionRows_ = 0;
     uint8_t conversionBuffer_ = 0;
 
@@ -101,16 +89,21 @@ private:
     void write(uint32_t address, uint8_t value) override;
     void lastCycle() override;
     bool interruptPending() const override;
+    void instructionStop() override;
+    void instructionWait() override;
     void Clock(uint32_t masterClocks);
     void StepProcessor();
     void ResetProcessor();
-    void InterruptProcessor(Interrupt type);
+    void InterruptProcessor();
     bool Sa1IrqPending() const noexcept;
     bool Sa1NmiPending() const noexcept;
+    void RaiseSa1Interrupt(uint8_t source) noexcept;
+    void RaiseCpuInterrupt(uint8_t source) noexcept;
     void ClockAccess(uint32_t address);
     bool CpuRomConflict() const noexcept;
     bool CpuBwramConflict() const noexcept;
     bool CpuIramConflict() const noexcept;
+    uint8_t ReadBitByte(uint32_t address) const;
 
     uint8_t ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io = true);
     void WriteMemory(uint32_t address, uint8_t value, Side side);
@@ -133,7 +126,7 @@ private:
 
     void AdvanceTimer(uint32_t masterClocks);
     void StartArithmetic();
-    void RefreshBitResult();
+    uint16_t ReadBitResult() const;
     void AdvanceBits();
     void StartDma();
     void StepDma();
