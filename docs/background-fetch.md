@@ -28,4 +28,4 @@ Mosaic reloads its vertical count to size plus one when it changes from fully di
 
 A local audit matched 4,194,304 generated layer samples across all eight modes, including mode, scroll, pattern-base, tile-size, mosaic, and VRAM changes within a line. A 6,000-field F1 ROC II replay matched all video fields and 3,198,656 shared stereo samples. The earlier implementation differed on 214 fields in that replay. An interlaced RPM Racing capture matched 1,800 fields and 961,379 shared stereo samples.
 
-Objects use a separate [evaluation and fetch pipeline](object-fetch.md). Complete PPU memory-port arbitration and optical gun sensing still need separate validation. Zero brightness produces black, including in overscan fields.
+Objects use a separate [evaluation and fetch pipeline](object-fetch.md). [PPU memory ports](ppu-memory-ports.md) covers CPU access ownership and palette lookup addresses. Memory collisions within a clock and optical gun sensing still need separate validation. Zero brightness produces black, including in overscan fields.

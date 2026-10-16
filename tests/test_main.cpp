@@ -2418,7 +2418,15 @@ int main() {
 
             ppu.WriteIO(0x2118, 0xAA);
             ppu.WriteIO(0x2119, 0xBB);
-            assert(ppu.VramData()[0] == 0xBBAA);  // allowed before visible rendering
+            assert(ppu.VramData()[0] == 0); // scanline zero is blocked too
+
+            ppu.WriteIO(0x2100, 0x80);
+            ppu.WriteIO(0x2116, 0);
+            ppu.WriteIO(0x2117, 0);
+            ppu.WriteIO(0x2118, 0xAA);
+            ppu.WriteIO(0x2119, 0xBB);
+            assert(ppu.VramData()[0] == 0xBBAA); // forced blank releases VRAM
+            ppu.WriteIO(0x2100, 0);
 
             ppu.SetCurrentLine(1);       // first visible scanline
             ppu.WriteIO(0x2116, 0x00);

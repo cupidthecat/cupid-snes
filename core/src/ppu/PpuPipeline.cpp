@@ -37,18 +37,22 @@ void Ppu::SynchronizePipeline(uint16_t clock) {
     if ((h <= 1016 && !(h & 7)) || h >= 1080)
       object_->Clock(h, fieldId_, io_, latch_, oam_, PpuObject::Vram{vram_.get(), VramWords});
     if (h < 1080 && background_->Clock(h, io_, PpuBackground::Vram{vram_.get(), VramWords}) &&
-        currentLine_ > 0 && currentLine_ < VDisp() && currentLine_ < MaxVisibleLines)
+        currentLine_ > 0 && (io_.overscan || currentLine_ < 225))
       StorePipelinePixel((h - 58) / 4);
   }
 }
 
 void Ppu::StorePipelinePixel(unsigned x) {
-  auto &line = lines_[currentLine_];
   const bool hires = io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
-  line.sampledHires |= hires;
-  if (io_.displayDisable)
+  const bool retained =
+      currentLine_ > 0 && currentLine_ < MaxVisibleLines && currentLine_ < VDisp();
+  if (retained)
+    lines_[currentLine_].sampledHires |= hires;
+  if (io_.displayDisable || currentLine_ == 0 || currentLine_ > 240 ||
+      (!io_.overscan && currentLine_ >= 225))
     return;
   Pixel above{COL, 0, cgram_[0]}, below{COL, 0, hires ? cgram_[0] : io_.col.fixedColor};
+  int aboveRead = -1, belowRead = -1;
   const std::array<const Background *, 4> registers{&io_.bg1, &io_.bg2, &io_.bg3, &io_.bg4};
   const auto &samples = background_->Samples();
   for (unsigned id = 0; id < 4; ++id) {
@@ -67,6 +71,8 @@ void Ppu::StorePipelinePixel(unsigned x) {
           id == 0 && io_.col.directColor && (io_.bgMode == 3 || io_.bgMode == 4 || io_.bgMode == 7);
       winner = {uint8_t(id), pixel.priority,
                 direct ? DirectColor(pixel.group, pixel.palette) : cgram_[pixel.palette]};
+      if (!direct)
+        (sub ? belowRead : aboveRead) = pixel.palette;
     }
   }
   const auto pixel = object_->Pixel(x);
@@ -76,13 +82,30 @@ void Ppu::StorePipelinePixel(unsigned x) {
     const bool blocked =
         (obj.window.oneEnable || obj.window.twoEnable) && Blocked(obj.window, io_.window, x);
     const Pixel resolved{pixel.palette < 192 ? OBJ1 : OBJ2, priority, cgram_[pixel.palette]};
-    if (obj.aboveEnable && priority > above.priority && !(blocked && obj.window.aboveEnable))
+    if (obj.aboveEnable && priority > above.priority && !(blocked && obj.window.aboveEnable)) {
       above = resolved;
-    if (obj.belowEnable && priority > below.priority && !(blocked && obj.window.belowEnable))
+      aboveRead = pixel.palette;
+    }
+    if (obj.belowEnable && priority > below.priority && !(blocked && obj.window.belowEnable)) {
       below = resolved;
+      belowRead = pixel.palette;
+    }
   }
-  line.sampledAbove[x] = above;
-  line.sampledBelow[x] = below;
+  if (!below.priority)
+    belowRead = 0;
+  if (!above.priority)
+    aboveRead = 0;
+  // The sub-screen lookup precedes the main-screen lookup. Direct color
+  // consumes no palette word and leaves the preceding bus address intact.
+  if (belowRead >= 0)
+    latch_.cgramAddress = uint8_t(belowRead);
+  if (aboveRead >= 0)
+    latch_.cgramAddress = uint8_t(aboveRead);
+  if (retained) {
+    auto &line = lines_[currentLine_];
+    line.sampledAbove[x] = above;
+    line.sampledBelow[x] = below;
+  }
 }
 
 } // namespace snes::core

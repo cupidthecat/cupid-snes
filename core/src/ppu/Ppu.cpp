@@ -94,6 +94,7 @@ void Ppu::FrameBegin() {
   background_->BeginLine(0, fieldId_, io_);
   object_->BeginLine(0, io_.obj);
   pipelineClock_ = 0;
+  latch_.cgramAddress = 0;
 
   io_.obj.rangeOver = false;
   io_.obj.timeOver = false;
@@ -130,6 +131,7 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     AdvanceMosaicCounter(vcounter);
     background_->BeginLine(vcounter, fieldId_, io_);
     object_->BeginLine(vcounter, io_.obj);
+    latch_.cgramAddress = 0;
     if (vcounter == VDisp() && !io_.displayDisable)
       OamAddressReset();
     if (vcounter > 0 && vcounter < MaxVisibleLines)
@@ -316,18 +318,18 @@ uint16_t Ppu::TranslatedVramAddress() const {
 }
 
 uint16_t Ppu::ReadVram() {
-    // During active display (visible scanlines 1..vdisp-1), VRAM reads return 0.
-    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp()) {
-        return 0x0000;
-    }
+  // Display owns VRAM from scanline zero through the last visible line.
+  if (!io_.displayDisable && currentLine_ < VDisp()) {
+    return 0x0000;
+  }
     return vram_[TranslatedVramAddress()];
 }
 
 void Ppu::WriteVram(bool highByte, uint8_t data) {
-    // During active display (visible scanlines 1..vdisp-1), VRAM writes are blocked.
-    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp()) {
-        return;
-    }
+  // Block the write without changing the port's address-increment behavior.
+  if (!io_.displayDisable && currentLine_ < VDisp()) {
+    return;
+  }
     uint16_t addr = TranslatedVramAddress();
     if (!highByte) {
         vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
@@ -495,15 +497,14 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
     // $213B - CGDATAREAD
     case 0x213B: {
-        if (!io_.cgramReadLatch) {
-            io_.cgramReadLatch = true;
-            latch_.ppu2.mdr = ReadCgram(false, io_.cgramAddress);
-        } else {
-            io_.cgramReadLatch = false;
-            latch_.ppu2.mdr = (ReadCgram(true, io_.cgramAddress) & 0x7F) |
-                              (latch_.ppu2.mdr & 0x80);
-            io_.cgramAddress++;
-        }
+      if (!io_.cgramAddressLatch) {
+        io_.cgramAddressLatch = true;
+        latch_.ppu2.mdr = ReadCgram(false, io_.cgramAddress);
+      } else {
+        io_.cgramAddressLatch = false;
+        latch_.ppu2.mdr = (ReadCgram(true, io_.cgramAddress) & 0x7F) | (latch_.ppu2.mdr & 0x80);
+        io_.cgramAddress++;
+      }
         return latch_.ppu2.mdr;
     }
 
@@ -937,22 +938,20 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
     // $2121 - CGADD (CGRAM address)
     case 0x2121: {
         io_.cgramAddress = data;
-        io_.cgramReadLatch = false;
-        io_.cgramWriteLatch = false;
+        io_.cgramAddressLatch = false;
         return;
     }
 
     // $2122 - CGDATA (CGRAM data write)
     case 0x2122: {
-        if (!io_.cgramWriteLatch) {
-            io_.cgramWriteLatch = true;
-            latch_.cgram = data;
-        } else {
-            io_.cgramWriteLatch = false;
-            WriteCgram(io_.cgramAddress,
-                       static_cast<uint16_t>(data & 0x7F) << 8 | latch_.cgram);
-            io_.cgramAddress++;
-        }
+      if (!io_.cgramAddressLatch) {
+        io_.cgramAddressLatch = true;
+        latch_.cgram = data;
+      } else {
+        io_.cgramAddressLatch = false;
+        WriteCgram(io_.cgramAddress, static_cast<uint16_t>(data & 0x7F) << 8 | latch_.cgram);
+        io_.cgramAddress++;
+      }
         return;
     }
 
