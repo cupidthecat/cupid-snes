@@ -153,6 +153,24 @@ void VblankAddressReset() {
   Check(ppu->GetIO().oamAddress == 0x41,
         "The later VBlank notification preserves an OAM port access made after the boundary");
 }
+void LivePalette() {
+  auto ppu = Fixture(1, 0);
+  ppu->OamData()[0] = 0;
+  ppu->CgramData()[129] = 31;
+  ppu->VramData()[0x2000] = 0x00ff;
+  ppu->SetCurrentLine(1);
+  ppu->SetCurrentHClock(62);
+  ppu->WriteIO(0x2121, 129);
+  ppu->SetCurrentHClock(70);
+  ppu->WriteIO(0x2122, 0xe0);
+  ppu->SetCurrentHClock(78);
+  ppu->WriteIO(0x2122, 3);
+  ppu->ScanlineBegin(1);
+  ppu->VBlankBegin();
+  for (unsigned x = 0; x < 8; ++x)
+    Check(Color(*ppu, x, 0) == (x < 5 ? 31 : 31 << 5),
+          "Object palette writes change later pixel samples while retaining earlier colors");
+}
 } // namespace
 int main() {
   unsigned failures = 0;
@@ -171,6 +189,7 @@ int main() {
   run("OamBusOwnership", OamBusOwnership);
   run("BlankedPatternWord", BlankedPatternWord);
   run("VblankAddressReset", VblankAddressReset);
+  run("LivePalette", LivePalette);
   if (!failures)
     std::puts("Object fetch tests passed");
   return failures ? 1 : 0;

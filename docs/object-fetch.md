@@ -20,7 +20,7 @@ Evaluation and fetching update the OAM bus address latch. Active-display CPU rea
 
 ## Validation and limits
 
-`snes_ppu_object_tests` checks overflow before the next scanline, independent pattern-word reads, retained membership, first-object rotation, OAM bus ownership, blanking between words, and address reset at the VBlank boundary. Existing rendering tests cover object sizes, wrapping, interlace, overlap, palettes, windows, and color math.
+`snes_ppu_object_tests` checks overflow before the next scanline, independent pattern-word reads, retained membership, first-object rotation, OAM bus ownership, blanking between words, address reset at the VBlank boundary, and live palette changes. Existing rendering tests cover object sizes, wrapping, interlace, overlap, palettes, windows, and color math.
 
 A local audit matched 4,194,304 screen samples and 16,384 status/address results across generated scenes. It includes all eight size settings, both fields, priority rotation, display enables, blanking, and changes to OAM, VRAM, and fetch controls during a line.
 
