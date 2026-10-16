@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SNES_ENABLE_TESTS "Build tests" ON)
+option(SNES_ENABLE_LTO "Optimize release builds across translation units" ON)
 
 add_compile_definitions(__PRFCHWINTRIN_H)
 
@@ -32,6 +33,19 @@ if(NOT SDL3_FOUND)
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL3)
+endif()
+
+# Check the compiler and linker together before enabling release optimization.
+# Apply this after SDL configuration so its cached build keeps its own settings.
+if(SNES_ENABLE_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT SNES_IPO_SUPPORTED LANGUAGES CXX)
+  if(SNES_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+  else()
+    message(STATUS "Link-time optimization is unavailable; using normal compilation")
+  endif()
 endif()
 
 add_subdirectory(core)

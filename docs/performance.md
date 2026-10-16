@@ -1,5 +1,13 @@
 # Performance checks
 
+## Release compiler optimization
+
+Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.
+
+Pass `-DSNES_ENABLE_LTO=OFF` when configuring a build to compare throughput or investigate a compiler-specific problem. Use separate build directories and keep the compiler, build type, game inputs, and audio settings the same for both runs.
+
+An alternating six-run check of Kirby Super Star used GCC 15 Release builds and 300 fields per run. Median throughput increased from 61.42 to 69.54 fields/s with link-time optimization, a 13.2% gain. Each run reached the same master-clock count, produced the same number of audible samples, and retained identical final save RAM. This short startup sequence measures local throughput; its output counts do not establish complete game compatibility.
+
 ## ST018 firmware replay, 2026-10-16
 
 A quiet, headless Hayazashi Nidan Morita Shougi 2 replay completed 6,000 fields at 84.20 fields/s. The sequence navigated the menus and selected the computer to make the opening move. Median field time was 11.813 ms, p95 was 12.716 ms, p99 was 13.729 ms, and the maximum was 20.101 ms.
