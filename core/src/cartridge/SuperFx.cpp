@@ -1,12 +1,14 @@
 // snes emulator
 // Clocked GSU execution, cartridge arbitration, and graphics writeback.
 #include "snes/core/SuperFx.hpp"
+#include "snes/core/Timing.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <coroutine>
 #include <exception>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -79,6 +81,8 @@ struct SuperFx::Impl {
     uint32_t ramRemaining = 0, ramAddress = 0;
     uint8_t ramBuffer = 0;
     uint32_t waitRemaining = 0;
+    uint32_t masterFrequency = Timing::kMasterClockHz;
+    int64_t masterBalance = 0;
     Port waitPort = Port::None;
     Fetch *cacheFill = nullptr;
     FlushPixels *pixelFlush = nullptr;
@@ -387,43 +391,64 @@ struct SuperFx::Impl {
       PrepareStep();
     }
 
-    void Advance(uint64_t clocks) {
-        if (!clocks) return;
-        for (;;) {
-          if (!steps.empty()) {
-            if (waitRemaining > clocks) {
-              waitRemaining -= uint32_t(clocks);
-              return;
-            }
-            clocks -= waitRemaining;
-            waitRemaining = 0;
-            steps.pop_back();
-            if (!steps.empty()) {
-              PrepareStep();
-              continue;
-            }
-            if (!Granted(waitPort)) {
-              BeginWait(6, waitPort);
-              continue;
-            }
-            if (idleStep) {
-              idleStep = false;
-            } else if (cacheFill && !cacheFill->CompleteByte()) {
-              continue;
-            }
-          }
-          if (pixelFlush && !pixelFlush->CompleteAccess())
-            continue;
-          if (waitingForGo) {
-            if (!Running()) {
-              idleStep = true;
-              BeginWait(6, Port::None);
-              continue;
-            }
-            waitingForGo = false;
-          }
-          execution.handle.resume();
+    void ResumeReady() {
+      if (pixelFlush && !pixelFlush->CompleteAccess())
+        return;
+      if (waitingForGo) {
+        if (!Running()) {
+          idleStep = true;
+          BeginWait(6, Port::None);
+          return;
         }
+        waitingForGo = false;
+      }
+      execution.handle.resume();
+    }
+
+    void FinishStep() {
+      steps.pop_back();
+      if (!steps.empty()) {
+        PrepareStep();
+        return;
+      }
+      if (!Granted(waitPort)) {
+        BeginWait(6, waitPort);
+        return;
+      }
+      if (idleStep)
+        idleStep = false;
+      else if (cacheFill && !cacheFill->CompleteByte())
+        return;
+      ResumeReady();
+    }
+
+    void Synchronize(bool inclusive) {
+      while (masterBalance < 0 || (inclusive && masterBalance == 0)) {
+        if (steps.empty()) {
+          ResumeReady();
+          continue;
+        }
+        masterBalance += int64_t(waitRemaining) * masterFrequency;
+        waitRemaining = 0;
+        // A CPU clock edge returns before the step resumes its caller.
+        if (masterBalance > 0 || (!inclusive && masterBalance == 0))
+          return;
+        FinishStep();
+      }
+    }
+
+    void Advance(uint64_t clocks) {
+      while (clocks) {
+        const auto slice = std::min<uint64_t>(clocks, std::numeric_limits<uint32_t>::max());
+        masterBalance -= int64_t(slice) * masterFrequency;
+        Synchronize(true);
+        clocks -= slice;
+      }
+    }
+
+    void AdvanceMasterClocks(uint32_t clocks) {
+      masterBalance -= int64_t(clocks) * int64_t(ClockFrequency);
+      Synchronize(false);
     }
 
     Execution Run() {
@@ -825,8 +850,18 @@ SuperFx::~SuperFx() = default;
 SuperFx::SuperFx(SuperFx&&) noexcept = default;
 SuperFx& SuperFx::operator=(SuperFx&&) noexcept = default;
 void SuperFx::Reset() { Reset(impl_->rom, impl_->ram); }
-void SuperFx::Reset(std::span<const uint8_t> rom, std::span<uint8_t> ram) { impl_ = std::make_unique<Impl>(rom, ram); }
+void SuperFx::Reset(std::span<const uint8_t> rom, std::span<uint8_t> ram) {
+  const auto masterFrequency = impl_->masterFrequency;
+  impl_ = std::make_unique<Impl>(rom, ram);
+  impl_->masterFrequency = masterFrequency;
+}
 void SuperFx::Advance(uint64_t clocks) { impl_->Advance(clocks); }
+void SuperFx::SetPal(bool pal) {
+  impl_->masterFrequency = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+}
+void SuperFx::AdvanceMasterClocks(uint32_t clocks) {
+  impl_->AdvanceMasterClocks(clocks);
+}
 bool SuperFx::CpuIrqPending() const noexcept { return (impl_->status & Irq) != 0; }
 
 bool SuperFx::Selects(uint32_t address) noexcept {

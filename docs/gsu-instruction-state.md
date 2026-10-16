@@ -1,5 +1,7 @@
 # GSU instruction state during waits
 
+See [GSU master-clock synchronization](gsu-master-clock.md) for the CPU access boundary around these waits.
+
 Instructions can yield between fetching their operands, publishing results, and completing their remaining clocks. CPU register writes during those intervals must interact with the state visible at that point.
 
 ## Results and prefixes

@@ -30,6 +30,9 @@ public:
   void WriteCpu(uint32_t address, uint8_t value);
   // Elapsed cartridge oscillator clocks, not console clocks or an absolute timestamp.
   void Advance(uint64_t clocks);
+  // Console master-clock timing. The selected region is retained across resets.
+  void SetPal(bool pal);
+  void AdvanceMasterClocks(uint32_t clocks);
   bool CpuIrqPending() const noexcept;
 
 private:
