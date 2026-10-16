@@ -24,6 +24,8 @@ An uncached ROM fetch or GETB must wait for the restarted read. Clearing the req
 
 ## Validation and limits
 
+See [GSU instruction state during waits](gsu-instruction-state.md) for operand sampling, result publication, and uncached fetch stages.
+
 Committed instruction programs check intermediate plane writes, coordinates retained through flushes and reads, the timing of R1 updates, and ROM-buffer restarts after CPU R14 writes in both clock modes. Local audits cover 16,384 timelines of 256 master-clock steps. They compare plane bytes, pending cache masks, R0/R1, final RAM hashes, and cached positions and colors across both regions, color depths, partial and full rows, changing registers, and RAM-port stalls. Separate timelines check CPU R14 writes before GO and during an opcode fetch.
 
 A 6,000-field Yoshi's Island replay matches every video field, 3,198,656 shared stereo samples, and its final 32 KiB of work RAM. The pixel transaction changes also passed a 6,000-field Star Fox replay with the same video, audio, and memory checks. These checks cover the exercised sequences. Physical memory timing measurements and complete game compatibility remain unverified.
