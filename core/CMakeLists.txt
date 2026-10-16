@@ -7,6 +7,7 @@ add_library(snes_core
   src/cartridge/Sdd1.cpp
   src/cartridge/St010.cpp
   src/cartridge/Spc7110.cpp
+  src/cartridge/Spc7110Ports.cpp
   src/cartridge/Spc7110Decoder.cpp
   src/cartridge/Spc7110Rtc.cpp
   src/cartridge/Sa1.cpp

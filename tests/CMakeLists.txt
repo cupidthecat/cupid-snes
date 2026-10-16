@@ -80,6 +80,14 @@ add_executable(snes_spc7110_tests test_spc7110.cpp)
 target_link_libraries(snes_spc7110_tests PRIVATE snes_core)
 add_test(NAME snes_spc7110_tests COMMAND snes_spc7110_tests)
 
+add_executable(snes_spc7110_timing_tests test_spc7110_timing.cpp)
+target_link_libraries(snes_spc7110_timing_tests PRIVATE snes_core)
+add_test(NAME snes_spc7110_timing_tests COMMAND snes_spc7110_timing_tests)
+
+add_executable(snes_spc7110_parts_tests test_spc7110_parts.cpp)
+target_link_libraries(snes_spc7110_parts_tests PRIVATE snes_core)
+add_test(NAME snes_spc7110_parts_tests COMMAND snes_spc7110_parts_tests)
+
 add_executable(snes_dma_timing_tests test_dma_timing.cpp)
 target_link_libraries(snes_dma_timing_tests PRIVATE snes_core)
 add_test(NAME snes_dma_timing_tests COMMAND snes_dma_timing_tests)

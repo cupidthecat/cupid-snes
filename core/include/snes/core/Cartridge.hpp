@@ -156,6 +156,7 @@ public:
   }
   bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
   bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
+  bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
 
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;

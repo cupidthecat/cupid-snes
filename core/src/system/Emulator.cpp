@@ -9,6 +9,7 @@
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <limits>

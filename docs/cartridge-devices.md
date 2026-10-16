@@ -69,3 +69,5 @@ Local 1,800-frame checks produced visible output and non-silent audio for Super 
 [Controllers and cartridge slots](controllers-and-slots.md) describes mouse, multitap, BS slot boards, and combined Sufami Turbo support. [S-DD1, DMA timing, and video output](dma-video-and-sdd1.md) covers decompression, bank switching, expanded ROM layouts, and video changes.
 
 [Original hardware support](original-hardware.md) covers SA-1, Super FX/FX2, DSP-3/4, Cx4, SPC7110 and its RTC, and BS-X. ST011 executes its internal program when firmware is supplied and otherwise retains a limited packet interface. ST018 can execute supplied ARM firmware through its clocked CPU bridge; [ST018 firmware execution](st018.md) describes its memory map and validation limits. [Cx4 processor execution](cx4.md) describes its supplied data ROM, program execution, DMA, and CPU bus ownership. Register and mapper coverage does not establish full system compatibility.
+
+[SPC7110 and cartridge RTC](spc7110.md) covers clocked decompression, arithmetic, data ports, physical board maps, and RTC handshakes.
