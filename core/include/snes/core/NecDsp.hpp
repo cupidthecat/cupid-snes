@@ -1,6 +1,7 @@
 #pragma once
 
 #include "snes/core/CartridgeFirmware.hpp"
+#include "snes/core/NecDspBoard.hpp"
 #include "snes/core/UpdDsp.hpp"
 #include <optional>
 
@@ -9,7 +10,7 @@ class MemoryBus;
 
 class NecDsp {
 public:
-  enum class Board { LoRom, LoRomSmallRam, LoRomLargeRam, HiRom, Seta };
+  using Board = NecDspBoard::Layout;
   NecDsp(FirmwareKind firmware, Board board);
   bool LoadFirmware(std::span<const uint8_t> bytes);
   void Reset();
@@ -24,7 +25,7 @@ public:
   std::span<const uint8_t> SaveRam() const noexcept;
   void LoadRam(std::span<const uint8_t> bytes);
   bool HasSaveRam() const noexcept {
-    return board_ == Board::Seta;
+    return board_.Kind() == Board::Seta;
   }
   uint64_t Cycles() const noexcept {
     return processor_.Cycles();
@@ -32,10 +33,8 @@ public:
 
 private:
   bool SelectsDataRam(uint32_t address) const noexcept;
-  bool SelectsRom(uint32_t address) const noexcept;
-  bool StatusPort(uint32_t address) const noexcept;
   UpdDsp processor_;
-  Board board_;
+  NecDspBoard board_;
   uint32_t frequency_, masterFrequency_;
   int64_t clockBalance_ = 0;
   mutable std::array<uint8_t, 4096> savedRam_{};

@@ -8,11 +8,15 @@ The loader distinguishes cartridge processors using the mapping byte, cartridge 
 
 With cartridge firmware, DSP-1 through DSP-4 and ST010/ST011 use [clocked signal processors](clocked-cartridge-processors.md). The following DSP-2 description applies to the fallback used without firmware.
 
-DSP-2 cartridges use data ports at $20-$3F/$A0-$BF:$6000-$6FFF and $8000-$BFFF. The ports share one command stream. Reads consume queued result bytes and return $FF when the result is exhausted. Addresses $C000-$FFFF retain ROM access.
+DSP-1 through DSP-4 use the [same board wiring](clocked-cartridge-processors.md#board-addressing) with or without firmware. ROM size, SRAM presence, and LoROM/HiROM layout select the physical windows. DSP-2 data aliases share one command stream; its command-model status port reads zero and ignores writes. Unused banks return open bus.
 
-The implementation handles packed-pixel conversion to SNES bitplanes, transparent color selection, bitmap overlays, pixel reversal, unsigned 16-bit multiplication, and fixed-point bitmap scaling. Parameter RAM survives between commands. Empty bitmap requests complete without leaving the parser waiting for a payload. This defines recovery for empty requests; it does not reproduce undocumented hardware behavior for them.
+The implementation handles packed-pixel conversion to SNES bitplanes, transparent color selection, bitmap overlays, pixel reversal, unsigned 16-bit multiplication, and fixed-point bitmap scaling. Reads consume queued result bytes and return $FF after exhaustion.
 
-DSP-1 remains available through its existing board windows. Its command model maintains separate byte phases for status and data accesses. DSP-3 and DSP-4 have separate command engines and narrower cartridge windows, described in [original hardware support](original-hardware.md). The [timed competition boards](competition-cartridges.md) combine DSP-1 with selectable ROM chips and a countdown controller.
+Completing a command rewinds the output cursor. Transparency changes, no-op commands, and unknown commands retain the existing output count and bytes. Starting a new command leaves unread output available while its input is pending. Unknown commands retain the preceding input count instead of forcing immediate recovery.
+
+Overlay, reversal, and scaling keep separate length phases. Zero-length headers retain their command's pending phase, which affects a later request for that command. Input cursors wrap within the 512-byte parameter buffer; an active data phase with a zero expected count can require a complete buffer wrap. Console reset clears protocol state while retaining parameter and output RAM. Scaling can observe parameter bytes left by an earlier command or reset.
+
+DSP-1 maintains separate byte phases for status and data accesses. DSP-3 and DSP-4 have separate command engines, described in [original hardware support](original-hardware.md). The [timed competition boards](competition-cartridges.md) combine DSP-1 with selectable ROM chips and a countdown controller.
 
 ## OBC1
 
@@ -52,7 +56,7 @@ The core also exposes `LoadSufamiTurbo`, `LoadSufamiTurboFromFiles`, `SlotSramDa
 
 ## Region timing and loader behavior
 
-Country codes 2 through 12 and 18 select PAL. Other country codes select NTSC. PAL uses 312 scanlines and a 21,281,370 Hz master clock; NTSC uses 262 scanlines and the existing 21,477,272 Hz clock. The PPU's region flag and SMP synchronization use the selected region. Audio output remains 32 kHz.
+Country codes 2 through 12 and 18 select PAL. Other country codes select NTSC. PAL uses 312 scanlines and a 21,281,370 Hz master clock; NTSC uses 262 scanlines and the existing 21,477,272 Hz clock. The PPU's region flag and SMP synchronization use the selected region. Audio output remains 32,040 Hz.
 
 Small LoROM boards expose SRAM in both bank halves when the ROM-size header is at most 2 MiB and SRAM is at most 32 KiB. Larger layouts retain ROM in the upper half. An absent SRAM window returns open bus. Database overrides can explicitly disable SRAM with a size of zero. MEMSEL controls fast accesses independently of the speed advertised in the ROM header.
 
@@ -60,7 +64,7 @@ The loader rejects erased headers and headers without a cartridge-space reset ve
 
 Type-1 interleaved LoROM and HiROM images are normalized when their displaced headers identify that layout. ExHiROM also accepts independently interleaved boot and data chips in either physical order. A native HiROM header of equal or better quality prevents speculative deinterleaving. Each transformed chip must contain complete pairs of 32 KiB blocks.
 
-For 5–8 MiB ExLoROM and ExHiROM images, the loader accepts either physical chip order and places the boot chip after the four-MiB data region. Reset windows, ROM mirrors and the cartridge CRC then use the same canonical bytes. A HiROM header at $40FFC0 selects ExHiROM. GD24 and type-2 forced dump formats do not yet have a format-selection interface; their bank permutations cannot be inferred safely from a plausible header alone.
+For 5â€“8 MiB ExLoROM and ExHiROM images, the loader accepts either physical chip order and places the boot chip after the four-MiB data region. Reset windows, ROM mirrors and the cartridge CRC then use the same canonical bytes. A HiROM header at $40FFC0 selects ExHiROM. GD24 and type-2 forced dump formats do not yet have a format-selection interface; their bank permutations cannot be inferred safely from a plausible header alone.
 
 ## Validation and limits
 

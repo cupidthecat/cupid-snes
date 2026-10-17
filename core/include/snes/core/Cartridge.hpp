@@ -10,6 +10,7 @@
 #include "snes/core/Dsp3.hpp"
 #include "snes/core/Dsp4.hpp"
 #include "snes/core/NecDsp.hpp"
+#include "snes/core/NecDspBoard.hpp"
 #include "snes/core/Obc1.hpp"
 #include "snes/core/Sa1.hpp"
 #include "snes/core/SetaProtocol.hpp"
@@ -172,6 +173,9 @@ public:
   bool HasCx4Processor() const noexcept {
     return bool(cx4Processor_);
   }
+  const NecDspBoard *SignalBoard() const noexcept {
+    return signalBoard_ ? &*signalBoard_ : nullptr;
+  }
   bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
   bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
   bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
@@ -238,6 +242,7 @@ private:
   std::unique_ptr<Dsp3> dsp3_;
   std::unique_ptr<Dsp4> dsp4_;
   std::unique_ptr<Obc1> obc1_;
+  std::optional<NecDspBoard> signalBoard_;
   std::unique_ptr<NecDsp> necDsp_;
   std::unique_ptr<CompetitionBoard> competition_;
 };

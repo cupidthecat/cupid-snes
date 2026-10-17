@@ -525,6 +525,17 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
                              : firmwareKind && firmware ? firmware->Find(*firmwareKind)
                                                         : std::span<const uint8_t>{};
+  const bool seta =
+      cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
+  const auto board = seta                                         ? NecDsp::Board::Seta
+                     : cart.header_.mapping == MappingType::HiRom ? NecDsp::Board::HiRom
+                     : cart.sram_.empty()                         ? NecDsp::Board::LoRom
+                     : cart.rom_.size() <= 0x100000               ? NecDsp::Board::LoRomSmallRam
+                                                                  : NecDsp::Board::LoRomLargeRam;
+  if (cart.header_.chip == EnhancementChip::Dsp1 || cart.header_.chip == EnhancementChip::Dsp2 ||
+      cart.header_.chip == EnhancementChip::Dsp3 || cart.header_.chip == EnhancementChip::Dsp4 ||
+      (seta && !firmwareBytes.empty()))
+    cart.signalBoard_.emplace(board);
   if (firmwareKind == FirmwareKind::Cx4 && !firmwareBytes.empty()) {
     cart.cx4Processor_ = std::make_unique<Cx4Processor>(cart.rom_, cart.sram_, firmwareBytes);
     cart.cx4_.reset();
@@ -532,13 +543,6 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.armDsp_ = std::make_unique<St018Processor>(firmwareBytes);
     cart.st018_.reset();
   } else if (firmwareKind && !firmwareBytes.empty()) {
-    const bool seta =
-        cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
-    const auto board = seta                                         ? NecDsp::Board::Seta
-                       : cart.header_.mapping == MappingType::HiRom ? NecDsp::Board::HiRom
-                       : cart.sram_.empty()                         ? NecDsp::Board::LoRom
-                       : cart.rom_.size() <= 0x100000               ? NecDsp::Board::LoRomSmallRam
-                                                                    : NecDsp::Board::LoRomLargeRam;
     cart.necDsp_ = std::make_unique<NecDsp>(*firmwareKind, board);
     if (!cart.necDsp_->LoadFirmware(firmwareBytes)) {
       if (error)
@@ -658,12 +662,20 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
     return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
     return cx4Processor_->Read(cpuAddress, openBus);
-  if (necDsp_) {
-    if (necDsp_->SelectsDevice(cpuAddress))
-      return necDsp_->Read(cpuAddress);
-    if (const auto address = necDsp_->SramAddress(cpuAddress); address && !sram_.empty())
+  if (signalBoard_) {
+    if (signalBoard_->SelectsDevice(cpuAddress)) {
+      if (necDsp_)
+        return necDsp_->Read(cpuAddress);
+      const uint16_t port = signalBoard_->StatusPort(cpuAddress) ? 0xc000 : 0x8000;
+      if (dsp3_)
+        return dsp3_->Read(port);
+      if (dsp4_)
+        return dsp4_->Read(port);
+      return openBus;
+    }
+    if (const auto address = signalBoard_->SramAddress(cpuAddress); address && !sram_.empty())
       return sram_[MirrorOffset(*address, sram_.size())];
-    if (const auto address = necDsp_->RomAddress(cpuAddress); address && !rom_.empty())
+    if (const auto address = signalBoard_->RomAddress(cpuAddress); address && !rom_.empty())
       return rom_[MirrorOffset(*address, rom_.size())];
     return openBus;
   }
@@ -675,10 +687,6 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
   }
   if (bsx_)
     return bsx_->ReadCpu(cpuAddress, openBus);
-  if (dsp3_ && Dsp3::Selects(cpuAddress))
-    return dsp3_->Read(uint16_t(cpuAddress));
-  if (dsp4_ && Dsp4::Selects(cpuAddress))
-    return dsp4_->Read(uint16_t(cpuAddress));
   if (st011_ && St010::Selects(cpuAddress))
     return st011_->Read(cpuAddress);
   if (armDsp_ && St018Processor::Selects(cpuAddress))
@@ -720,12 +728,19 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
     cx4Processor_->Write(cpuAddress, value);
     return;
   }
-  if (necDsp_) {
-    if (necDsp_->SelectsDevice(cpuAddress)) {
-      necDsp_->Write(cpuAddress, value);
+  if (signalBoard_) {
+    if (signalBoard_->SelectsDevice(cpuAddress)) {
+      if (necDsp_)
+        necDsp_->Write(cpuAddress, value);
+      else if (!signalBoard_->StatusPort(cpuAddress)) {
+        if (dsp3_)
+          dsp3_->Write(0x8000, value);
+        if (dsp4_)
+          dsp4_->Write(0x8000, value);
+      }
       return;
     }
-    if (const auto address = necDsp_->SramAddress(cpuAddress); address && !sram_.empty())
+    if (const auto address = signalBoard_->SramAddress(cpuAddress); address && !sram_.empty())
       sram_[MirrorOffset(*address, sram_.size())] = value;
     return;
   }
@@ -736,14 +751,6 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
   }
   if (bsx_) {
     bsx_->WriteCpu(cpuAddress, value);
-    return;
-  }
-  if (dsp3_ && Dsp3::Selects(cpuAddress)) {
-    dsp3_->Write(uint16_t(cpuAddress), value);
-    return;
-  }
-  if (dsp4_ && Dsp4::Selects(cpuAddress)) {
-    dsp4_->Write(uint16_t(cpuAddress), value);
     return;
   }
   if (st011_ && St010::Selects(cpuAddress)) {
@@ -896,9 +903,9 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
 }
 
 bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
-  if (!necDsp_)
+  if (!signalBoard_)
     return false;
-  necDsp_->MapCpu(bus, slot);
+  signalBoard_->MapCpu(bus, slot);
   return true;
 }
 
