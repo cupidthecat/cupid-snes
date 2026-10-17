@@ -4,6 +4,7 @@ add_library(snes_core
   src/cartridge/CompetitionBoard.cpp
   src/cartridge/CompetitionCartridge.cpp
   src/cartridge/NecDsp.cpp
+  src/cartridge/NecDspBoard.cpp
   src/cartridge/Msu1.cpp
   src/cartridge/BsMemory.cpp
   src/cartridge/BroadcastCartridge.cpp

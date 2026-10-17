@@ -284,36 +284,31 @@ void Emulator::InitSubsystems() {
   srtc_.reset();
   const auto chip =
       cartridge_->HasSignalProcessor() ? EnhancementChip::None : cartridge_->Header().chip;
+  const auto *signalBoard = cartridge_->SignalBoard();
   if (chip == EnhancementChip::Dsp1) {
     dsp1_ = std::make_unique<Dsp1>();
-    auto *dsp1ptr = dsp1_.get();
-    const bool loRom = cartridge_->Header().mapping == MappingType::LoRom;
-    const bool largeLoRom = loRom && cartridge_->RomData().size() > 0x100000;
-    const uint8_t bankLo = loRom ? (largeLoRom ? 0x60 : 0x20) : 0x00;
-    const uint8_t bankHi = loRom ? (largeLoRom ? 0x6F : 0x3F) : 0x1F;
-    const uint16_t addrLo = loRom ? (largeLoRom ? 0x0000 : 0x8000) : 0x6000;
-    const uint16_t addrHi = loRom && !largeLoRom ? 0xFFFF : 0x7FFF;
-    const uint16_t statusStart = loRom ? (largeLoRom ? 0x4000 : 0xC000) : 0x7000;
-    auto dsp1Read = [dsp1ptr, statusStart](uint32_t addr, uint8_t /*openBus*/) -> uint8_t {
-      return (addr & 0xFFFF) >= statusStart ? dsp1ptr->GetSr() : dsp1ptr->GetDr();
-    };
-    auto dsp1Write = [dsp1ptr, statusStart](uint32_t addr, uint8_t data) {
-      if ((addr & 0xFFFF) < statusStart)
-        dsp1ptr->SetDr(data);
-    };
-    uint8_t slot = bus_.RegisterHandler(dsp1Read, dsp1Write);
-    bus_.MapRange(bankLo, bankHi, addrLo, addrHi, slot);
-    bus_.MapRange(bankLo | 0x80, bankHi | 0x80, addrLo, addrHi, slot);
+    auto *device = dsp1_.get();
+    const auto slot = bus_.RegisterHandler(
+        [device, signalBoard](uint32_t address, uint8_t) {
+          return signalBoard->StatusPort(address) ? device->GetSr() : device->GetDr();
+        },
+        [device, signalBoard](uint32_t address, uint8_t value) {
+          if (!signalBoard->StatusPort(address))
+            device->SetDr(value);
+        });
+    signalBoard->MapDevice(bus_, slot);
   }
-
   if (chip == EnhancementChip::Dsp2) {
     dsp2_ = std::make_unique<Dsp2>();
-    const auto slot = bus_.RegisterHandler([this](uint32_t, uint8_t) { return dsp2_->Read(); },
-                                           [this](uint32_t, uint8_t data) { dsp2_->Write(data); });
-    for (uint8_t bank : {0x20, 0xa0}) {
-      bus_.MapRange(bank, bank + 0x1f, 0x6000, 0x6fff, slot);
-      bus_.MapRange(bank, bank + 0x1f, 0x8000, 0xbfff, slot);
-    }
+    const auto slot = bus_.RegisterHandler(
+        [this, signalBoard](uint32_t address, uint8_t) -> uint8_t {
+          return signalBoard->StatusPort(address) ? 0 : dsp2_->Read();
+        },
+        [this, signalBoard](uint32_t address, uint8_t value) {
+          if (!signalBoard->StatusPort(address))
+            dsp2_->Write(value);
+        });
+    signalBoard->MapDevice(bus_, slot);
   }
   if (chip == EnhancementChip::Srtc) {
     srtc_ = std::make_unique<Srtc>();
@@ -342,16 +337,16 @@ void Emulator::InitSubsystems() {
     return true;
   });
 
-  // 4. Wire CpuIoRegisters → subsystem callbacks
+  // 4. Wire CpuIoRegisters Ã¢â€ â€™ subsystem callbacks
 
-  // $4200 NMITIMEN → IrqController + AutoJoypad
+  // $4200 NMITIMEN Ã¢â€ â€™ IrqController + AutoJoypad
   cpuIo_.SetNmitimenCallback([this](uint8_t data) {
     irq_.NmitimenUpdate(data);
     autoJoypad_.SetAutoJoypadPoll((data & 0x01) != 0);
     cpuIo_.setAutoJoypadCounter(autoJoypad_.Counter());
   });
 
-  // $420D MEMSEL → MemoryBus fast-ROM + Cartridge access timing
+  // $420D MEMSEL Ã¢â€ â€™ MemoryBus fast-ROM + Cartridge access timing
   cpuIo_.SetMemselCallback([this](bool fast) {
     bus_.SetFastRom(fast);
     if (cartridge_) {
@@ -367,7 +362,7 @@ void Emulator::InitSubsystems() {
   dma_.SetCpuBusLatches(cpu_->regs().mar, cpu_->regs().mdr);
   dma_.SetBoundaryCallback([this]() { ServicePendingHdma(); });
 
-  // $420C HDMAEN → DMA controller
+  // $420C HDMAEN Ã¢â€ â€™ DMA controller
   cpuIo_.SetHdmaEnableCallback([this](uint8_t channels) { dma_.EnableHdma(channels); });
 
   // PPU counter latch ($4201 WRIO bit-7 falling edge)
@@ -396,13 +391,13 @@ void Emulator::InitSubsystems() {
     };
   });
 
-  // $4210 RDNMI → IrqController
+  // $4210 RDNMI Ã¢â€ â€™ IrqController
   cpuIo_.SetRdnmiCallback([this]() -> bool { return irq_.Rdnmi(); });
 
-  // $4211 TIMEUP → IrqController
+  // $4211 TIMEUP Ã¢â€ â€™ IrqController
   cpuIo_.SetTimeupCallback([this]() -> bool { return irq_.Timeup(); });
 
-  // $4207-$420A H/V timer target writes → IrqController
+  // $4207-$420A H/V timer target writes Ã¢â€ â€™ IrqController
   cpuIo_.SetHVTimeChangeCallback([this](uint16_t htime, uint16_t vtime) {
     irq_.SetHTime(htime);
     irq_.SetVTime(vtime);
@@ -410,7 +405,7 @@ void Emulator::InitSubsystems() {
                    timing_.PreviousVPeriod());
   });
 
-  // 5. Wire Timing → subsystem callbacks
+  // 5. Wire Timing Ã¢â€ â€™ subsystem callbacks
 
   // V=0, H=0 - start of frame
   timing_.onFrameBegin = [this]() {
@@ -527,7 +522,7 @@ void Emulator::ResetHardware(bool warm) {
     if (dsp1_)
       dsp1_->Reset();
     if (dsp2_)
-      *dsp2_ = Dsp2{};
+      dsp2_->Reset();
     if (srtc_)
       srtc_->Reset();
     if (msu1_)
@@ -662,7 +657,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   // The previous duplicate call consumed V=1 from the next frame, causing
   // alternating 1-line / 223-line renders and incorrect scroll values.
 
-  // Submit audio (convert int16_t → float)
+  // Submit audio (convert int16_t Ã¢â€ â€™ float)
   if (audioOutput_) {
     auto &audio = audioOutputBuffer_;
     audio.sampleRate = AudioTiming::SampleRate;

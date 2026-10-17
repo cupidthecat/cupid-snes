@@ -109,9 +109,13 @@ void CartridgeMapping() {
 }
 
 void DspMapping() {
-  auto emu = Load(Rom(0x80000, 0x20, 3));
+  auto smallRam = Rom(0x80000, 0x20, 3);
+  smallRam[0x7fd8] = 5;
+  auto emu = Load(smallRam);
   Check("Small LoROM DSP data $20:8000", emu->GetBus().Read(0x208000), 0x80);
-  emu = Load(Rom(0x200000, 0x20, 3));
+  auto largeRam = Rom(0x200000, 0x20, 3);
+  largeRam[0x7fd8] = 5;
+  emu = Load(largeRam);
   Check("Large LoROM DSP data $60:0000", emu->GetBus().Read(0x600000), 0x80);
   emu = Load(Rom(0x100000, 0x21, 3));
   // All addresses below $7000 select data, including odd addresses.
@@ -130,7 +134,10 @@ void DspMapping() {
   for (const auto board :
        {Board{0x100000, 0x20, 0x208000, 0x20c000}, Board{0x200000, 0x20, 0x600000, 0x604000},
         Board{0x100000, 0x21, 0x006000, 0x007000}}) {
-    emu = Load(Rom(board.size, board.mode, 3));
+    auto image = Rom(board.size, board.mode, 3);
+    if (board.mode == 0x20)
+      image[0x7fd8] = 5;
+    emu = Load(image);
     auto &bus = emu->GetBus();
     // The command fallback exposes the low status byte before its ready byte.
     unsigned statusRead = 0;

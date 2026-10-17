@@ -36,7 +36,7 @@ Without the selected firmware, the existing command models remain available. The
 
 ## Board addressing
 
-The firmware path uses the physical board layout:
+DSP-1 through DSP-4 use the same physical board layout in firmware and command modes. The table also lists the clocked ST010, ST011, and ST018 layouts:
 
 | Board | Data and status ports | Battery or work RAM |
 | --- | --- | --- |
@@ -46,6 +46,8 @@ The firmware path uses the physical board layout:
 | HiROM | `$00-$1F/$80-$9F:$6000-$7FFF` | `$20-$3F/$A0-$BF:$6000-$7FFF` |
 | ST010/ST011 | `$60-$67/$E0-$E7:$0000-$3FFF` | `$68-$6F/$E8-$EF:$0000-$7FFF`, mirrored every 4 KiB |
 | ST018 | `$00-$3F/$80-$BF:$3800-$38FF` | Header-sized battery RAM at `$70-$7D/$F0-$FF:$0000-$FFFF`; private 16 KiB processor RAM |
+
+LoROM boards without SRAM and SRAM boards with at most 1 MiB ROM expose ROM at `$00-$1F/$80-$9F:$8000-$FFFF`. Larger LoROM SRAM boards extend that window through `$3F/$BF`. Other full banks retain open bus. HiROM keeps its upper-half and full-bank ROM windows.
 
 LoROM address bit 14 selects status. HiROM uses address bit 12. ST010/ST011 use even addresses for data and odd addresses for status. Status writes have no effect. Console WRAM retains banks `$7E-$7F`.
 

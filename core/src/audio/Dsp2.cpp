@@ -2,66 +2,92 @@
 
 #include "snes/core/Dsp2.hpp"
 
+#include <algorithm>
+
 namespace snes::core {
 
+void Dsp2::Reset() {
+  commandReady_ = true;
+  received_ = needed_ = read_ = available_ = 0;
+  lengths_ = {};
+  payloads_ = {};
+  scaledLength_ = 0;
+  transparent_ = 0;
+}
+
 uint8_t Dsp2::Read() {
-  return read_ < available_ ? output_[read_++] : 0xff;
+  if (!available_)
+    return 0xff;
+  const auto result = output_[read_];
+  read_ = (read_ + 1) & 511;
+  if (read_ == available_)
+    available_ = 0;
+  return result;
 }
 
 void Dsp2::Write(uint8_t value) {
-  if (needed_ == 0) {
+  if (commandReady_) {
     command_ = value;
     received_ = 0;
-    payload_ = false;
+    commandReady_ = false;
     switch (command_) {
-    case 0x01:
+    case 1:
       needed_ = 32;
       break;
-    case 0x03:
-    case 0x05:
-    case 0x06:
+    case 3:
+    case 5:
+    case 6:
       needed_ = 1;
       break;
-    case 0x09:
+    case 9:
       needed_ = 4;
       break;
     case 0x0d:
       needed_ = 2;
       break;
+    case 0x0f:
+      needed_ = 0;
+      break;
     default:
       break;
     }
-    return;
+  } else {
+    input_[received_] = value;
+    received_ = (received_ + 1) & 511;
   }
+  if (received_ == needed_)
+    Complete(value);
+}
 
-  input_[received_++] = value;
-  if (received_ != needed_)
-    return;
-  needed_ = 0;
-
-  if (!payload_ && (command_ == 0x05 || command_ == 0x06 || command_ == 0x0d)) {
-    length_ = input_[0];
-    scaledLength_ = command_ == 0x0d ? input_[1] : length_;
-    needed_ = command_ == 0x05 ? length_ * 2 : command_ == 0x06 ? length_ : (length_ + 1) / 2;
-    received_ = 0;
-    payload_ = true;
-    // Empty requests complete without leaving a pending payload behind.
-    if (length_ == 0 || scaledLength_ == 0) {
-      needed_ = 0;
-      available_ = read_ = 0;
+void Dsp2::Complete(uint8_t value) {
+  commandReady_ = true;
+  read_ = 0;
+  if (command_ == 5 || command_ == 6 || command_ == 0x0d) {
+    const unsigned operation = command_ == 5 ? 0 : command_ == 6 ? 1 : 2;
+    if (!payloads_[operation]) {
+      lengths_[operation] = input_[0];
+      if (operation == 2)
+        scaledLength_ = input_[1];
+      needed_ = operation == 0   ? lengths_[0] * 2
+                : operation == 1 ? lengths_[1]
+                                 : (lengths_[2] + 1) / 2;
+      received_ = 0;
+      payloads_[operation] = true;
+      if (value)
+        commandReady_ = false;
+      return;
     }
-    return;
+    payloads_[operation] = false;
   }
-
   Execute();
 }
 
 void Dsp2::Execute() {
-  read_ = available_ = 0;
+  const size_t length = lengths_[command_ == 5 ? 0 : command_ == 6 ? 1 : 2];
   switch (command_) {
   case 0x01:
     // Eight packed pixel rows become four SNES bitplanes.
-    output_.fill(0);
+    std::fill_n(output_.begin(), 32, 0);
     for (size_t row = 0; row < 8; ++row) {
       for (size_t x = 0; x < 8; ++x) {
         const unsigned pixel = (input_[row * 4 + x / 2] >> ((x & 1) ? 0 : 4)) & 15;
@@ -74,26 +100,26 @@ void Dsp2::Execute() {
     available_ = 32;
     break;
   case 0x03:
-    transparent_ = input_[0] & 15;
+    transparent_ = input_[0];
     break;
   case 0x05:
-    for (size_t i = 0; i < length_; ++i) {
+    for (size_t i = 0; i < length; ++i) {
       unsigned result = 0;
       for (unsigned shift : {0u, 4u}) {
-        const unsigned overlay = (input_[length_ + i] >> shift) & 15;
-        const unsigned pixel = overlay == transparent_ ? (input_[i] >> shift) & 15 : overlay;
+        const unsigned overlay = (input_[length + i] >> shift) & 15;
+        const unsigned pixel = overlay == (transparent_ & 15) ? (input_[i] >> shift) & 15 : overlay;
         result |= pixel << shift;
       }
       output_[i] = static_cast<uint8_t>(result);
     }
-    available_ = length_;
+    available_ = length;
     break;
   case 0x06:
-    for (size_t i = 0; i < length_; ++i) {
-      const uint8_t pixels = input_[length_ - 1 - i];
+    for (size_t i = 0; i < length; ++i) {
+      const uint8_t pixels = input_[length - 1 - i];
       output_[i] = static_cast<uint8_t>((pixels >> 4) | (pixels << 4));
     }
-    available_ = length_;
+    available_ = length;
     break;
   case 0x09: {
     const uint32_t a = input_[0] | (uint32_t(input_[1]) << 8);
@@ -104,9 +130,9 @@ void Dsp2::Execute() {
     break;
   }
   case 0x0d: {
-    const uint32_t step = length_ <= scaledLength_
+    const uint32_t step = length <= scaledLength_
                               ? 0x10000
-                              : static_cast<uint32_t>((length_ << 17) / (scaledLength_ * 2 + 1));
+                              : static_cast<uint32_t>((length << 17) / (scaledLength_ * 2 + 1));
     for (size_t i = 0; i < scaledLength_; ++i) {
       unsigned packed = 0;
       for (unsigned half = 0; half < 2; ++half) {

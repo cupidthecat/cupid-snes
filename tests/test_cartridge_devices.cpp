@@ -374,11 +374,13 @@ void NativeExtendedHiRomIsNotInterleaved() {
 void BitmapProcessor() {
   auto emu = Load(Rom(0x100000, 0x20, 5));
   auto &bus = emu->GetBus();
-  const std::array<unsigned, 4> ports{0x206000, 0x3f8001, 0xa06fff, 0xbfbfff};
+  const std::array<unsigned, 4> ports{0x308000, 0x3f8001, 0xb08fff, 0xbfbfff};
   for (unsigned port : ports)
     Check(bus.Read(port) == 0xff, "DSP-2 empty read");
-  Check(bus.Read(0x20c000) == 0xea, "DSP-2 does not replace the upper ROM window");
-  bus.Write(0x206000, 9);
+  bus.Write(0x7e0000, 0x5a);
+  Check(bus.Read(0x20c000) == 0x5a, "A no-RAM DSP-2 board leaves unused banks undriven");
+  Check(bus.Read(0x30c000) == 0, "The mapped DSP-2 status window reads zero");
+  bus.Write(ports[0], 9);
   for (unsigned i = 0; i < 4; ++i)
     bus.Write(ports[i], 0xff);
   const std::array<uint8_t, 4> product{1, 0, 0xfe, 0xff};
@@ -411,10 +413,15 @@ void BitmapProcessor() {
       bus.Write(ports[0], 0);
     for (uint8_t byte : {9, 2, 0, 3, 0})
       bus.Write(ports[0], byte);
-    Check(bus.Read(ports[0]) == 6, "Empty DSP-2 requests do not swallow the next command");
+    Check(bus.Read(ports[0]) == 6,
+          "A zero-length DSP-2 bitmap request still permits a different command");
     for (unsigned i = 0; i < 3; ++i)
       Check(bus.Read(ports[0]) == 0, "DSP-2 result after an empty request");
   }
+  bus.Write(ports[0], 5);
+  bus.Write(ports[0], 0);
+  Check(bus.Read(ports[0]) == 0xff,
+        "Repeating the zero-length command clears its retained payload phase");
   bus.Write(ports[0], 5);
   bus.Write(ports[0], 255);
   for (unsigned i = 0; i < 255; ++i)

@@ -72,7 +72,9 @@ void Dsp1StatusBytes() {
   program.Read(0xa08001, 5);
   program.Read(0x20c000, 6);
   program.Read(0xbfc001, 7);
-  program.Run(*machine, Rom(0x20, 3));
+  auto board = Rom(0x20, 3);
+  board[0x7fd8] = 5;
+  program.Run(*machine, std::move(board));
   auto &bus = machine->GetBus();
   constexpr std::array<uint8_t, 8> expected{0, 0x84, 0, 0x80, 0, 0x20, 0, 0x84};
   for (unsigned i = 0; i < expected.size(); ++i)
@@ -94,13 +96,16 @@ void CommandBuses() {
   hex.Read(0xa08000, 1);
   hex.Read(0x3f8000, 2);
   hex.Read(0xbfc000, 3);
-  hex.Run(*machine, Rom(0x30, 5, 0xb2));
+  auto hexBoard = Rom(0x30, 5, 0xb2);
+  hexBoard[0x7fd8] = 5;
+  hex.Run(*machine, std::move(hexBoard));
   auto &bus = machine->GetBus();
   Check(bus.Read(0) == 0x84 && bus.Read(1) == 52 && bus.Read(2) == 0 && bus.Read(3) == 0x84,
         "DSP-3 consumes mirrored command bytes and returns the hex-grid index through the console "
         "bus");
-  Check(bus.Read(0x409000) == 0xea && bus.Read(0x208000) == 0x80,
-        "DSP-3 port mapping preserves adjacent cartridge ROM banks");
+  bus.Write(0x7e1000, 0x5a);
+  Check(bus.Read(0x409000) == 0x5a && bus.Read(0x208000) == 0x80,
+        "DSP-3 mapping retains open bus in unused full banks");
 
   Program road;
   road.Read(0x30c000, 0);
@@ -114,7 +119,9 @@ void CommandBuses() {
   Check(bus.Read(0) == 0x80 && bus.Read(1) == 0xf1 && bus.Read(2) == 0xff && bus.Read(3) == 0xff &&
             bus.Read(4) == 0xff && bus.Read(5) == 0xff,
         "DSP-4 signed multiplication and output exhaustion are visible through all port mirrors");
-  Check(bus.Read(0x209000) == 0xea, "DSP-4 retains ROM in banks outside its narrower port range");
+  bus.Write(0x7e1000, 0x5a);
+  Check(bus.Read(0x209000) == 0x5a,
+        "A no-RAM DSP-4 board leaves banks outside its port range undriven");
 
   Program graphics;
   graphics.Write(0x807f80, 0x34);
@@ -133,6 +140,87 @@ void CommandBuses() {
   bus.Write(0x7e1234, 0x65);
   Check(bus.Read(0x001234) == 0x65 && bus.Read(0x409000) == 0xea,
         "Cx4's command windows preserve WRAM and ordinary cartridge ROM");
+}
+
+void SignalFallbackRegressions() {
+  {
+    Dsp2 chip;
+    for (uint8_t byte : {9, 3, 0, 7, 0})
+      chip.Write(byte);
+    Check(chip.Read() == 21, "DSP-2 multiplication starts an output packet");
+    chip.Write(3);
+    chip.Write(0);
+    Check(chip.Read() == 21, "A transparency command rewinds retained DSP-2 output");
+    chip.Write(0x0f);
+    Check(chip.Read() == 21, "The no-op command rewinds an unread DSP-2 packet");
+  }
+  {
+    Dsp2 chip;
+    for (uint8_t byte : {9, 3, 0, 7, 0})
+      chip.Write(byte);
+    Check(chip.Read() == 21, "An unknown-command fixture starts with an unread result");
+    chip.Write(7);
+    Check(chip.Read() == 0, "An unknown command waits for its retained input count");
+    for (uint8_t byte : {0x81, 0x82, 0x83, 0x84})
+      chip.Write(byte);
+    Check(chip.Read() == 21, "Completing an unknown packet rewinds the retained result");
+  }
+  for (uint8_t operation : {5, 6, 0x0d}) {
+    Dsp2 chip;
+    chip.Write(operation);
+    chip.Write(0);
+    if (operation == 0x0d)
+      chip.Write(0);
+    chip.Write(operation);
+    chip.Write(1);
+    if (operation == 0x0d)
+      chip.Write(1);
+    chip.Write(0xab);
+    if (operation == 5)
+      chip.Write(0xcd);
+    Check(chip.Read() == 0xff, "A zero-length request retains its command-specific length phase");
+  }
+  {
+    Dsp2 chip;
+    chip.Write(0x0d);
+    chip.Write(0);
+    chip.Write(1);
+    for (unsigned n = 0; n < 511; ++n)
+      chip.Write(n == 0 ? 0xab : uint8_t(n));
+    Check(chip.Read() == 0xff, "A zero-count active input phase waits for its entire buffer wrap");
+    chip.Write(0xff);
+    Check(chip.Read() == 0xab, "The 512th input byte completes the wrapped scaling packet");
+  }
+  Emulator::Config config;
+  config.cartridgeFirmware = std::make_shared<CartridgeFirmware>();
+  auto machine = std::make_unique<Emulator>(config);
+  Check(machine->LoadCartridge(Rom(0x20, 3)), "A DSP-1 fallback board loads");
+  auto &bus = machine->GetBus();
+  bus.Write(0x7e1234, 0x5a);
+  Check(bus.Read(0x208000) == 0x5a && bus.Read(0x408000) == 0x5a,
+        "A DSP board without SRAM leaves unused banks undriven");
+  Check(bus.Read(0x30c000) == 0 && bus.Read(0x30c001) == 0x84,
+        "The no-RAM DSP-1 board keeps its status byte phases in banks $30-$3F");
+  auto bitmap = Rom(0x20, 5);
+  bitmap[0x7fd8] = 5;
+  Check(machine->LoadCartridge(bitmap), "A DSP-2 small-RAM board loads");
+  bus.Write(0x206000, 0x5a);
+  Check(bus.Read(0x206000) == 0x5a, "DSP-2 does not occupy the lower unused window");
+  bus.Write(0x20c000, 9);
+  Check(bus.Read(0x20c000) == 0 && bus.Read(0xa0c001) == 0,
+        "DSP-2 status aliases read zero and ignore writes");
+  for (uint8_t byte : {6, 3, 0x12, 0x34, 0x56})
+    bus.Write(0x208000, byte);
+  Check(machine->Reset(), "The console can reset a DSP-2 fallback");
+  for (uint8_t byte : {0x0d, 1, 3, 0xab})
+    bus.Write(0x208000, byte);
+  for (uint8_t expected : {0xab, 3, 0x56})
+    Check(bus.Read(0x208001) == expected, "DSP-2 parameter RAM survives a console reset");
+  auto projection = Rom(0x30, 3);
+  projection[0x7fd8] = 5;
+  Check(machine->LoadCartridge(projection), "A DSP-4 small-RAM board loads");
+  Check(bus.Read(0x208000) == 0xff && bus.Read(0x20c000) == 0x80,
+        "A small-RAM DSP-4 board exposes both device windows in the lower banks");
 }
 
 void BroadcastControllerCpu() {
@@ -270,6 +358,7 @@ void BroadcastBus() {
 
 int main() {
   try {
+    SignalFallbackRegressions();
     BroadcastControllerCpu();
     Dsp1StatusBytes();
     CommandBuses();
