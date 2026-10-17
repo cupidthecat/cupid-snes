@@ -613,8 +613,8 @@ void Cartridge::Reset() {
   if (necDsp_)
     necDsp_->Reset();
   memselFast_ = false;
-  flashProgram_ = flashVendor_ = flashExtendedStatus_ = flashStatus_ = false;
-  flashCommand_ = 0;
+  if (memoryPackDevice_)
+    memoryPackDevice_->Reset();
   sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
   st010_ = St010{};
   if (header_.mapping == MappingType::St010 && !necDsp_)
@@ -783,8 +783,7 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
     return;
   }
   if (const auto offset = ResolveMemoryPackOffset(cpuAddress)) {
-    if (SelectsFlashIo(cpuAddress))
-      WriteMemoryPack(cpuAddress, *offset, value);
+    WriteMemoryPack(cpuAddress, *offset, value);
     return;
   }
   if (const auto sramOffset = ResolveSramOffset(cpuAddress);
@@ -798,6 +797,10 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (bsx_)
+    bsx_->Advance(masterClocks);
+  if (memoryPackDevice_)
+    memoryPackDevice_->Advance(masterClocks);
   if (competition_)
     competition_->Advance(masterClocks);
   if (spc7110_)
@@ -815,6 +818,10 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (bsx_)
+    bsx_->SetPal(pal);
+  if (memoryPackDevice_)
+    memoryPackDevice_->SetPal(pal);
   if (competition_)
     competition_->SetPal(pal);
   if (spc7110_)
@@ -1157,15 +1164,10 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
     return offset < rom_.size() ? std::optional<size_t>(offset) : std::nullopt;
   }
   case MappingType::BroadcastLoRom: {
-    if (broadcast24Mbit_) {
-      if ((bank & 0x40) || addr < 0x8000)
-        return std::nullopt;
-      const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
-      return MirrorOffset(chip + (size_t(bank & 0x1f) << 15) + (addr & 0x7fff), rom_.size());
-    }
-    if (bank == 0x7e || bank == 0x7f || ((bank & 0x40) ? addr >= 0x8000 : addr < 0x8000))
+    if ((bank & 0x40) || addr < 0x8000)
       return std::nullopt;
-    return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
+    const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
+    return MirrorOffset(chip + (size_t(bank & 0x1f) << 15) + (addr & 0x7fff), rom_.size());
   }
   case MappingType::BroadcastHiRom:
     if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000) || (bank & 0x20))
@@ -1271,6 +1273,8 @@ bool Cartridge::SelectsLoRomSram(uint32_t cpuAddress) const {
   const unsigned bank = (cpuAddress >> 16) & 0xff;
   if (!((bank >= 0x70 && bank <= 0x7d) || (bank >= 0xf0 && !sram_.empty())))
     return false;
+  if (header_.mapping == MappingType::BroadcastLoRom)
+    return (cpuAddress & 0xffff) < 0x8000;
   return (cpuAddress & 0xffff) < 0x8000 || header_.chip == EnhancementChip::St018 ||
          header_.mapping == MappingType::LoRomNoMad1 ||
          (header_.romSizeShift <= 11 && sram_.size() <= 0x8000);

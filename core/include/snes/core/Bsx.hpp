@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace snes::core {
 
@@ -28,13 +29,18 @@ public:
   // Reset the controller/protocol without erasing any RAM or flash. Injected
   // broadcast assets and the time provider remain installed.
   void Reset();
+  void SetPal(bool pal);
+  void Advance(uint32_t masterClocks);
   static bool Selects(uint32_t cpuAddress) noexcept;
   uint8_t ReadCpu(uint32_t cpuAddress, uint8_t openBus = 0xff);
   void WriteCpu(uint32_t cpuAddress, uint8_t value);
   bool CpuIrqPending() const noexcept;
   std::span<uint8_t> Psram() noexcept;
+  std::vector<uint8_t> FlashMetadata() const;
+  bool LoadFlashMetadata(std::span<const uint8_t> bytes);
 
-  // Both receivers independently select these logical channels. Payloads are
+  // Installing a payload opts into recorded reception; ClearStreams restores
+  // the default register interface. Both receivers select channels. Payloads are
   // copied; each has ceil(size/22) packets. At the end of a sequence, a missing
   // following asset restarts sequence zero. An empty payload removes that asset.
   // Channel zero is reserved for the clock. False means invalid channel/size.
@@ -42,8 +48,8 @@ public:
   void ClearStreams();
 
   // No filesystem, network or wall clock is consulted by the device. With no
-  // provider the clock stays at 2000-01-01 00:00:00. Each 23-byte clock record
-  // captures one provider result, shared between the two receiver data ports.
+  // provider the clock stays at 00:00:00. Each 18-byte clock record captures one
+  // provider result. Recorded reception uses a shared 23-byte calendar record.
   void SetTimeSource(std::function<BroadcastTime()> source);
 
 private:

@@ -1,4 +1,5 @@
 #include "snes/core/Bsx.hpp"
+#include "snes/core/Timing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,10 @@ struct Fixture {
     Mmc(12, 0x80);
     Commit();
   }
+  void EnableFlashWrites() {
+    Mmc(13, 0x80);
+    Commit();
+  }
   void Receiver(unsigned stream, uint16_t channel) {
     const unsigned base = 0x2188 + stream * 6;
     chip.WriteCpu(base, uint8_t(channel));
@@ -46,6 +51,32 @@ struct Fixture {
     chip.WriteCpu(base + 4, 1);
   }
 };
+
+void ControllerAndFlashRegressions() {
+  Fixture f;
+  Check(f.chip.ReadCpu(0x025000, 0x25) == 0x80,
+        "Controller reads return the register bit with zero low bits");
+  f.Mmc(2, 0);
+  f.Commit(0);
+  Check(f.chip.ReadCpu(0x025000, 0) == 0x80,
+        "A zero commit write leaves the active mapping unchanged");
+  f.Commit();
+  Check(f.chip.ReadCpu(0x025000, 0) == 0, "Bit seven commits the pending controller mapping");
+  f.chip.Reset();
+  f.chip.Psram()[0x42123] = 0x9c;
+  Check(f.chip.ReadCpu(0x216123) == 0x9c,
+        "The small HiROM PSRAM windows pack each bank into eight KiB");
+  f.Bare();
+  f.chip.WriteCpu(0xc05555, 0x40);
+  f.chip.WriteCpu(0xc11234, 0xa5);
+  Check(f.pack[0x11234] == 0xff,
+        "External write protection prevents programming a locked flash block");
+  f.chip.WriteCpu(0xc00000, 0x70);
+  Check(f.chip.ReadCpu(0xc00000) == 0xb0 && f.chip.ReadCpu(0xc00000) == 0xb0,
+        "A protected write reports persistent program failure status");
+  Check(f.chip.ReadCpu(0x005000, 0) == 0 && !f.chip.CpuIrqPending(),
+        "Flash completion does not fabricate a controller interrupt");
+}
 
 void ColdStorage() {
   std::vector<uint8_t> bios(0x100000), pack(0x100000, 255), sram(0x8000, 255);
@@ -61,13 +92,13 @@ void MapperLatchesAndStorage() {
   Fixture f;
   for (unsigned reg = 0; reg < 16; ++reg) {
     const uint8_t expected = (0x0bec & (1u << reg)) ? 0x80 : 0;
-    Check(f.chip.ReadCpu((reg << 16) | 0x5abc, 0x25) == (expected | 0x25),
-          "MMC reset state and disconnected low data-bus bits");
+    Check(f.chip.ReadCpu((reg << 16) | 0x5abc, 0x25) == expected,
+          "MMC reset state drives zero in the low data-bus bits");
   }
   f.Mmc(2, 0);
   Check(f.chip.ReadCpu(0x025000, 0) == 0x80, "Reading MMC returns the applied bit before commit");
   f.Commit(0);
-  Check(f.chip.ReadCpu(0x025000, 0) == 0, "Any write to commit applies the pending mapping");
+  Check(f.chip.ReadCpu(0x025000, 0) == 0x80, "Commit ignores writes with bit seven clear");
   f.Mmc(2, 0x7f);
   f.Commit();
   Check(f.chip.ReadCpu(0x025000, 0) == 0, "MMC writes sample only bit seven");
@@ -91,15 +122,11 @@ void MapperLatchesAndStorage() {
         "BIOS writes cannot leak into underlying PSRAM");
   Check(f.chip.ReadCpu(0x600123, 0x37) == 0x37, "The default expansion-memory hole is open bus");
   f.Mmc(15, 0x80);
-  for (unsigned bit = 0; bit < 8; ++bit)
-    Check(f.chip.ReadCpu((bit << 16) | 0x5000, 0) == (bit < 6 ? 0x80 : 0),
-          "Hidden MMC page power-up bits");
-  f.Mmc(15, 0x80);
-  Check(f.chip.ReadCpu(0x075000, 0) == 0x80,
-        "Hidden bit seven can be written after hidden access is enabled");
-  f.Mmc(15, 0);
-  Check(f.chip.ReadCpu(0x0f5000, 0) == 0,
-        "Leaving the hidden page restores the reserved-register read value");
+  Check(f.chip.ReadCpu(0x025000, 0x7f) == 0x80 && f.chip.ReadCpu(0x0f5000, 0xff) == 0,
+        "Reserved controller writes do not select a hidden register page");
+  f.Mmc(0, 0x80);
+  Check(f.chip.ReadCpu(0x005000, 0xff) == 0,
+        "The controller status remains clear after reserved writes");
   f.pack[3] = 0x26;
   f.chip.Psram()[5] = 0x51;
   f.chip.Reset();
@@ -140,9 +167,10 @@ void PsramAndPackMapping() {
         }
         if (high) {
           for (unsigned bank = 0x20; bank < 0x40; ++bank)
-            Check(f.chip.ReadCpu(((upper + bank) << 16) | 0x6123) ==
-                      f.chip.Psram()[(bank & 7) * 65536 + 0x6123],
-                  "HiROM PSRAM eight-kilobyte snippets retain their physical 64K bank stride");
+            Check(
+                f.chip.ReadCpu(((upper + bank) << 16) | 0x6123) ==
+                    f.chip.Psram()[bank * 8192 + 0x123],
+                "HiROM PSRAM snippets preserve the bank bits above their packed eight-KiB stride");
         } else {
           const unsigned end = upper ? 0x80 : 0x7e;
           for (unsigned bank = 0x70; bank < end; ++bank) {
@@ -150,7 +178,7 @@ void PsramAndPackMapping() {
                       f.chip.Psram()[(bank & 15) * 32768 + 0x123],
                   "LoROM permanent PSRAM window covers the lower halves of high banks");
             Check(f.chip.ReadCpu(((upper + bank) << 16) | 0x8123) ==
-                      f.pack[(bank & 0x3f) * 32768 + 0x123],
+                      f.pack[((bank & 0x3f) * 32768 + 0x123) & 0xfffff],
                   "The upper halves of the permanent LoROM PSRAM window remain memory pack");
           }
         }
@@ -165,7 +193,7 @@ void PsramAndPackMapping() {
       const unsigned offset = bank & 0x40 ? 0x1234 : 0x9234;
       const size_t physical =
           high ? ((bank & 31) * 65536 + offset) : ((bank & 63) * 32768 + (offset & 0x7fff));
-      Check(f.chip.ReadCpu((bank << 16) | offset) == f.pack[physical],
+      Check(f.chip.ReadCpu((bank << 16) | offset) == f.pack[physical & 0xfffff],
             "Memory pack uses committed HiROM/LoROM address lines");
     }
   }
@@ -191,6 +219,7 @@ void MappingPriority() {
     }
   }
   f.Bare(false);
+  f.EnableFlashWrites();
   f.Mmc(9, 0x80);
   f.Mmc(3, 0x80);
   f.Commit();
@@ -209,117 +238,182 @@ void MappingPriority() {
 }
 
 void FlashCommandsAndIrq() {
-  Fixture f(0x200000);
+  Fixture f;
   f.Bare();
-  f.chip.WriteCpu(0xc05555, 0x75);
-  Check(f.chip.ReadCpu(0xc0ff00) == 'M' && f.chip.ReadCpu(0xc0ff02) == 'P' &&
-            f.chip.ReadCpu(0xc0ff06) == 0x1a && f.chip.ReadCpu(0xc0ff01) == 0xff,
-        "Vendor reads identify a two-megabyte pack only at connected even offsets");
-  f.chip.WriteCpu(0xc05555, 0xff);
-  f.chip.WriteCpu(0xc05555, 0x70);
-  Check(f.chip.ReadCpu(0xc01234) == 0x80 && f.chip.ReadCpu(0xc01234) == 0xff,
-        "Compatible status has a one-read latch followed by array data");
-  f.chip.WriteCpu(0xc05555, 0x71);
-  Check(f.chip.ReadCpu(0xc00002) == 0xc0 && f.chip.ReadCpu(0xc08002) == 0xc0 &&
-            f.chip.ReadCpu(0xc00004) == 0x82 && f.chip.ReadCpu(0xc08004) == 0x82,
-        "Extended status exposes page and global status in both half-bank aliases");
-  f.chip.WriteCpu(0xc05555, 0);
+  f.EnableFlashWrites();
   f.Mmc(1, 0x80);
+  f.chip.WriteCpu(0xc05555, 0x90);
+  Check(f.chip.ReadCpu(0xc00000) == 0xb0 && f.chip.ReadCpu(0xc00001) == 0xa8 &&
+            f.chip.ReadCpu(0xc00002) == 0x63 && f.chip.ReadCpu(0xc00003) == 0x20 &&
+            f.chip.ReadCpu(0xc10000) == 0x20,
+        "Chip identifiers appear at their physical offsets with the repeated marker");
+  f.chip.WriteCpu(0xc05555, 0x70);
+  Check(f.chip.ReadCpu(0xc01234) == 0x80 && f.chip.ReadCpu(0xc01234) == 0x80,
+        "Compatible status remains selected until another read mode is requested");
+  f.chip.WriteCpu(0xc05555, 0x71);
+  Check(f.chip.ReadCpu(0xc00002) == 0x80 && f.chip.ReadCpu(0xc00004) == 0x86 &&
+            f.chip.ReadCpu(0xc08002) == 0 && f.chip.ReadCpu(0xc00006) == 0,
+        "Extended status separates block, global and reserved offsets");
   f.chip.WriteCpu(0xc05555, 0x40);
   f.chip.WriteCpu(0xc1002b, 0xa5);
-  Check(f.pack[0x1002b] == 0xa5 && f.chip.CpuIrqPending(),
-        "Byte programming completes and raises an enabled ready interrupt");
-  Check(f.chip.ReadCpu(0xc1002b) == 0x80 && f.chip.ReadCpu(0xc1002b) == 0xa5,
-        "Program status and array data remain distinct");
-  f.Mmc(1, 0);
-  Check(!f.chip.CpuIrqPending() && f.chip.ReadCpu(0x005000, 0) == 0x80,
-        "Masking ready IRQ preserves its latched flag");
-  f.Mmc(0, 0x80);
-  Check(f.chip.ReadCpu(0x005000, 0) == 0, "Writing mapper register zero acknowledges ready IRQ");
+  Check(f.pack[0x1002b] == 0xa5 && f.chip.ReadCpu(0xc1002b) == 0x80 &&
+            f.chip.ReadCpu(0x005000, 0xff) == 0 && !f.chip.CpuIrqPending(),
+        "Programming returns persistent status without creating a controller interrupt");
   f.chip.WriteCpu(0xc05555, 0x10);
   f.chip.WriteCpu(0xc1002b, 0x5a);
   Check(f.pack[0x1002b] == 0, "Flash programming can clear bits but cannot set them");
   f.chip.WriteCpu(0xc05555, 0x40);
   f.chip.WriteCpu(0xc1002b, 0xff);
   Check(f.pack[0x1002b] == 0, "A programmed FF data byte does not become a reset command");
-
-  std::fill(f.pack.begin() + 0x10000, f.pack.begin() + 0x30000, 0);
-  f.chip.WriteCpu(0xc15555, 0x20);
-  f.chip.WriteCpu(0xc17aaa, 0xd0);
-  Check(std::all_of(f.pack.begin() + 0x10000, f.pack.begin() + 0x20000,
-                    [](uint8_t v) { return v == 0xff; }) &&
-            f.pack[0x20000] == 0,
-        "Block erase affects exactly the selected physical 64K block");
-  f.chip.WriteCpu(0xc05555, 0xa7);
-  f.chip.WriteCpu(0xc05555, 0xd0);
-  Check(std::all_of(f.pack.begin(), f.pack.end(), [](uint8_t v) { return v == 0xff; }),
-        "Type-one chip erase restores the entire pack");
+  f.chip.WriteCpu(0xc05555, 0xff);
+  Check(f.chip.ReadCpu(0xc1002b) == 0, "Array mode exposes the programmed bytes");
   f.Mmc(12, 0);
   f.Commit();
   f.chip.WriteCpu(0xc05555, 0x40);
-  f.chip.WriteCpu(0xc00021, 0);
-  Check(f.pack[0x21] == 0xff, "Mapper write gating protects the flash command port");
+  f.Mmc(12, 0x80);
+  f.Commit();
+  f.chip.WriteCpu(0xc00021, 0x26);
+  Check(f.pack[0x21] == 0xff, "A disabled controller write port cannot arm a flash operation");
 
-  Fixture small;
-  small.Bare();
-  small.pack[0] = 0x23;
-  small.chip.WriteCpu(0xc05555, 0x75);
-  Check(small.chip.ReadCpu(0xc0ff06) == 0x2a,
-        "A one-megabyte pack reports its own type and capacity");
-  small.chip.WriteCpu(0xc05555, 0xa7);
-  small.chip.WriteCpu(0xc05555, 0xd0);
-  Check(small.pack[0] == 0x23, "Type-two packs do not implement the type-one chip-erase command");
-  small.Bare(false);
-  small.chip.WriteCpu(0xc05555, 0x40);
-  small.chip.WriteCpu(0xc382ab, 0x59);
-  Check(small.pack[0x182ab] == 0x59, "LoROM flash writes use the same bank mapping as reads");
+  f.chip.WriteCpu(0xc00000, 0xfb);
+  f.chip.WriteCpu(0xc01235, 0x12);
+  f.chip.WriteCpu(0xc01235, 0x34);
+  Check(f.pack[0x1235] == 0x34 && f.pack[0x1234] == 0x12,
+        "Odd-addressed word input swaps data order and toggles the destination low bit");
+  f.chip.WriteCpu(0xc00000, 0xe0);
+  f.chip.WriteCpu(0xc00000, 2);
+  f.chip.WriteCpu(0xc00000, 0);
+  for (auto [address, value] : std::array<std::pair<uint32_t, uint8_t>, 3>{
+           {{0xc000fe, 0x11}, {0xc000ff, 0x22}, {0xc00100, 0x33}}})
+    f.chip.WriteCpu(address, value);
+  f.chip.WriteCpu(0xc00000, 0x75);
+  Check(f.chip.ReadCpu(0xc000fe) == 0x11 && f.chip.ReadCpu(0xc001ff) == 0x22 &&
+            f.chip.ReadCpu(0xc00200) == 0x33,
+        "Sequential page loading wraps its byte address and consumes count plus one bytes");
+  f.chip.WriteCpu(0xc00000, 0x0c);
+  f.chip.WriteCpu(0xc01200, 2);
+  f.chip.WriteCpu(0xc201fe, 0);
+  Check(f.pack[0x201fe] == 0x11 && f.pack[0x201ff] == 0x22 && f.pack[0x20200] == 0x33,
+        "Page programming uses the queued destination and wraps the page source");
+  f.chip.WriteCpu(0xc00000, 0x75);
+  Check(f.chip.ReadCpu(0xc000fe) == 0, "Programming swaps to the other retained page buffer");
+  f.chip.WriteCpu(0xc00000, 0x72);
+  Check(f.chip.ReadCpu(0xc000fe) == 0x11, "An explicit page swap restores the previous buffer");
+  f.chip.Reset();
+  f.Bare();
+  f.chip.WriteCpu(0xc00000, 0x75);
+  Check(f.chip.ReadCpu(0xc000fe) == 0x11 && f.pack[0x201fe] == 0x11,
+        "Reset retains both page storage and flash array data");
 
-  std::vector<uint8_t> mask(0x100000, 0xff);
+  Fixture signature;
+  signature.Bare();
+  signature.chip.WriteCpu(0xc00000, 0x38);
+  signature.chip.WriteCpu(0xc00000, 0xd0);
+  signature.chip.WriteCpu(0xc00000, 0x72);
+  signature.chip.WriteCpu(0xc00000, 0x75);
+  Check(signature.chip.ReadCpu(0xc00000) == 'M' && signature.chip.ReadCpu(0xc00002) == 'P' &&
+            signature.chip.ReadCpu(0xc00004) == 4 && signature.chip.ReadCpu(0xc00006) == 0x1a &&
+            signature.chip.ReadCpu(0xc0000a) == 1 && signature.chip.ReadCpu(0xc00012) == 0x89,
+        "The signature command writes capacity and the retained serial number into a page");
+  signature.chip.WriteCpu(0xc00000, 0x99);
+  signature.chip.WriteCpu(0xc00000, 0xd0);
+  signature.chip.WriteCpu(0xc00000, 0x72);
+  Check(signature.chip.ReadCpu(0xc00000) == 1 && signature.chip.ReadCpu(0xc00003) == 0x80 &&
+            signature.chip.ReadCpu(0xc000d8) == 1 && signature.chip.ReadCpu(0xc000db) == 0x80,
+        "Erase counts occupy the device-information table's defined byte offsets");
+
+  Fixture large(0x400000);
+  large.Bare();
+  large.EnableFlashWrites();
+  large.pack[0] = 0x43;
+  large.pack[0x100000] = 0x96;
+  Check(large.chip.ReadCpu(0xd00000) == 0x43,
+        "The flash array retains its four-bit physical block identity on larger allocations");
+  large.chip.WriteCpu(0xc00000, 0x90);
+  Check(large.chip.ReadCpu(0xc00001) == 0x88,
+        "Larger flash capacities expose the larger device identifier");
+  std::vector<uint8_t> mask(0x400000, 0xff);
   mask[0xff00] = 'M';
   mask[0xff02] = 'P';
   mask[0xff06] = 0x70;
-  Bsx romPack(small.bios, mask, small.sram);
+  mask[0x100000] = 0x96;
+  Bsx romPack(large.bios, mask, large.sram);
   for (unsigned n = 1; n <= 13; ++n)
-    romPack.WriteCpu((n << 16) | 0x5000, n == 2 || n == 12 ? 0x80 : 0);
-  romPack.WriteCpu(0x0e5000, 0);
+    romPack.WriteCpu((n << 16) | 0x5000, n == 2 || n == 12 || n == 13 ? 0x80 : 0);
+  romPack.WriteCpu(0x0e5000, 0x80);
   romPack.WriteCpu(0xc05555, 0x40);
   romPack.WriteCpu(0xc00004, 0);
-  Check(mask[4] == 0xff && !romPack.CpuIrqPending(),
-        "A mask-ROM pack ignores flash write commands");
+  Check(mask[4] == 0xff && romPack.ReadCpu(0xd00000) == 0x96 && romPack.FlashMetadata().empty(),
+        "A mask ROM ignores flash commands and retains its complete address range");
+}
 
-  Fixture swapped;
-  swapped.pack[0xff00] = 'M';
-  swapped.pack[0xff02] = 'P';
-  swapped.pack[0xff06] = 0x70;
-  swapped.chip.Reset();
-  swapped.Bare();
-  swapped.chip.WriteCpu(0xc05555, 0x40);
-  swapped.chip.WriteCpu(0xc00123, 0);
-  Check(swapped.pack[0x123] == 0xff && !swapped.chip.CpuIrqPending(),
-        "Reset refreshes mask-ROM identity when the host replaces media bytes in a stable span");
-  swapped.pack[0xff06] = 0x2a;
-  swapped.chip.Reset();
-  swapped.Bare();
-  swapped.chip.WriteCpu(0xc05555, 0x40);
-  swapped.chip.WriteCpu(0xc00123, 0x4b);
-  Check(swapped.pack[0x123] == 0x4b,
-        "Replacing a mask-ROM image with writable flash and resetting restores programming");
+void FlashEraseAndMetadata() {
+  using snes::core::Timing;
+  for (bool pal : {false, true}) {
+    Fixture f;
+    f.Bare();
+    f.EnableFlashWrites();
+    f.chip.SetPal(pal);
+    f.pack[0x1234] = 0x32;
+    f.pack[0x10000] = 0x54;
+    const uint32_t frequency = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+    f.chip.WriteCpu(0xc05555, 0x20);
+    f.chip.WriteCpu(0xc01234, 0xd0);
+    Check(f.chip.ReadCpu(0xc00000) == 0 && f.pack[0x1234] == 0x32,
+          "Erase marks the chip busy without publishing its replacement data");
+    f.chip.Advance(uint32_t(uint64_t(frequency) * 3 / 10));
+    Check(f.pack[0x1234] == 0x32 && f.chip.ReadCpu(0xc00000) == 0,
+          "The erase result remains pending through the 300-millisecond deadline");
+    f.chip.Advance(1);
+    Check(f.pack[0x1234] == 0xff && f.pack[0x10000] == 0x54 && f.chip.ReadCpu(0xc00000) == 0x80 &&
+              !f.chip.CpuIrqPending(),
+          "The next regional master clock completes exactly one block without an IRQ");
+    const auto metadata = f.chip.FlashMetadata();
+    Check(metadata.size() == 96 && metadata[16] == 2 && metadata[20] == 0,
+          "Metadata records the block erase count and physical unlocked state");
+    f.chip.Reset();
+    Check(f.chip.FlashMetadata() == metadata, "Reset retains physical flash metadata");
+    Fixture restored;
+    Check(restored.chip.LoadFlashMetadata(metadata) && restored.chip.FlashMetadata() == metadata,
+          "A new cartridge can restore the complete flash metadata record");
+    auto invalid = metadata;
+    invalid[20] = 2;
+    Check(!restored.chip.LoadFlashMetadata(invalid) && restored.chip.FlashMetadata() == metadata,
+          "Invalid lock flags are rejected without changing the current metadata");
+    restored.Bare();
+    restored.chip.WriteCpu(0xc00000, 0x97);
+    restored.chip.WriteCpu(0xc00000, 0xd0);
+    restored.chip.WriteCpu(0xc00000, 0x40);
+    restored.chip.WriteCpu(0xc01234, 0x6a);
+    Check(restored.pack[0x1234] == 0x6a,
+          "Refreshing lock status exposes a restored unlocked block without overriding protection");
+  }
 }
 
 void RadioAndClock() {
   Fixture f;
-  Check(f.chip.ReadCpu(0x2196) == 0x10 && f.chip.ReadCpu(0x2197) == 0x80,
-        "Radio interface resets to its device-present and sound settings values");
+  Check(f.chip.ReadCpu(0x2196) == 0 && f.chip.ReadCpu(0x2197) == 0,
+        "Broadcast registers reset to zero");
+  f.chip.WriteCpu(0x2189, 0xff);
   f.chip.WriteCpu(0x2194, 0xff);
   f.chip.WriteCpu(0x2197, 0x53);
-  Check(f.chip.ReadCpu(0x802194) == 15 && f.chip.ReadCpu(0x3f2197) == 0x53,
-        "Radio registers mirror in system banks and mask the four-bit control register");
-  f.Receiver(0, 0x123);
-  for (unsigned i = 0; i < 300; ++i)
-    Check(f.chip.ReadCpu(0x218a) == 0 && f.chip.ReadCpu(0x218b) == 0 && f.chip.ReadCpu(0x218c) == 0,
-          "An absent broadcast remains empty without synthesized packet data or count underflow");
-  f.chip.WriteCpu(0x2189, 0xff);
-  Check(f.chip.ReadCpu(0x2189) == 0x3f, "Logical channel high byte has six connected bits");
+  Check(f.chip.ReadCpu(0x802189) == 0xff && f.chip.ReadCpu(0x802194) == 0xff &&
+            f.chip.ReadCpu(0x3f2197) == 0x53,
+        "Stored radio registers retain all eight bits across bank mirrors");
+  f.chip.WriteCpu(0x2193, 0xff);
+  Check(f.chip.ReadCpu(0x2193) == 0xf3, "Status reads clear bits two and three");
+  f.chip.WriteCpu(0x218e, 0x40);
+  f.chip.WriteCpu(0x218f, 0xff);
+  Check(f.chip.ReadCpu(0x218e) == 0xe0 && f.chip.ReadCpu(0x218f) == 0,
+        "Receiver arithmetic uses its retained registers rather than the written byte");
+  f.chip.WriteCpu(0x218f, 0x00);
+  Check(f.chip.ReadCpu(0x218e) == 0x90, "Receiver subtraction wraps to eight bits");
+  for (unsigned reg : {0x218bu, 0x218du, 0x2191u, 0x2195u, 0x2198u, 0x219au, 0x219fu}) {
+    f.chip.WriteCpu(reg, 0x3c);
+    Check(f.chip.ReadCpu(reg, 0xa5) == 0xa5, "Unreadable radio ports preserve open bus");
+  }
+  f.chip.WriteCpu(0x2192, 0x00);
+  Check(f.chip.ReadCpu(0x2190) == 0x80, "Writing the serial clock sets receiver status");
 
   unsigned calls = 0;
   BroadcastTime now{2026, 9, 15, 3, 12, 34, 56};
@@ -327,27 +421,21 @@ void RadioAndClock() {
     ++calls;
     return now;
   });
-  f.Receiver(0, 0);
-  f.Receiver(1, 0);
-  Check(f.chip.ReadCpu(0x218a) == 1 && f.chip.ReadCpu(0x2190) == 1 &&
-            f.chip.ReadCpu(0x218b) == 0x90,
-        "The clock channel offers one complete prefix packet to either receiver");
-  Check(f.chip.ReadCpu(0x218d) == 0x90 && f.chip.ReadCpu(0x218d) == 0,
-        "Prefix OR status clears when read");
-  std::array<uint8_t, 23> record{};
+  std::array<uint8_t, 18> record{};
   for (unsigned i = 0; i < record.size(); ++i) {
-    record[i] = f.chip.ReadCpu(i < 10 ? 0x218c : 0x2192);
+    record[i] = f.chip.ReadCpu(0x2192);
     now.second = 1;
   }
-  Check(calls == 1 && record[4] == 0x10 && record[5] == 1 && record[6] == 1 && record[10] == 56 &&
-            record[11] == 34 && record[12] == 12 && record[13] == 3 && record[14] == 15 &&
-            record[15] == 9 && record[16] == 0xea && record[17] == 7,
-        "Both clock data ports share one stable little-endian calendar record");
-  f.chip.ReadCpu(0x218c);
-  Check(calls == 2, "The next clock record samples the time provider again");
-  f.chip.WriteCpu(0x218c, 0);
-  Check(f.chip.ReadCpu(0x218c) == 0 && f.chip.ReadCpu(0x218a) == 0,
-        "Disabling data also gates prefix availability");
+  const std::array<uint8_t, 18> expected{0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 56, 34, 12, 0, 0, 0, 0, 0};
+  Check(calls == 1 && record == expected,
+        "An eighteen-byte clock record samples only hours, minutes and seconds");
+  f.chip.ReadCpu(0x2192);
+  Check(calls == 2, "The next record samples the time provider again");
+  f.chip.WriteCpu(0x2191, 0x55);
+  Check(f.chip.ReadCpu(0x2192) == 0 && calls == 3,
+        "Writing the clock control restarts its serial record");
+  Check(Bsx::Selects(0x80219f) && !Bsx::Selects(0x0021a0),
+        "The radio occupies all twenty-four ports");
 }
 
 void PacketStreams() {
@@ -410,16 +498,19 @@ void PacketStreams() {
 
 int main() {
   try {
+    ControllerAndFlashRegressions();
     ColdStorage();
     MapperLatchesAndStorage();
     PsramAndPackMapping();
     MappingPriority();
     FlashCommandsAndIrq();
+    FlashEraseAndMetadata();
     RadioAndClock();
     PacketStreams();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "BS-X regression: %s\n", error.what());
     return 1;
   }
-  std::puts("BS-X mapper, flash, IRQ, PSRAM, radio, clock and packet-stream checks passed");
+  std::puts(
+      "BS-X mapper, clocked flash, metadata, PSRAM, radio, clock and packet-stream checks passed");
 }

@@ -4,6 +4,14 @@
 #include <ctime>
 
 namespace snes::core {
+namespace {
+bool ValidMemoryPack(std::span<const uint8_t> bytes) {
+  const bool maskRom = bytes.size() > 0xff06 && bytes[0xff00] == 'M' && bytes[0xff02] == 'P' &&
+                       (bytes[0xff06] & 0xf0) == 0x70;
+  return bytes.empty() || bytes.size() == 0x100000 || bytes.size() == 0x200000 ||
+         bytes.size() == 0x400000 || (bytes.size() == 0x80000 && maskRom);
+}
+} // namespace
 
 void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
   bsx_.reset();
@@ -59,10 +67,9 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
   const auto &header = cart->header_;
   if (header.mapping == MappingType::Bsx) {
     auto normalizedPack = RemoveCopierHeader(pack, nullptr);
-    if (!normalizedPack.empty() && normalizedPack.size() != 0x100000 &&
-        normalizedPack.size() != 0x200000) {
+    if (!ValidMemoryPack(normalizedPack)) {
       if (error)
-        *error = "BS-X memory pack must be 1 or 2 MiB";
+        *error = "Memory pack must be 1, 2 or 4 MiB flash, or a 512 KiB mask ROM";
       return std::nullopt;
     }
     cart->InitializeBroadcast(normalizedPack);
@@ -90,12 +97,11 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
     return std::nullopt;
   }
   auto normalizedPack = RemoveCopierHeader(pack, nullptr);
-  if (!normalizedPack.empty() && normalizedPack.size() != 0x100000) {
+  if (!ValidMemoryPack(normalizedPack)) {
     if (error)
-      *error = "BS memory pack must be 1 MiB";
+      *error = "Memory pack must be 1, 2 or 4 MiB flash, or a 512 KiB mask ROM";
     return std::nullopt;
   }
-  cart->broadcast24Mbit_ = header.mapping == MappingType::LoRom24Mbit;
   cart->header_.mapping = lo ? MappingType::BroadcastLoRom : MappingType::BroadcastHiRom;
   cart->memoryPack_ = std::move(normalizedPack);
   if (cart->memoryPack_.empty())
@@ -103,6 +109,8 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
   const auto &bytes = cart->memoryPack_;
   cart->memoryPackReadOnly_ =
       bytes[0xff00] == 'M' && bytes[0xff02] == 'P' && (bytes[0xff06] & 0xf0) == 0x70;
+  cart->memoryPackDevice_ =
+      std::make_unique<BsMemory>(cart->memoryPack_, cart->memoryPackReadOnly_);
   return cart;
 }
 
@@ -114,8 +122,8 @@ bool Cartridge::LoadMemoryPack(std::span<const uint8_t> data) {
   if (memoryPackReadOnly_ || memoryPack_.empty() || data.size() != memoryPack_.size())
     return false;
   std::copy(data.begin(), data.end(), memoryPack_.begin());
-  flashCommand_ = 0;
-  flashProgram_ = flashVendor_ = flashExtendedStatus_ = flashStatus_ = false;
+  if (memoryPackDevice_)
+    memoryPackDevice_->Reset();
   if (bsx_)
     bsx_->Reset();
   return true;
@@ -129,75 +137,35 @@ std::optional<size_t> Cartridge::ResolveMemoryPackOffset(uint32_t address) const
   if (header_.mapping == MappingType::BroadcastLoRom) {
     if (bank < 0xc0 || bank > 0xef)
       return std::nullopt;
-    return ((size_t(bank & 0x1f) << 15) | (offset & 0x7fff));
+    return address & (memoryPack_.size() - 1);
   }
   if (header_.mapping == MappingType::BroadcastHiRom) {
     if (bank == 0x7e || bank == 0x7f || !(bank & 0x20) || (!(bank & 0x40) && offset < 0x8000))
       return std::nullopt;
-    return address & 0xfffff;
+    return address & (memoryPack_.size() - 1);
   }
   return std::nullopt;
 }
 
-bool Cartridge::SelectsFlashIo(uint32_t address) const {
-  if (memoryPackReadOnly_)
-    return false;
-  const auto bank = (address >> 16) & 0xff;
-  return header_.mapping == MappingType::BroadcastLoRom ? bank >= 0xc0 && bank <= 0xef
-                                                        : bank >= 0xe0;
+std::vector<uint8_t> Cartridge::MemoryPackMetadata() const {
+  if (bsx_)
+    return bsx_->FlashMetadata();
+  return memoryPackDevice_ ? memoryPackDevice_->Metadata() : std::vector<uint8_t>{};
 }
 
-uint8_t Cartridge::ReadMemoryPack(uint32_t address, size_t offset) const {
-  if (!SelectsFlashIo(address))
-    return memoryPack_[offset];
-  if (flashStatus_) {
-    flashStatus_ = false;
-    return 0x80;
-  }
-  const unsigned reg = address & 0xffff;
-  if (flashVendor_ && reg >= 0xff00 && reg <= 0xff12 && !(reg & 1)) {
-    if (reg == 0xff00)
-      return 'M';
-    if (reg == 0xff02)
-      return 'P';
-    if (reg == 0xff06)
-      return 0x2a; // One MiB memory pack.
-    return 0;
-  }
-  if (flashExtendedStatus_) {
-    if ((reg & 0x7fff) == 2)
-      return 0xc0;
-    if ((reg & 0x7fff) == 4)
-      return 0x82;
-  }
-  return memoryPack_[offset];
+bool Cartridge::LoadMemoryPackMetadata(std::span<const uint8_t> bytes) {
+  if (bsx_)
+    return bsx_->LoadFlashMetadata(bytes);
+  return memoryPackDevice_ && memoryPackDevice_->LoadMetadata(bytes);
 }
 
-void Cartridge::WriteMemoryPack(uint32_t /*address*/, size_t offset, uint8_t value) {
-  if (flashProgram_) {
-    memoryPack_[offset] &= value;
-    flashProgram_ = false;
-    return;
-  }
-  const auto previous = flashCommand_;
-  flashCommand_ = value;
-  if (value == 0xd0 && previous == 0x20) {
-    const size_t block = offset & ~size_t(0xffff);
-    std::fill_n(memoryPack_.begin() + block, 0x10000, 0xff);
-    return;
-  }
-  if (value == 0 || value == 0xff || value == 0x10 || value == 0x40 || value == 0x70 ||
-      value == 0x71) {
-    flashProgram_ = value == 0x10 || value == 0x40;
-    flashStatus_ = flashProgram_ || value == 0x70;
-    flashExtendedStatus_ = value == 0x71;
-    flashVendor_ = false;
-  } else if (value == 0x50) {
-    flashStatus_ = flashExtendedStatus_ = false;
-  } else if (value == 0x75) {
-    flashVendor_ = true;
-    flashStatus_ = false;
-  }
+uint8_t Cartridge::ReadMemoryPack(uint32_t, size_t offset) const {
+  return memoryPackDevice_ ? memoryPackDevice_->Read(uint32_t(offset)) : memoryPack_[offset];
+}
+
+void Cartridge::WriteMemoryPack(uint32_t, size_t offset, uint8_t value) {
+  if (memoryPackDevice_)
+    memoryPackDevice_->Write(uint32_t(offset), value);
 }
 
 } // namespace snes::core

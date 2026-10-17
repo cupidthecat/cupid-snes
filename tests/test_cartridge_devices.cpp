@@ -659,6 +659,9 @@ void BroadcastBoards() {
     base[header - 11] = 'J';
     base[header + 0x1a] = 0x33;
     base[header + 0x18] = 3;
+    base[0x8000] = 0x4c;
+    base[0x8001] = 0;
+    base[0x8002] = 0x80;
     base[0x8123] = 0x36;
     std::vector<uint8_t> pack(0x100000, 0xff);
     pack[0x8123] = 0x53;
@@ -671,9 +674,9 @@ void BroadcastBoards() {
               (hi ? MappingType::BroadcastHiRom : MappingType::BroadcastLoRom),
           "BS board selects the correct mapper");
     Check(bus.Read(hi ? 0x008123 : 0x018123) == 0x36, "BS base ROM read");
-    const unsigned port = hi ? 0xe08123 : 0xc18123;
+    const unsigned port = hi ? 0xe08123 : 0xc08123;
     Check(bus.Read(port) == 0x53, "BS memory pack ROM read");
-    Check(bus.Read(hi ? 0xf08123 : 0xe18123) == 0x53, "BS memory pack bank mirror");
+    Check(bus.Read(hi ? 0xf08123 : 0xe08123) == 0x53, "BS memory pack bank mirror");
     const unsigned ram = hi ? 0x206123 : 0x700123;
     bus.Write(ram, 0xa9);
     Check(bus.Read(ram) == 0xa9, "BS base SRAM remains writable");
@@ -681,44 +684,71 @@ void BroadcastBoards() {
     Check(bus.Read(0x7e8123) == 0x94, "BS mapping preserves WRAM");
     if (hi) {
       for (unsigned address : {0x208123u, 0x608123u, 0xa08123u})
-        Check(bus.Read(address) == 0x53, "HiROM pack has ROM-only aliases");
+        Check(bus.Read(address) == 0x53, "HiROM pack data is visible through each connected alias");
       bus.Write(0x208123, 0x40);
       bus.Write(0x208123, 0);
-      Check(bus.Read(port) == 0x53, "HiROM ROM-only aliases ignore flash commands");
+      Check(bus.Read(port) == 0xb0 && emu->LoadedCartridge()->MemoryPackData()[0x8123] == 0x53,
+            "HiROM aliases access the same protected flash command port");
+      bus.Write(port, 0x50);
+      bus.Write(port, 0xff);
     } else {
       bus.Write(0x7e0000, 0x62);
-      Check(bus.Read(0x408000) == 0x62, "BS LoROM full-bank upper half is open bus");
+      Check(bus.Read(0x408000) == 0x62 && bus.Read(0x406123) == 0x62 &&
+                bus.Read(0x708123) == 0x62 && bus.Read(0xf08123) == 0x62,
+            "BS LoROM leaves unused full banks and the upper SRAM halves open");
     }
     bus.Write(port, 0x40);
     bus.Write(port, 0x0f);
-    Check(bus.Read(port) == 0x80 && bus.Read(port) == 3,
-          "Flash byte programming and one-shot status");
+    Check(bus.Read(port) == 0xb0 && bus.Read(port) == 0xb0 &&
+              emu->LoadedCartridge()->MemoryPackData()[0x8123] == 0x53,
+          "A slot's write-protect input rejects writes to locked blocks");
+    auto metadata = emu->LoadedCartridge()->MemoryPackMetadata();
+    for (unsigned block = 0; block < 16; ++block)
+      metadata[20 + block * 5] = 0;
+    Check(emu->LoadMemoryPackMetadata(metadata), "Downloaded block-lock metadata restores");
+    bus.Write(port, 0x97);
+    bus.Write(port, 0xd0);
+    bus.Write(port, 0x50);
+    bus.Write(port, 0x40);
+    bus.Write(port, 0x0f);
+    Check(bus.Read(port) == 0x80 && bus.Read(port) == 0x80,
+          "An unlocked slot block programs and retains compatible status");
+    bus.Write(port, 0xff);
+    Check(bus.Read(port) == 3, "Array mode exposes the programmed flash byte");
     bus.Write(port, 0x10);
     bus.Write(port, 0xff);
-    bus.Read(port);
+    bus.Write(port, 0xff);
     Check(bus.Read(port) == 3, "Flash programming cannot set cleared bits");
     bus.Write(port, 0x71);
     const unsigned regBank = hi ? 0xe00000 : 0xc00000;
-    Check(bus.Read(regBank + 2) == 0xc0 && bus.Read(regBank + 0x8004) == 0x82,
-          "Flash page and global status");
-    bus.Write(port, 0x75);
-    Check(bus.Read(regBank + 0xff00) == 'M' && bus.Read(regBank + 0xff02) == 'P' &&
-              bus.Read(regBank + 0xff06) == 0x2a,
-          "Flash vendor identity reports one MiB");
+    Check(bus.Read(regBank + 2) == 0xc0 && bus.Read(regBank + 4) == 0x86 &&
+              bus.Read(regBank + 0x8004) == 0,
+          "Flash block and global status have distinct physical offsets");
+    bus.Write(port, 0x90);
+    Check(bus.Read(regBank) == 0xb0 && bus.Read(regBank + 1) == 0xa8,
+          "Chip identifiers report the connected flash capacity");
     bus.Write(port, 0xff);
     bus.Write(port, 0x20);
     bus.Write(port, 0xd0);
-    Check(bus.Read(port) == 0xff, "Flash block erase restores ones");
-    Check(bus.Read(hi ? 0xe18123 : 0xc38123) == 0x72, "Block erase preserves adjacent block");
+    Check(bus.Read(port) == 0, "Block erase reports busy before its delay completes");
+    for (unsigned field = 0; field < 20; ++field)
+      emu->StepFrame();
+    bus.Write(port, 0xff);
+    Check(bus.Read(port) == 0xff, "Console clocks complete the flash block erase");
+    Check(bus.Read(hi ? 0xe18123 : 0xc18123) == 0x72, "Block erase preserves the adjacent block");
     bus.Write(port, 0x40);
     bus.Write(port, 0x64);
-    bus.Read(port);
+    bus.Write(port, 0xff);
+    const auto savedMetadata = emu->LoadedCartridge()->MemoryPackMetadata();
     const auto data = emu->LoadedCartridge()->MemoryPackData();
     const std::vector<uint8_t> saved(data.begin(), data.end());
     Check(!emu->LoadMemoryPack(std::span(saved).first(50)), "Reject short memory-pack save");
     Check(bus.Read(port) == 0x64, "Invalid save leaves memory pack intact");
     Check(emu->LoadBroadcastCartridge(base, {}, &error), "Blank memory pack loads");
     Check(emu->LoadMemoryPack(saved) && bus.Read(port) == 0x64, "Memory pack save round trip");
+    Check(emu->LoadMemoryPackMetadata(savedMetadata) &&
+              emu->LoadedCartridge()->MemoryPackMetadata() == savedMetadata,
+          "Flash lock state and erase counts restore beside the array save");
     base[header + 0x1a] = 0;
     Check(!emu->LoadBroadcastCartridge(base, pack, &error),
           "Reject a base without slot identification");

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "snes/core/BsMemory.hpp"
 #include "snes/core/Bsx.hpp"
 #include "snes/core/CompetitionBoard.hpp"
 #include "snes/core/Cx4.hpp"
@@ -183,6 +184,8 @@ public:
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);
   std::span<const uint8_t> MemoryPackData() const noexcept;
   bool LoadMemoryPack(std::span<const uint8_t> data);
+  std::vector<uint8_t> MemoryPackMetadata() const;
+  bool LoadMemoryPackMetadata(std::span<const uint8_t> bytes);
   bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data);
   bool SetBroadcastTimeSource(std::function<BroadcastTime()> source);
   std::vector<uint8_t> SaveRtc() {
@@ -206,7 +209,6 @@ private:
   std::optional<size_t> ResolveSramOffset(uint32_t cpuAddress) const;
   bool SelectsLoRomSram(uint32_t cpuAddress) const;
   std::optional<size_t> ResolveMemoryPackOffset(uint32_t cpuAddress) const;
-  bool SelectsFlashIo(uint32_t cpuAddress) const;
   uint8_t ReadMemoryPack(uint32_t cpuAddress, size_t offset) const;
   void WriteMemoryPack(uint32_t cpuAddress, size_t offset, uint8_t value);
 
@@ -221,12 +223,7 @@ private:
   size_t slotOffset_[2]{};
   std::vector<uint8_t> memoryPack_;
   bool memoryPackReadOnly_ = false;
-  bool broadcast24Mbit_ = false;
-  bool flashProgram_ = false;
-  bool flashVendor_ = false;
-  bool flashExtendedStatus_ = false;
-  mutable bool flashStatus_ = false;
-  uint8_t flashCommand_ = 0;
+  std::unique_ptr<BsMemory> memoryPackDevice_;
   std::array<uint8_t, 8> sdd1Registers_{0, 0, 0, 0, 0, 1, 2, 3};
   St010 st010_;
   std::unique_ptr<Spc7110> spc7110_;

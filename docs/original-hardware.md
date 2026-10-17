@@ -15,7 +15,7 @@ Existing LoROM, HiROM, extended and special boards, DSP-1/2, OBC1, S-RTC, S-DD1,
 | Cx4 | HG51B cartridge-program execution at 20 MHz with supplied data ROM, 24-bit registers and instructions, cache pages, delayed bus transfers, DMA, work RAM, ROM ownership, CPU IRQ and vector controls, and board addressing. | Without data firmware, the immediate command adapter remains. Generated instruction and board checks cover the tested behavior; complete game compatibility and physical chip timings remain unverified. See [Cx4 processor execution](cx4.md). |
 | SPC7110/RTC | Clocked decompression and arithmetic, three compressed graphics modes, prefetched data ports, physical ROM/RAM maps, queued operations, and the serial RTC with oscillator timing and calendar controls. | Generated timelines cover processor, coding, memory, and RTC state. Complete game compatibility and measured physical-chip timings remain unverified. See [SPC7110 and cartridge RTC](spc7110.md). |
 | S-RTC | Numeric calendar programming, live serial reads, a one-Hz oscillator driven by console clocks, reset retention, erased battery RAM, slow/fast ExHiROM board detection, and persistent clock saves. | Generated calendar, clock, port, and elapsed-time checks cover the exercised behavior. Complete game compatibility and physical RTC measurements remain unverified. See [S-RTC cartridge clock](srtc.md). |
-| BS-X | BIOS overlay, latched MMC bits, 512 KiB PSRAM, 32 KiB battery SRAM, flash mapping and commands, ready IRQ, radio registers, calendar packets, and two independent recorded-data receivers. | Flash completion is synchronous. Block-lock recovery, physical /WP/CIC behavior, undocumented hidden-bit remapping, live reception, and SoundLink audio remain unimplemented. |
+| BS-X | BIOS overlay, latched controller bits, 512 KiB PSRAM, 32 KiB battery SRAM, shared slot flash commands, protection and persistent metadata, clocked block erase, radio registers, serial time, and optional recorded receivers. | Live reception, SoundLink audio, and measured physical chip timings remain unverified. See [broadcast controllers and memory packs](broadcast-memory.md). |
 | ST011 | Clocked uPD96050 execution with supplied firmware, host ports, and shared 4 KiB processor RAM with battery saves. | Without firmware, a limited packet model handles board downloads, ready status, and known result-byte writes without shogi calculations. |
 | ST018 | ARM firmware execution at 21.44 MHz, banked registers and status, instruction prefetch, program/data ROM, work RAM, timed CPU mailboxes, reset delay, signal/timer registers, and header-sized battery RAM. | Without firmware, a limited startup adapter remains. Generated processor and bridge checks and two 6,000-field game replays cover the tested sequences; complete game compatibility and physical chip timings remain unverified. See [ST018 firmware execution](st018.md). |
 
@@ -63,7 +63,7 @@ Sprite overflow is evaluated during the current frame, even when OBJ is absent f
 
 ## BS-X host interface
 
-The ordinary loader recognizes a 1 MiB BS-X BIOS and supplies a blank 1 MiB pack. `LoadBroadcastCartridge` also accepts a separate 1 or 2 MiB pack. BIOS and broadcast files are not included.
+The ordinary loader recognizes a 1 MiB BS-X BIOS and supplies a blank 1 MiB pack. `LoadBroadcastCartridge` also accepts a separate 512 KiB mask ROM or a 1, 2, or 4 MiB pack. BIOS and broadcast files are not included.
 
 ```cpp
 std::string error;
@@ -78,13 +78,13 @@ emulator.SetBroadcastTimeSource([] {
 });
 ```
 
-Channel zero supplies the clock. Other installed channels expose 22-byte packets, including padding on a partial final packet. Receivers keep independent cursors and prefix flags. A missing channel has no packets; it does not synthesize a broadcast. The default cartridge clock uses host local time, while the standalone device and tests can inject a deterministic clock.
+The default radio interface supplies an eighteen-byte serial time record at `$2192`. Installing a payload opts into recorded reception: channel zero supplies a calendar record, and other installed channels expose 22-byte packets, including padding on a partial final packet. Receivers keep independent cursors and prefix flags. Standalone callers restore the default interface with `Bsx::ClearStreams`. The cartridge clock uses host local time, while the standalone device and tests can inject a deterministic clock.
 
-The memory controller follows the documented [MCC register and mapping behavior](https://wiki.superfamicom.org/bs-x-mmio), including D7-only registers, pending versus applied bits, BIOS mirrors, PSRAM snippets, and expansion holes. The implementation keeps these independently tested cases separate from the common-path differential comparison.
+The memory controller exposes D7-only registers, pending and applied mapping bits, BIOS mirrors, PSRAM snippets, and expansion holes. A commit requires D7 high. Flash protection, status modes, page buffers, erase timing, and `.flash.meta` persistence are described in [broadcast controllers and memory packs](broadcast-memory.md).
 
 ## Validation scope
 
-The current Windows Release build passes all 60 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
+The current Windows Release build passes all 61 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
 
 Run the complete test set with:
 
