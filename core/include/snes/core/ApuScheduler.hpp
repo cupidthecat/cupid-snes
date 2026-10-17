@@ -1,9 +1,5 @@
-// snes emulator
-// core/include/snes/core/ApuScheduler.hpp
-// CPU and APU clock synchronization.
+// CPU and APU clock synchronization on one thread.
 
-// ApuScheduler.hpp - CPU ↔ APU synchronization (single-threaded)
-//
 // Converts CPU master clock cycles to SPC700 (SMP) cycles using a
 // Bresenham-style accumulator.  After each CPU instruction (or batch),
 // call Run() to step the SMP/DSP proportionally.
@@ -31,48 +27,48 @@
 namespace snes::core {
 
 struct ApuScheduler {
-    // Clock frequencies (Hz)
-    static constexpr uint64_t kMasterClockRate = 21477272;  // ~21.477 MHz
-    static constexpr uint64_t kSmpClockRate = Smp::kClockFrequency;
+  // Clock frequencies (Hz)
+  static constexpr uint64_t kMasterClockRate = 21477272; // ~21.477 MHz
+  static constexpr uint64_t kSmpClockRate = Smp::kClockFrequency;
 
-    // State
-    uint64_t accumulator    = 0;  // Fractional SMP-cycle remainder
-    uint64_t smpTargetCycle = 0;  // Running total of SMP cycles owed
+  // State
+  uint64_t accumulator = 0;    // Fractional SMP-cycle remainder
+  uint64_t smpTargetCycle = 0; // Running total of SMP cycles owed
 
-    // Reset - call when power-cycling or loading a new game.
-    // Also resets the SMP itself.
-    void Reset(Smp& smp) {
-        accumulator    = 0;
-        smpTargetCycle = 0;
-        smp.Power();
-    }
+  // Reset - call when power-cycling or loading a new game.
+  // Also resets the SMP itself.
+  void Reset(Smp &smp) {
+    accumulator = 0;
+    smpTargetCycle = 0;
+    smp.Power();
+  }
 
-    // Run - call after the CPU consumes `masterClocks` master clocks.
-    //
-    // Converts master clocks → SMP clocks with exact fractional tracking,
-    // then runs the SMP until it catches up.
-    //
-    //   smpClocks = masterClocks × kSmpClockRate / kMasterClockRate
-    //
-    // The remainder is carried in `accumulator` so no cycles are lost.
-    void Run(Smp& smp, uint32_t masterClocks) {
-        accumulator += static_cast<uint64_t>(masterClocks) * kSmpClockRate;
-        uint64_t smpClocks = accumulator / kMasterClockRate;
-        accumulator %= kMasterClockRate;
-        smpTargetCycle += smpClocks;
+  // Run - call after the CPU consumes `masterClocks` master clocks.
+  //
+  // Converts master clocks → SMP clocks with exact fractional tracking,
+  // then runs the SMP until it catches up.
+  //
+  //   smpClocks = masterClocks × kSmpClockRate / kMasterClockRate
+  //
+  // The remainder is carried in `accumulator` so no cycles are lost.
+  void Run(Smp &smp, uint32_t masterClocks) {
+    accumulator += static_cast<uint64_t>(masterClocks) * kSmpClockRate;
+    uint64_t smpClocks = accumulator / kMasterClockRate;
+    accumulator %= kMasterClockRate;
+    smpTargetCycle += smpClocks;
 
-        smp.RunUntil(smpTargetCycle);
-    }
+    smp.RunUntil(smpTargetCycle);
+  }
 
-    // Convenience - compute the SMP target without running.
-    // Useful for inspection / testing.
-    uint64_t Advance(uint32_t masterClocks) {
-        accumulator += static_cast<uint64_t>(masterClocks) * kSmpClockRate;
-        uint64_t smpClocks = accumulator / kMasterClockRate;
-        accumulator %= kMasterClockRate;
-        smpTargetCycle += smpClocks;
-        return smpTargetCycle;
-    }
+  // Convenience - compute the SMP target without running.
+  // Useful for inspection / testing.
+  uint64_t Advance(uint32_t masterClocks) {
+    accumulator += static_cast<uint64_t>(masterClocks) * kSmpClockRate;
+    uint64_t smpClocks = accumulator / kMasterClockRate;
+    accumulator %= kMasterClockRate;
+    smpTargetCycle += smpClocks;
+    return smpTargetCycle;
+  }
 };
 
 } // namespace snes::core

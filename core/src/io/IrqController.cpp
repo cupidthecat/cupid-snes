@@ -1,9 +1,5 @@
-// snes emulator
-// core/src/io/IrqController.cpp
 // NMI and IRQ timing, latches, and CPU line state.
 
-// IrqController.cpp - SNES NMI / IRQ dispatch implementation
-//
 // Interrupt evaluation, register holds, and instruction-boundary dispatch.
 
 #include "snes/core/IrqController.hpp"
@@ -13,40 +9,40 @@ namespace snes::core {
 // Construction & Reset
 
 IrqController::IrqController() {
-    Reset();
+  Reset();
 }
 
 void IrqController::Reset() {
-    nmiEnable_     = false;
-    nmiLine_       = false;
-    nmiValid_      = false;
-    nmiHold_       = false;
-    nmiTransition_ = false;
+  nmiEnable_ = false;
+  nmiLine_ = false;
+  nmiValid_ = false;
+  nmiHold_ = false;
+  nmiTransition_ = false;
 
-    hirqEnable_    = false;
-    virqEnable_    = false;
-    irqEnable_     = false;
-    irqLine_       = false;
-    irqValid_      = false;
-    irqHold_       = false;
-    irqTransition_ = false;
+  hirqEnable_ = false;
+  virqEnable_ = false;
+  irqEnable_ = false;
+  irqLine_ = false;
+  irqValid_ = false;
+  irqHold_ = false;
+  irqTransition_ = false;
 
-    htimeRaw_ = 0x1FF;
-    htimeMc_  = static_cast<uint16_t>((0x1FF + 1) << 2);  // 2048
-    vtime_    = 0x1FF;
+  htimeRaw_ = 0x1FF;
+  htimeMc_ = static_cast<uint16_t>((0x1FF + 1) << 2); // 2048
+  vtime_ = 0x1FF;
 
-    irqLock_  = false;
+  irqLock_ = false;
 }
 
 // H/V timer configuration
 
 void IrqController::SetHTime(uint16_t raw9bit) noexcept {
-    htimeRaw_ = raw9bit & 0x1FF;
-    htimeMc_  = static_cast<uint16_t>((htimeRaw_ + 1) << 2);
+  htimeRaw_ = raw9bit & 0x1FF;
+  htimeMc_ = static_cast<uint16_t>((htimeRaw_ + 1) << 2);
 }
 
 void IrqController::SetVTime(uint16_t raw9bit) noexcept {
-    vtime_ = raw9bit & 0x1FF;
+  vtime_ = raw9bit & 0x1FF;
 }
 
 // Poll - called every 4 master clocks by the timing system
@@ -140,29 +136,29 @@ void IrqController::PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t
 //
 
 void IrqController::NmitimenUpdate(uint8_t data) {
-    bool oldNmiEnable = nmiEnable_;
+  bool oldNmiEnable = nmiEnable_;
 
-    // Decode enable bits
-    hirqEnable_ = (data & 0x10) != 0;
-    virqEnable_ = (data & 0x20) != 0;
-    irqEnable_  = hirqEnable_ || virqEnable_;
-    nmiEnable_  = (data & 0x80) != 0;
+  // Decode enable bits
+  hirqEnable_ = (data & 0x10) != 0;
+  virqEnable_ = (data & 0x20) != 0;
+  irqEnable_ = hirqEnable_ || virqEnable_;
+  nmiEnable_ = (data & 0x80) != 0;
 
-    // NMI enable rising edge while NMI line is already active → immediate fire
-    if (!oldNmiEnable && nmiEnable_ && nmiLine_) {
-        nmiTransition_ = true;
-    }
+  // NMI enable rising edge while NMI line is already active → immediate fire
+  if (!oldNmiEnable && nmiEnable_ && nmiLine_) {
+    nmiTransition_ = true;
+  }
 
-    // IRQ mode changes
-    if (virqEnable_ && !hirqEnable_ && irqLine_) {
-        irqTransition_ = true;
-    } else if (!irqEnable_) {
-        irqLine_       = false;
-        irqTransition_ = false;
-    }
+  // IRQ mode changes
+  if (virqEnable_ && !hirqEnable_ && irqLine_) {
+    irqTransition_ = true;
+  } else if (!irqEnable_) {
+    irqLine_ = false;
+    irqTransition_ = false;
+  }
 
-    // Lock: prevent interrupt dispatch for one lastCycle test
-    irqLock_ = true;
+  // Lock: prevent interrupt dispatch for one lastCycle test
+  irqLock_ = true;
 }
 
 // RDNMI ($4210) - read NMI flag with hold-aware clear
@@ -172,11 +168,11 @@ void IrqController::NmitimenUpdate(uint8_t data) {
 // from being cleared during the 4-clock window after assertion.
 
 bool IrqController::Rdnmi() {
-    bool result = nmiLine_;
-    if (!nmiHold_) {
-        nmiLine_ = false;
-    }
-    return result;
+  bool result = nmiLine_;
+  if (!nmiHold_) {
+    nmiLine_ = false;
+  }
+  return result;
 }
 
 // TIMEUP ($4211) - read IRQ flag with hold-aware clear
@@ -185,12 +181,12 @@ bool IrqController::Rdnmi() {
 // irqLine and irqTransition.
 
 bool IrqController::Timeup() {
-    bool result = irqLine_;
-    if (!irqHold_) {
-        irqLine_       = false;
-        irqTransition_ = false;
-    }
-    return result;
+  bool result = irqLine_;
+  if (!irqHold_) {
+    irqLine_ = false;
+    irqTransition_ = false;
+  }
+  return result;
 }
 
 // NmiTest - called from CPU lastCycle() equivalent
@@ -199,9 +195,10 @@ bool IrqController::Timeup() {
 // Clears the transition flag.
 
 bool IrqController::NmiTest() {
-    if (!nmiTransition_) return false;
-    nmiTransition_ = false;
-    return true;
+  if (!nmiTransition_)
+    return false;
+  nmiTransition_ = false;
+  return true;
 }
 
 // IrqTest - called from CPU lastCycle() equivalent
@@ -210,9 +207,10 @@ bool IrqController::NmiTest() {
 // Clears the transition flag regardless.
 
 bool IrqController::IrqTest(bool iFlagClear) {
-    if (!irqTransition_) return false;
-    irqTransition_ = false;
-    return iFlagClear;
+  if (!irqTransition_)
+    return false;
+  irqTransition_ = false;
+  return iFlagClear;
 }
 
 } // namespace snes::core

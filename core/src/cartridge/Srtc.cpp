@@ -1,5 +1,3 @@
-// snes emulator
-// core/src/cartridge/Srtc.cpp
 // Cartridge real-time clock commands and persistent calendar state.
 
 #include "snes/core/Srtc.hpp"

@@ -1,8 +1,4 @@
-// snes emulator
-// core/src/timing/Timing.cpp
 // Master clock, scanline, frame, and video-region timing.
-
-// Timing.cpp - SNES dot / scanline / frame timing implementation
 
 #include "snes/core/Timing.hpp"
 
@@ -10,47 +6,45 @@ namespace snes::core {
 
 // Construction & Reset
 
-Timing::Timing(Region region)
-    : region_(region)
-{
-    Reset();
+Timing::Timing(Region region) : region_(region) {
+  Reset();
 }
 
 void Timing::Reset() {
-    hcounter_  = 0;
-    vcounter_  = 0;
-    field_     = false;  // even field first
-    interlace_ = false;
-    interlaceInput_ = false;
-    vdisp_     = 225;
+  hcounter_ = 0;
+  vcounter_ = 0;
+  field_ = false; // even field first
+  interlace_ = false;
+  interlaceInput_ = false;
+  vdisp_ = 225;
 
-    vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
-    hperiod_ = kDotsPerLine;
-    previousHPeriod_ = hperiod_;
-    previousVPeriod_ = vperiod_;
+  vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
+  hperiod_ = kDotsPerLine;
+  previousHPeriod_ = hperiod_;
+  previousVPeriod_ = vperiod_;
 
-    masterClocksElapsed_ = 0;
-    frameCount_ = 0;
-    dramRefreshPosition_ = kDramRefreshPos;
-    hdmaSetupPosition_ = 12;
-    hdmaSetupFired_ = false;
-    halfClockPending_ = false;
+  masterClocksElapsed_ = 0;
+  frameCount_ = 0;
+  dramRefreshPosition_ = kDramRefreshPos;
+  hdmaSetupPosition_ = 12;
+  hdmaSetupFired_ = false;
+  halfClockPending_ = false;
 
-    dramRefreshFired_ = false;
-    hblankFired_      = false;
-    hdmaFired_        = false;
-    renderCycleFired_ = false;
-    nmiFired_         = false;
-    updateNextEvent();
+  dramRefreshFired_ = false;
+  hblankFired_ = false;
+  hdmaFired_ = false;
+  renderCycleFired_ = false;
+  nmiFired_ = false;
+  updateNextEvent();
 }
 
 void Timing::SetRegion(Region r) noexcept {
-    region_ = r;
-    // vperiod_ will be recalculated at the next frame boundary (tickScanline
-    // when vcounter wraps).  For immediate effect after a region change
-    // mid-frame, we also update it here.
-    vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
-    previousVPeriod_ = vperiod_;
+  region_ = r;
+  // vperiod_ will be recalculated at the next frame boundary (tickScanline
+  // when vcounter wraps).  For immediate effect after a region change
+  // mid-frame, we also update it here.
+  vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
+  previousVPeriod_ = vperiod_;
 }
 
 // Core tick
@@ -78,28 +72,28 @@ void Timing::Tick(uint32_t clocks) {
 }
 
 void Timing::tickOnce(uint8_t clocks) {
-    masterClocksElapsed_ += clocks;
-    hcounter_ += clocks;
-    const auto edge = masterClocksElapsed_;
-    if (hcounter_ >= nextEventH_)
-      dispatchScanlineEvents();
+  masterClocksElapsed_ += clocks;
+  hcounter_ += clocks;
+  const auto edge = masterClocksElapsed_;
+  if (hcounter_ >= nextEventH_)
+    dispatchScanlineEvents();
 
-    // A display callback can suspend while a debugger advances the hardware.
-    // Those calls already sampled their edges; do not sample the last one twice.
-    if (masterClocksElapsed_ != edge)
-      return;
+  // A display callback can suspend while a debugger advances the hardware.
+  // Those calls already sampled their edges; do not sample the last one twice.
+  if (masterClocksElapsed_ != edge)
+    return;
 
-    // Poll NMI and IRQ every four master clocks.
-    // Fire after wrap so hcounter_ is valid (0..hperiod-1).
-    // Bit 1 set after increment → fires every other tick → every 4 clocks.
-    if ((hcounter_ & 2) && onIrqPoll) {
-      onIrqPoll(hcounter_, vcounter_, vdisp_, hperiod_);
-    }
+  // Poll NMI and IRQ every four master clocks.
+  // Fire after wrap so hcounter_ is valid (0..hperiod-1).
+  // Bit 1 set after increment → fires every other tick → every 4 clocks.
+  if ((hcounter_ & 2) && onIrqPoll) {
+    onIrqPoll(hcounter_, vcounter_, vdisp_, hperiod_);
+  }
 
-    // Controller edges share the free-running CPU clock divider.
-    if ((masterClocksElapsed_ & 127) == 0 && onJoypadPoll) {
-      onJoypadPoll(hcounter_, vcounter_, vdisp_);
-    }
+  // Controller edges share the free-running CPU clock divider.
+  if ((masterClocksElapsed_ & 127) == 0 && onJoypadPoll) {
+    onJoypadPoll(hcounter_, vcounter_, vdisp_);
+  }
 }
 
 void Timing::dispatchScanlineEvents() {
@@ -173,112 +167,113 @@ void Timing::updateNextEvent() {
 // Scanline transition
 
 void Timing::tickScanline() {
-    // Advance V counter
-    vcounter_++;
+  // Advance V counter
+  vcounter_++;
 
-    // Sample interlace at scanline 128 for the remaining field timing.
-    if (vcounter_ == 128) {
-      interlace_ = interlaceInput_;
-      // Recalculate vperiod based on interlace + field.
-      // In interlace mode on alternating fields the frame gains one line.
-      vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
-      if (interlace_ && !field_) {
-        vperiod_ += 1; // even field in interlace has +1 scanline
-      }
+  // Sample interlace at scanline 128 for the remaining field timing.
+  if (vcounter_ == 128) {
+    interlace_ = interlaceInput_;
+    // Recalculate vperiod based on interlace + field.
+    // In interlace mode on alternating fields the frame gains one line.
+    vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
+    if (interlace_ && !field_) {
+      vperiod_ += 1; // even field in interlace has +1 scanline
     }
+  }
 
-    // Frame wrap
-    if (vcounter_ >= vperiod_) {
-      previousVPeriod_ = vperiod_;
-      vcounter_ = 0;
-      field_ = !field_;
-      frameCount_++;
-      hdmaSetupPosition_ = uint16_t(12 + (masterClocksElapsed_ & 7));
-      hdmaSetupFired_ = false;
+  // Frame wrap
+  if (vcounter_ >= vperiod_) {
+    previousVPeriod_ = vperiod_;
+    vcounter_ = 0;
+    field_ = !field_;
+    frameCount_++;
+    hdmaSetupPosition_ = uint16_t(12 + (masterClocksElapsed_ & 7));
+    hdmaSetupFired_ = false;
 
-      // Recalculate vperiod for the new frame.
-      vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
+    // Recalculate vperiod for the new frame.
+    vperiod_ = (region_ == Region::NTSC) ? kScanlinesNTSC : kScanlinesPAL;
 
-      // Fire frame-begin callback
-      if (onFrameBegin)
-        onFrameBegin();
-    }
+    // Fire frame-begin callback
+    if (onFrameBegin)
+      onFrameBegin();
+  }
 
-    // Update H period for the new scanline (short/long line logic).
-    updateHPeriod();
-    dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
+  // Update H period for the new scanline (short/long line logic).
+  updateHPeriod();
+  dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
 
-    // Reset per-scanline event flags.
-    dramRefreshFired_ = false;
-    hblankFired_      = false;
-    hdmaFired_        = false;
-    renderCycleFired_ = false;
-    nmiFired_         = false;
+  // Reset per-scanline event flags.
+  dramRefreshFired_ = false;
+  hblankFired_ = false;
+  hdmaFired_ = false;
+  renderCycleFired_ = false;
+  nmiFired_ = false;
 
-    // Fire scanline callback
-    if (onScanline) onScanline(vcounter_);
+  // Fire scanline callback
+  if (onScanline)
+    onScanline(vcounter_);
 
-    // VBlank start
-    if (vcounter_ == vdisp_) {
-      // The callback may retain this stack or cancel it during a CPU reset.
-      // Leave the event cache ready for clocks issued by the caller.
-      updateNextEvent();
-      if (onVBlankBegin)
-        onVBlankBegin();
-    }
+  // VBlank start
+  if (vcounter_ == vdisp_) {
+    // The callback may retain this stack or cancel it during a CPU reset.
+    // Leave the event cache ready for clocks issued by the caller.
+    updateNextEvent();
+    if (onVBlankBegin)
+      onVBlankBegin();
+  }
 }
 
 // H period calculation
 
 void Timing::updateHPeriod() {
-    hperiod_ = kDotsPerLine;  // 1364
+  hperiod_ = kDotsPerLine; // 1364
 
-    // NTSC non-interlace, odd field, scanline 240: short line (1360).
-    if (region_ == Region::NTSC && !interlace_ && field_ && vcounter_ == 240) {
-        hperiod_ = kDotsPerLineShort;
-    }
+  // NTSC non-interlace, odd field, scanline 240: short line (1360).
+  if (region_ == Region::NTSC && !interlace_ && field_ && vcounter_ == 240) {
+    hperiod_ = kDotsPerLineShort;
+  }
 
-    // PAL interlace, odd field, scanline 311: long line (1368).
-    if (region_ == Region::PAL && interlace_ && field_ && vcounter_ == 311) {
-        hperiod_ = kDotsPerLineLong;
-    }
+  // PAL interlace, odd field, scanline 311: long line (1368).
+  if (region_ == Region::PAL && interlace_ && field_ && vcounter_ == 311) {
+    hperiod_ = kDotsPerLineLong;
+  }
 }
 
 // Utilities
 
 uint16_t Timing::HDot() const noexcept {
-    uint16_t clocks = hcounter_;
-    // Normal and long lines stretch the dots starting at clocks 1292 and 1310.
-    // The short NTSC line has uniform four-clock dots.
-    if (hperiod_ != kDotsPerLineShort) {
-      if (hcounter_ > 1292)
-        clocks -= 2;
-      if (hcounter_ > 1310)
-        clocks -= 2;
-    }
-    return clocks / 4;
+  uint16_t clocks = hcounter_;
+  // Normal and long lines stretch the dots starting at clocks 1292 and 1310.
+  // The short NTSC line has uniform four-clock dots.
+  if (hperiod_ != kDotsPerLineShort) {
+    if (hcounter_ > 1292)
+      clocks -= 2;
+    if (hcounter_ > 1310)
+      clocks -= 2;
+  }
+  return clocks / 4;
 }
 
 uint16_t Timing::HPeriodForScanline(uint16_t scanline) const {
-    uint16_t period = kDotsPerLine;
+  uint16_t period = kDotsPerLine;
 
-    if (region_ == Region::NTSC && !interlace_ && field_ && scanline == 240) {
-        period = kDotsPerLineShort;
-    }
-    if (region_ == Region::PAL && interlace_ && field_ && scanline == 311) {
-        period = kDotsPerLineLong;
-    }
+  if (region_ == Region::NTSC && !interlace_ && field_ && scanline == 240) {
+    period = kDotsPerLineShort;
+  }
+  if (region_ == Region::PAL && interlace_ && field_ && scanline == 311) {
+    period = kDotsPerLineLong;
+  }
 
-    return period;
+  return period;
 }
 
 uint32_t Timing::MasterClocksThisFrame() const {
-    uint32_t total = 0;
-    uint16_t lines = vperiod_;
-    for (uint16_t i = 0; i < lines; ++i) {
-        total += HPeriodForScanline(i);
-    }
-    return total;
+  uint32_t total = 0;
+  uint16_t lines = vperiod_;
+  for (uint16_t i = 0; i < lines; ++i) {
+    total += HPeriodForScanline(i);
+  }
+  return total;
 }
 
 } // namespace snes::core

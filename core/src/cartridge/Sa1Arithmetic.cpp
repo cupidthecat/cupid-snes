@@ -1,4 +1,3 @@
-// snes emulator
 // SA-1 timer, arithmetic unit, and variable-width bit stream.
 #include "snes/core/Sa1.hpp"
 
@@ -27,34 +26,34 @@ void Sa1::AdvanceTimer(uint32_t masterClocks) {
 }
 
 void Sa1::StartArithmetic() {
-    const uint16_t bitsA = RegisterWord(0x51);
-    const uint16_t bitsB = RegisterWord(0x53);
-    const int64_t a = bitsA < 0x8000 ? int64_t(bitsA) : int64_t(bitsA) - 0x10000;
-    const int64_t b = bitsB < 0x8000 ? int64_t(bitsB) : int64_t(bitsB) - 0x10000;
-    const uint8_t mode = registers_[0x50] & 3;
-    if (mode & 2) {
-      const uint64_t result = arithmeticResult_ + static_cast<uint64_t>(a * b);
-      arithmeticOverflow_ = result > AccumulatorMask;
-      arithmeticResult_ = result & AccumulatorMask;
-    } else if (mode == 1) {
-      arithmeticResult_ = 0;
-      if (bitsB) {
-        int64_t quotient = a / bitsB;
-        int64_t remainder = a % bitsB;
-        if (remainder < 0) {
-          --quotient;
-          remainder += bitsB;
-        }
-        const uint32_t packed = uint16_t(quotient) | (uint32_t(remainder) << 16);
-        arithmeticResult_ = packed;
-        if (packed & 0x80000000)
-          arithmeticResult_ |= uint64_t{0xff} << 32;
+  const uint16_t bitsA = RegisterWord(0x51);
+  const uint16_t bitsB = RegisterWord(0x53);
+  const int64_t a = bitsA < 0x8000 ? int64_t(bitsA) : int64_t(bitsA) - 0x10000;
+  const int64_t b = bitsB < 0x8000 ? int64_t(bitsB) : int64_t(bitsB) - 0x10000;
+  const uint8_t mode = registers_[0x50] & 3;
+  if (mode & 2) {
+    const uint64_t result = arithmeticResult_ + static_cast<uint64_t>(a * b);
+    arithmeticOverflow_ = result > AccumulatorMask;
+    arithmeticResult_ = result & AccumulatorMask;
+  } else if (mode == 1) {
+    arithmeticResult_ = 0;
+    if (bitsB) {
+      int64_t quotient = a / bitsB;
+      int64_t remainder = a % bitsB;
+      if (remainder < 0) {
+        --quotient;
+        remainder += bitsB;
       }
-        registers_[0x51] = registers_[0x52] = 0;
-    } else {
-      arithmeticResult_ = static_cast<uint32_t>(a * b);
+      const uint32_t packed = uint16_t(quotient) | (uint32_t(remainder) << 16);
+      arithmeticResult_ = packed;
+      if (packed & 0x80000000)
+        arithmeticResult_ |= uint64_t{0xff} << 32;
     }
-    registers_[0x53] = registers_[0x54] = 0;
+    registers_[0x51] = registers_[0x52] = 0;
+  } else {
+    arithmeticResult_ = static_cast<uint32_t>(a * b);
+  }
+  registers_[0x53] = registers_[0x54] = 0;
 }
 
 uint16_t Sa1::ReadBitResult() const {

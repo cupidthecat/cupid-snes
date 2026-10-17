@@ -1,10 +1,6 @@
-// snes emulator
-// core/include/snes/core/Dma.hpp
-// DMA and HDMA controller interface.
+// Eight-channel DMA and HDMA controller interface.
 
 #pragma once
-// Dma.hpp - SNES DMA/HDMA controller (8 channels)
-//
 // The SNES has 8 DMA channels, each with its own set of registers at
 // $4300-$437F (16 bytes per channel, though only $43x0-$43xB + $43xF used).
 //

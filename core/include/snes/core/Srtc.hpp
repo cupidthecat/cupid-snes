@@ -1,5 +1,3 @@
-// snes emulator
-// core/include/snes/core/Srtc.hpp
 // Cartridge real-time clock interface.
 
 #pragma once

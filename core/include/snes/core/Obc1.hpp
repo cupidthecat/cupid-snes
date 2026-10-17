@@ -1,5 +1,3 @@
-// snes emulator
-// core/include/snes/core/Obc1.hpp
 // OBC1 object RAM and register interface.
 
 #pragma once

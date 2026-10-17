@@ -1,4 +1,3 @@
-// snes emulator
 // Super FX graphics processor and cartridge bus interface.
 #pragma once
 
@@ -36,8 +35,8 @@ public:
   bool CpuIrqPending() const noexcept;
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace snes::core

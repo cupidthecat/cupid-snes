@@ -1,9 +1,5 @@
-// snes emulator
-// core/include/snes/core/Smp.hpp
-// SMP audio processor and timer interface.
+// Sony S-SMP (CXP1100Q-1) audio processor and timer interface.
 
-// Smp.hpp - SNES Sound Module Processor (Sony S-SMP / CXP1100Q-1)
-//
 // The SMP is the SNES APU wrapper that inherits the SPC700 processor core
 // and provides:
 //   - 64 KB APU RAM
@@ -26,7 +22,7 @@
 
 namespace snes::core {
 
-class Dsp;  // Forward declaration
+class Dsp; // Forward declaration
 
 class Smp : public Spc700 {
 public:
@@ -58,143 +54,171 @@ public:
     void SynchronizeStage1(bool timersEnable, bool timersDisable);
   };
 
-    Smp();
+  Smp();
 
-    // Bus interface (Spc700 pure virtuals)
-    void    Idle() override;
-    uint8_t Read(uint16_t address) override;
-    void    Write(uint16_t address, uint8_t data) override;
+  // Bus interface (Spc700 pure virtuals)
+  void Idle() override;
+  uint8_t Read(uint16_t address) override;
+  void Write(uint16_t address, uint8_t data) override;
 
-    // CPU-side port access - called by MemoryBus for $2140-$2143
-    //
-    // portRead:  CPU reads $2140+n → returns what SMP wrote to $F4+n
-    // portWrite: CPU writes $2140+n → sets data for SMP to read from $F4+n
-    uint8_t PortRead(uint8_t port) const;
-    void    PortWrite(uint8_t port, uint8_t data);
+  // CPU-side port access - called by MemoryBus for $2140-$2143
+  //
+  // portRead:  CPU reads $2140+n → returns what SMP wrote to $F4+n
+  // portWrite: CPU writes $2140+n → sets data for SMP to read from $F4+n
+  uint8_t PortRead(uint8_t port) const;
+  void PortWrite(uint8_t port, uint8_t data);
 
-    // Timer stepping - call after each SMP bus cycle to advance timers
-    // 'clocks' is the number of ideal timer ticks for this bus operation.
-    // Default wait states: two timer ticks per complete-cycle clock.
-    void StepTimers(unsigned clocks);
+  // Timer stepping - call after each SMP bus cycle to advance timers
+  // 'clocks' is the number of ideal timer ticks for this bus operation.
+  // Default wait states: two timer ticks per complete-cycle clock.
+  void StepTimers(unsigned clocks);
 
-    // DSP connection
-    void SetDsp(Dsp& dsp) { dsp_ = &dsp; }
+  // DSP connection
+  void SetDsp(Dsp &dsp) {
+    dsp_ = &dsp;
+  }
 
-    // DSP pipeline clocks and SMP hardware clocks share the audio oscillator.
-    static constexpr uint64_t kClockFrequency = AudioTiming::DspClockRate;
-    static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
-    static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
+  // DSP pipeline clocks and SMP hardware clocks share the audio oscillator.
+  static constexpr uint64_t kClockFrequency = AudioTiming::DspClockRate;
+  static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
+  static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
 
-    // Batch execution - run SMP through exactly targetCycles.
-    // Instructions may pause within stretched bus cycles at the deadline; Step()
-    // remains available for callers that intentionally want a full instruction.
-    // DSP samples and timers are ticked automatically during bus operations.
-    void RunUntil(uint64_t targetCycles);
+  // Batch execution - run SMP through exactly targetCycles.
+  // Instructions may pause within stretched bus cycles at the deadline; Step()
+  // remains available for callers that intentionally want a full instruction.
+  // DSP samples and timers are ticked automatically during bus operations.
+  void RunUntil(uint64_t targetCycles);
 
-    // A bus cycle can pause at its midpoint to sample the CPU input ports.
-    void RunUntilHardwareClock(uint64_t targetClocks);
-    uint64_t HardwareClockCount() const noexcept {
-      return hardwareClocks_;
-    }
+  // A bus cycle can pause at its midpoint to sample the CPU input ports.
+  void RunUntilHardwareClock(uint64_t targetClocks);
+  uint64_t HardwareClockCount() const noexcept {
+    return hardwareClocks_;
+  }
 
-    // Warm reset keeps the shared audio RAM.
-    void Power(bool retainRam = false);
+  // Warm reset keeps the shared audio RAM.
+  void Power(bool retainRam = false);
 
-    // Direct access (for testing / debugging)
-    uint8_t*       Ram()       noexcept { return ram_.data(); }
-    const uint8_t* Ram() const noexcept { return ram_.data(); }
-    static constexpr size_t RamSize = 0x10000; // 64 KB
+  // Direct access (for testing / debugging)
+  uint8_t *Ram() noexcept {
+    return ram_.data();
+  }
+  const uint8_t *Ram() const noexcept {
+    return ram_.data();
+  }
+  static constexpr size_t RamSize = 0x10000; // 64 KB
 
-    static constexpr size_t IplRomSize = 64;
-    const uint8_t* IplRom() const noexcept { return iplRom_.data(); }
+  static constexpr size_t IplRomSize = 64;
+  const uint8_t *IplRom() const noexcept {
+    return iplRom_.data();
+  }
 
-    // I/O state (for testing / inspection)
-    struct IO {
-        // $00F0 - TEST register (write-only, requires P=0)
-        bool    timersDisable      = false;
-        bool    ramWritable        = true;
-        bool    ramDisable         = false;
-        bool    timersEnable       = true;
-        uint8_t externalWaitStates = 0;
-        uint8_t internalWaitStates = 0;
+  // I/O state (for testing / inspection)
+  struct IO {
+    // $00F0 - TEST register (write-only, requires P=0)
+    bool timersDisable = false;
+    bool ramWritable = true;
+    bool ramDisable = false;
+    bool timersEnable = true;
+    uint8_t externalWaitStates = 0;
+    uint8_t internalWaitStates = 0;
 
-        // $00F1 - CONTROL
-        bool    iplRomEnable       = true;
+    // $00F1 - CONTROL
+    bool iplRomEnable = true;
 
-        // $00F2 - DSPADDR
-        uint8_t dspAddr            = 0;
+    // $00F2 - DSPADDR
+    uint8_t dspAddr = 0;
 
-        // $00F8-$00F9 - auxiliary I/O (RAM-backed, no special behavior)
-        uint8_t aux4               = 0;
-        uint8_t aux5               = 0;
-    };
+    // $00F8-$00F9 - auxiliary I/O (RAM-backed, no special behavior)
+    uint8_t aux4 = 0;
+    uint8_t aux5 = 0;
+  };
 
-    IO& IoState() noexcept { return io_; }
-    const IO& IoState() const noexcept { return io_; }
+  IO &IoState() noexcept {
+    return io_;
+  }
+  const IO &IoState() const noexcept {
+    return io_;
+  }
 
-    // Port latch access for testing
-    uint8_t ApuInput(uint8_t port) const { return apuInput_[port & 3]; }
-    uint8_t CpuOutput(uint8_t port) const { return cpuOutput_[port & 3]; }
+  // Port latch access for testing
+  uint8_t ApuInput(uint8_t port) const {
+    return apuInput_[port & 3];
+  }
+  uint8_t CpuOutput(uint8_t port) const {
+    return cpuOutput_[port & 3];
+  }
 
-    // Timer access for testing/inspection
-    Timer<128>&       GetTimer0()       noexcept { return timer0_; }
-    const Timer<128>& GetTimer0() const noexcept { return timer0_; }
-    Timer<128>&       GetTimer1()       noexcept { return timer1_; }
-    const Timer<128>& GetTimer1() const noexcept { return timer1_; }
-    Timer<16>&        GetTimer2()       noexcept { return timer2_; }
-    const Timer<16>&  GetTimer2() const noexcept { return timer2_; }
+  // Timer access for testing/inspection
+  Timer<128> &GetTimer0() noexcept {
+    return timer0_;
+  }
+  const Timer<128> &GetTimer0() const noexcept {
+    return timer0_;
+  }
+  Timer<128> &GetTimer1() noexcept {
+    return timer1_;
+  }
+  const Timer<128> &GetTimer1() const noexcept {
+    return timer1_;
+  }
+  Timer<16> &GetTimer2() noexcept {
+    return timer2_;
+  }
+  const Timer<16> &GetTimer2() const noexcept {
+    return timer2_;
+  }
 
 private:
-    struct BusWait {
-        uint8_t elapsed = 0;
-        uint8_t duration = 0;
-        uint8_t timerTicks = 0;
-        uint8_t readData = 0;
-        bool sampled = false;
-    } busWait_{};
+  struct BusWait {
+    uint8_t elapsed = 0;
+    uint8_t duration = 0;
+    uint8_t timerTicks = 0;
+    uint8_t readData = 0;
+    bool sampled = false;
+  } busWait_{};
 
-    uint64_t hardwareClocks_ = 0;
+  uint64_t hardwareClocks_ = 0;
 
-    bool ExecuteBusCycle(const PendingCycle& cycle) override;
-    bool ClockBusCycle(const PendingCycle& cycle, BusWait& wait);
-    uint8_t ReadBus(uint16_t address);
-    void WriteBus(uint16_t address, uint8_t data);
+  bool ExecuteBusCycle(const PendingCycle &cycle) override;
+  bool ClockBusCycle(const PendingCycle &cycle, BusWait &wait);
+  uint8_t ReadBus(uint16_t address);
+  void WriteBus(uint16_t address, uint8_t data);
 
-    // Internal I/O dispatch
-    uint8_t readIO(uint16_t address);
-    void    writeIO(uint16_t address, uint8_t data);
+  // Internal I/O dispatch
+  uint8_t readIO(uint16_t address);
+  void writeIO(uint16_t address, uint8_t data);
 
-    // Internal RAM access (handles IPL ROM overlay)
-    uint8_t readRam(uint16_t address) const;
-    void    writeRam(uint16_t address, uint8_t data);
+  // Internal RAM access (handles IPL ROM overlay)
+  uint8_t readRam(uint16_t address) const;
+  void writeRam(uint16_t address, uint8_t data);
 
-    // State
+  // State
 
-    // 64 KB APU RAM
-    std::array<uint8_t, RamSize> ram_{};
+  // 64 KB APU RAM
+  std::array<uint8_t, RamSize> ram_{};
 
-    // 64-byte IPL boot ROM
-    std::array<uint8_t, IplRomSize> iplRom_{};
+  // 64-byte IPL boot ROM
+  std::array<uint8_t, IplRomSize> iplRom_{};
 
-    // I/O register state
-    IO io_{};
+  // I/O register state
+  IO io_{};
 
-    // Port latches - dual-latch architecture
-    // apuInput_[0-3]:  CPU→SMP direction (CPU writes, SMP reads $F4-$F7)
-    // cpuOutput_[0-3]: SMP→CPU direction (SMP writes $F4-$F7, CPU reads)
-    std::array<uint8_t, 4> apuInput_{};   // written by CPU portWrite()
-    std::array<uint8_t, 4> cpuOutput_{};  // written by SMP writeIO($F4-$F7)
+  // Port latches - dual-latch architecture
+  // apuInput_[0-3]:  CPU→SMP direction (CPU writes, SMP reads $F4-$F7)
+  // cpuOutput_[0-3]: SMP→CPU direction (SMP writes $F4-$F7, CPU reads)
+  std::array<uint8_t, 4> apuInput_{};  // written by CPU portWrite()
+  std::array<uint8_t, 4> cpuOutput_{}; // written by SMP writeIO($F4-$F7)
 
-    // Each elapsed complete-cycle clock advances one DSP pipeline phase.
-    void tickDsp();
+  // Each elapsed complete-cycle clock advances one DSP pipeline phase.
+  void tickDsp();
 
-    // DSP pointer (set via SetDsp)
-    Dsp* dsp_ = nullptr;
+  // DSP pointer (set via SetDsp)
+  Dsp *dsp_ = nullptr;
 
-    // Three SPC700 timers
-    Timer<128> timer0_{};  // T0: ~8 kHz
-    Timer<128> timer1_{};  // T1: ~8 kHz
-    Timer<16>  timer2_{};  // T2: ~64 kHz
+  // Three SPC700 timers
+  Timer<128> timer0_{}; // T0: ~8 kHz
+  Timer<128> timer1_{}; // T1: ~8 kHz
+  Timer<16> timer2_{};  // T2: ~64 kHz
 };
 
 } // namespace snes::core
