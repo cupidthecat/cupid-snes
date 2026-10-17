@@ -6,6 +6,8 @@ Release and RelWithDebInfo builds enable link-time optimization when the compile
 
 Pass `-DSNES_ENABLE_LTO=OFF` when configuring a build to compare throughput or investigate a compiler-specific problem. Use separate build directories and keep the compiler, build type, game inputs, and audio settings the same for both runs.
 
+The Windows CI job keys its SDL cache from `cmake/SDL3.cmake`. Changes to release compiler settings can reuse the dependency build. CMake still configures the pinned SDL version and its static-library options before configuring the core.
+
 An alternating six-run check of Kirby Super Star used GCC 15 Release builds and 300 fields per run. Median throughput increased from 61.42 to 69.54 fields/s with link-time optimization, a 13.2% gain. Each run reached the same master-clock count, produced the same number of audible samples, and retained identical final save RAM. This short startup sequence measures local throughput; its output counts do not establish complete game compatibility.
 
 ## ST018 firmware replay, 2026-10-16
