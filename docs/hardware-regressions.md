@@ -12,7 +12,7 @@ DSP-1 data and status windows depend on the cartridge board:
 | LoROM, over 1 MiB | $60-$6F, $E0-$EF | $0000-$3FFF | $4000-$7FFF |
 | HiROM | $00-$1F, $80-$9F | $6000-$6FFF | $7000-$7FFF |
 
-Odd and even addresses in a data window both access data. Status reads expose the ready flag without consuming command data, and status writes are ignored. Tests send a multiplication command through each layout, including its upper-bank mirror.
+Odd and even addresses in a data window both access data. In the command fallback, status reads alternate between a zero low byte and the status high byte. Status polling does not consume command data, and status writes are ignored. With processor firmware, status reads return the processor's status byte directly. Tests send a multiplication command through each layout, including its upper-bank mirror.
 
 ExHiROM banks $80-$BF and $C0-$FF select the first 4 MiB; $00-$3F and $40-$7D select the second half in their ROM windows. ROM sizes that are not powers of two mirror their populated address blocks. For example, a 3 MiB LoROM repeats its last MiB at logical offsets $300000-$3FFFFF. Tests cover 1 MiB and 3 MiB LoROM images and 7 MiB and 8 MiB ExHiROM images. Existing core tests cover SRAM and WRAM precedence.
 

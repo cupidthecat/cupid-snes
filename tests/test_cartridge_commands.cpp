@@ -58,6 +58,31 @@ struct Program {
   }
 };
 
+void Dsp1StatusBytes() {
+  auto machine = std::make_unique<Emulator>();
+  Program program;
+  program.Read(0x20c000, 0);
+  program.Read(0xbfc001, 1);
+  program.Read(0x20c000, 2);
+  program.Write(0x208000, 0);
+  program.PortWord(0xa08000, 0x4000);
+  program.PortWord(0x208001, 0x4000);
+  program.Read(0xbfc000, 3);
+  program.Read(0x208000, 4);
+  program.Read(0xa08001, 5);
+  program.Read(0x20c000, 6);
+  program.Read(0xbfc001, 7);
+  program.Run(*machine, Rom(0x20, 3));
+  auto &bus = machine->GetBus();
+  constexpr std::array<uint8_t, 8> expected{0, 0x84, 0, 0x80, 0, 0x20, 0, 0x84};
+  for (unsigned i = 0; i < expected.size(); ++i)
+    Check(bus.Read(i) == expected[i],
+          "DSP-1 command status alternates byte halves across mirrors independently of data reads");
+  Check(machine->Reset(), "DSP-1 command cartridge resets");
+  Check(bus.Read(0x20c000) == 0 && bus.Read(0xbfc001) == 0x84,
+        "Reset restores the low status byte before the ready byte");
+}
+
 void CommandBuses() {
   auto machine = std::make_unique<Emulator>();
   Program hex;
@@ -224,6 +249,7 @@ void BroadcastBus() {
 
 int main() {
   try {
+    Dsp1StatusBytes();
     CommandBuses();
     BroadcastBus();
   } catch (const std::exception &) {

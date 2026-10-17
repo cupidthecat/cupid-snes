@@ -1,6 +1,8 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
   src/cartridge/CartridgeFirmware.cpp
+  src/cartridge/CompetitionBoard.cpp
+  src/cartridge/CompetitionCartridge.cpp
   src/cartridge/NecDsp.cpp
   src/cartridge/Msu1.cpp
   src/cartridge/BroadcastCartridge.cpp

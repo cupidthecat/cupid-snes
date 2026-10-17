@@ -3,6 +3,7 @@
 #pragma once
 
 #include "snes/core/Bsx.hpp"
+#include "snes/core/CompetitionBoard.hpp"
 #include "snes/core/Cx4.hpp"
 #include "snes/core/Cx4Processor.hpp"
 #include "snes/core/Dsp3.hpp"
@@ -48,7 +49,9 @@ enum class MappingType {
   SuperFx,
   St011,
   BroadcastSa1,
-  Bsx
+  Bsx,
+  Competition92,
+  Competition94
 };
 
 const char *MappingName(MappingType mapping) noexcept;
@@ -69,7 +72,8 @@ enum class EnhancementChip {
   Cx4,
   St010,
   St011,
-  St018
+  St018,
+  Competition
 };
 
 const char *ChipName(EnhancementChip chip) noexcept;
@@ -133,6 +137,9 @@ public:
   static std::optional<Cartridge> FromBroadcastCartridge(std::span<const uint8_t> base,
                                                          std::span<const uint8_t> pack,
                                                          std::string *error = nullptr);
+  static std::optional<Cartridge> FromCompetitionCartridge(
+      CompetitionBoard::Settings settings, const std::array<std::span<const uint8_t>, 4> &images,
+      std::string *error = nullptr, const CartridgeFirmware *firmware = nullptr);
 
   const RomHeader &Header() const noexcept;
   uint32_t RomCrc32() const noexcept;
@@ -156,7 +163,7 @@ public:
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {
-    return bool(necDsp_);
+    return bool(necDsp_) || (competition_ && competition_->HasSignalProcessor());
   }
   bool HasArmProcessor() const noexcept {
     return bool(armDsp_);
@@ -167,6 +174,7 @@ public:
   bool MapSignalProcessor(MemoryBus &bus, uint8_t slot) const;
   bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
   bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
+  bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
 
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;
@@ -234,6 +242,7 @@ private:
   std::unique_ptr<Dsp4> dsp4_;
   std::unique_ptr<Obc1> obc1_;
   std::unique_ptr<NecDsp> necDsp_;
+  std::unique_ptr<CompetitionBoard> competition_;
 };
 
 } // namespace snes::core

@@ -132,9 +132,10 @@ void DspMapping() {
         Board{0x100000, 0x21, 0x006000, 0x007000}}) {
     emu = Load(Rom(board.size, board.mode, 3));
     auto &bus = emu->GetBus();
-    // Status is always the ready flag here; polling must not consume data.
+    // The command fallback exposes the low status byte before its ready byte.
+    unsigned statusRead = 0;
     for (unsigned offset : {0u, 1u, 0x800000u, 0x800001u}) {
-      Check("DSP status polling", bus.Read(board.status + offset) & 0x80, 0x80);
+      Check("DSP status polling", bus.Read(board.status + offset), statusRead++ & 1 ? 0x84 : 0);
       bus.Write(board.status + offset, 0x00);
     }
     Check("DSP data after status writes", bus.Read(board.data), 0x80);
@@ -145,6 +146,7 @@ void DspMapping() {
     bus.Write(board.data + 0x800001, 0x40);
     bus.Write(board.data, 0x00);
     bus.Write(board.data + 1, 0x40);
+    Check("DSP result status low byte", bus.Read(board.status), 0);
     Check("DSP result ready", bus.Read(board.status) & 0x80, 0x80);
     const unsigned lo = bus.Read(board.data + 0x800001);
     Check("DSP multiplication result", lo | (bus.Read(board.data) << 8), 0x2000);

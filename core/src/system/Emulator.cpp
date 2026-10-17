@@ -50,6 +50,7 @@ std::optional<const char *> UnsupportedChipName(EnhancementChip chip) {
   case EnhancementChip::St018:
   case EnhancementChip::Dsp3:
   case EnhancementChip::Dsp4:
+  case EnhancementChip::Competition:
     return std::nullopt;
   default:
     return ChipName(chip);
@@ -209,6 +210,49 @@ bool Emulator::LoadSufamiTurboFromFiles(const std::string &biosPath, const std::
     slots[i] = std::move(*image);
   }
   return LoadSufamiTurbo(*bios, slots[0], slots[1], error);
+}
+
+bool Emulator::LoadCompetitionCartridge(CompetitionBoard::Settings settings,
+                                        const std::array<std::span<const uint8_t>, 4> &images,
+                                        std::string *error) {
+  auto cartridge =
+      Cartridge::FromCompetitionCartridge(settings, images, error, config_.cartridgeFirmware.get());
+  if (!cartridge)
+    return false;
+  StopFrameExecution();
+  cartridge_ = std::move(*cartridge);
+  InitSubsystems();
+  return true;
+}
+
+bool Emulator::LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings settings,
+                                                 const std::array<std::string, 4> &paths,
+                                                 std::string *error) {
+  std::array<std::vector<uint8_t>, 4> images;
+  std::array<std::span<const uint8_t>, 4> views;
+  for (unsigned i = 0; i < paths.size(); ++i) {
+    auto image = ReadImage(paths[i], error);
+    if (!image)
+      return false;
+    images[i] = std::move(*image);
+    views[i] = images[i];
+  }
+  CartridgeFirmware adjacentFirmware;
+  auto *firmware = config_.cartridgeFirmware.get();
+  const auto directory = std::filesystem::path(paths[0]).parent_path() / "firmware";
+  std::error_code fileError;
+  if (!firmware && std::filesystem::is_directory(directory, fileError)) {
+    if (!adjacentFirmware.LoadDirectory(directory, error))
+      return false;
+    firmware = &adjacentFirmware;
+  }
+  auto cartridge = Cartridge::FromCompetitionCartridge(settings, views, error, firmware);
+  if (!cartridge)
+    return false;
+  StopFrameExecution();
+  cartridge_ = std::move(*cartridge);
+  InitSubsystems();
+  return true;
 }
 
 const Cartridge *Emulator::LoadedCartridge() const noexcept {

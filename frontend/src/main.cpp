@@ -17,9 +17,11 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -31,8 +33,21 @@ int main(int argc, char *argv[]) {
   std::array devices{ControllerDevice::Gamepad, ControllerDevice::Gamepad};
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
+  std::optional<uint8_t> competitionDip;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
+    if (value.starts_with("--competition-dip=")) {
+      const auto digits = value.substr(18);
+      unsigned setting = 0;
+      const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), setting);
+      if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() ||
+          setting > 255) {
+        std::cerr << "Competition DIP setting must be between 0 and 255\n";
+        return EXIT_FAILURE;
+      }
+      competitionDip = uint8_t(setting);
+      continue;
+    }
     if (value.starts_with("--firmware-dir=")) {
       firmwareDirectory = value.substr(15);
       if (firmwareDirectory.empty()) {
@@ -69,14 +84,20 @@ int main(int argc, char *argv[]) {
   }
   const bool sufami = !arguments.empty() && arguments[0] == "--sufami";
   const bool broadcast = !arguments.empty() && arguments[0] == "--broadcast";
-  if ((!sufami && !broadcast && arguments.size() != 1) ||
+  const bool campus = !arguments.empty() && arguments[0] == "--competition92";
+  const bool powerfest = !arguments.empty() && arguments[0] == "--competition94";
+  const bool competition = campus || powerfest;
+  if ((!sufami && !broadcast && !competition && arguments.size() != 1) ||
       (sufami && (arguments.size() < 3 || arguments.size() > 4)) ||
-      (broadcast && arguments.size() != 3)) {
+      (broadcast && arguments.size() != 3) || (competition && arguments.size() != 5) ||
+      (competitionDip.has_value() && !competition)) {
     std::cerr
         << "Usage: snes_frontend [--port1=pad|mouse|multitap|none] [--port2=...] <rom_file.smc>\n"
         << "       snes_frontend [controller options] --sufami <bios.bin> <slot-a.st|-> "
            "[slot-b.st|-]\n"
         << "       snes_frontend [controller options] --broadcast <base.sfc> <pack.bs|->\n";
+    std::cerr << "       snes_frontend --competition92|--competition94 <boot.sfc> <game1.sfc> "
+                 "<game2.sfc> <game3.sfc> [--competition-dip=0..255]\n";
     std::cerr << "       Port 2 also supports scope, justifier, justifiers, and rifle\n";
     std::cerr << "       --firmware-dir=<directory> supplies cartridge processor firmware\n";
     return EXIT_FAILURE;
@@ -93,7 +114,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "The host pointer cannot control a relative mouse and a light gun together\n";
     return EXIT_FAILURE;
   }
-  const std::string romPath = arguments[sufami || broadcast ? 1 : 0];
+  const std::string romPath = arguments[sufami || broadcast || competition ? 1 : 0];
   const std::array<std::string, 2> slotPaths{sufami ? arguments[2] : "",
                                              sufami && arguments.size() == 4 ? arguments[3] : ""};
 
@@ -156,10 +177,19 @@ int main(int argc, char *argv[]) {
   }
 
   std::string loadError;
+  const snes::core::CompetitionBoard::Settings competitionSettings{
+      campus ? snes::core::CompetitionBoard::Board::CampusChallenge92
+             : snes::core::CompetitionBoard::Board::PowerFest94,
+      competitionDip.value_or(0), 0x2000};
+  std::array<std::string, 4> competitionPaths;
+  if (competition)
+    std::copy_n(arguments.begin() + 1, 4, competitionPaths.begin());
   const bool loaded =
       sufami ? emulator->LoadSufamiTurboFromFiles(romPath, slotPaths[0], slotPaths[1], &loadError)
-      : broadcast ? emulator->LoadBroadcastCartridgeFromFiles(romPath, arguments[2], &loadError)
-                  : emulator->LoadCartridgeFromFile(romPath, &loadError);
+      : broadcast   ? emulator->LoadBroadcastCartridgeFromFiles(romPath, arguments[2], &loadError)
+      : competition ? emulator->LoadCompetitionCartridgeFromFiles(competitionSettings,
+                                                                  competitionPaths, &loadError)
+                    : emulator->LoadCartridgeFromFile(romPath, &loadError);
   if (!loaded) {
     std::cerr << "Failed to load ROM: " << loadError << '\n';
     return EXIT_FAILURE;
