@@ -1,6 +1,7 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
   src/cartridge/RomHeaderParser.cpp
+  src/cartridge/RomBoardProfile.cpp
   src/cartridge/CartridgeFirmware.cpp
   src/cartridge/CompetitionBoard.cpp
   src/cartridge/CompetitionCartridge.cpp

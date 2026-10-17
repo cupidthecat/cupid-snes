@@ -52,6 +52,73 @@ std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &bytes) {
   return emu;
 }
 
+void CompleteBoardProfiles() {
+  const std::array<uint8_t, 8> program{0x78, 0xa9, 0x5a, 0x8f, 0, 0x10, 0x7e, 0xdb};
+  for (const auto [size, mode, type, ram] :
+       {std::tuple{size_t(0x8000), uint8_t(0x30), uint8_t(0x55), uint8_t(3)},
+        std::tuple{size_t(0x100000), uint8_t(0x30), uint8_t(0x25), uint8_t(0)},
+        std::tuple{size_t(0x700000), uint8_t(0x3a), uint8_t(0xf5), uint8_t(3)}}) {
+    const size_t base = mode == 0x3a ? 0xffc0 : 0x7fc0;
+    auto bytes = Rom(size, mode == 0x3a ? 0x21 : mode, type);
+    bytes[base + 0x15] = mode;
+    bytes[base + 0x18] = ram;
+    std::copy(program.begin(), program.end(), bytes.begin() + (base & ~size_t(0x7fff)));
+    auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->Read(0x008000, 0xa5) == 0xa5 && cart->SramData().empty(),
+          "An unconnected board profile retains open bus and has no save storage");
+    auto machine = Load(bytes);
+    std::fill_n(machine->GetBus().WramData(), MemoryBus::WramSize, 0);
+    machine->StepFrame();
+    Check(machine->GetBus().Read(0x7e1000) == 0,
+          "An unsupported profile cannot execute a cartridge reset program");
+  }
+
+  auto bytes = Rom(0x100000, 0x21, 0xf5);
+  bytes[0xffd5] = 0x3a;
+  bytes[0xffd8] = 3;
+  std::copy(program.begin(), program.end(), bytes.begin() + 0x8000);
+  auto machine = Load(bytes);
+  std::fill_n(machine->GetBus().WramData(), MemoryBus::WramSize, 0);
+  machine->StepFrame();
+  Check(machine->GetBus().Read(0x7e1000) == 0x5a,
+        "A program-only SPC7110 board boots without a data image");
+  Check(machine->GetBus().Read(0xd00000) == 0, "An absent SPC7110 data image supplies zero data");
+
+  bytes = Rom(0x100000, 0x30, 0x25);
+  bytes[0x7fd8] = 7;
+  auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && cart->SramData().size() == 0x20000,
+        "OBC1 retains the declared save capacity beyond its decoded port window");
+  cart->Write(0x006123, 0x47);
+  Check(cart->SramData()[0x123] == 0x47 && cart->SramData().back() == 0xff,
+        "OBC1 writes preserve the unused declared save storage");
+}
+
+void HeaderRamDeclarations() {
+  for (const auto [type, ordinary, expansion, bytes] :
+       {std::tuple{0x02, 0, 5, size_t(0x8000)}, std::tuple{0x02, 3, 7, size_t(0x2000)},
+        std::tuple{0x15, 0, 0, size_t(0x8000)}, std::tuple{0x15, 7, 8, size_t(0x20000)},
+        std::tuple{0x10, 0, 0, size_t(0x8000)}, std::tuple{0x02, 0, 0xf3, size_t(0x2000)},
+        std::tuple{0x02, 0, 0x0f, size_t(0x40000)}}) {
+    auto image = Rom(0x100000, 0x20, uint8_t(type));
+    image[0x7fd8] = uint8_t(ordinary);
+    image[0x7fbd] = uint8_t(expansion);
+    image[0x7fda] = 0x33;
+    auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+    Check(cart && cart->BoardConnected() && cart->SramData().size() == bytes,
+          "Ordinary RAM takes priority over expansion RAM and the graphics-family default");
+  }
+  auto image = Rom(0x100000, 0x20, 0xf5);
+  image[0x7fbf] = 2;
+  image[0x7fd8] = 3;
+  image[0] = 0x78;
+  image[0x123] = 0x45;
+  auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+  Check(cart && cart->Read(0x400000) == 0x78 && cart->Read(0xc00000) == 0x78 &&
+            cart->Read(0x600123) == 0x45 && cart->Read(0xe00123) == 0x45,
+        "The ARM cartridge retains its lower-half ROM windows");
+}
+
 void BootHeaderRanking() {
   auto image = Rom(0x100000, 0x21);
   const auto low = Rom();
@@ -497,7 +564,9 @@ void BitmapProcessor() {
 }
 
 void ObjectController() {
-  auto emu = Load(Rom(0x100000, 0x30, 0x25));
+  auto image = Rom(0x100000, 0x30, 0x25);
+  image[0x7fd8] = 3;
+  auto emu = Load(image);
   auto &bus = emu->GetBus();
   Check(bus.Read(0x006000) == 0xff && bus.Read(0xbf7ff6) == 0xff, "OBC1 power-on RAM");
   for (unsigned select = 0; select < 2; ++select) {
@@ -523,7 +592,7 @@ void ObjectController() {
           "OBC1 two-bit attributes preserve neighbors");
   }
   Check(bus.Read(0x007ff5) == 1 && bus.Read(0x807ff6) == 3, "OBC1 selector readback");
-  Check(emu->LoadCartridge(Rom(0x100000, 0x30, 0x25)), "OBC1 reload");
+  Check(emu->LoadCartridge(image), "OBC1 reload");
   Check(emu->GetBus().Read(0x007ff6) == 0xff && emu->GetBus().Read(0x007800) == 0xff,
         "OBC1 resets on reload");
 }
@@ -637,7 +706,9 @@ void Clock() {
   digits = ReadClock(clock);
   Check(std::all_of(digits.begin(), digits.end(), [](uint8_t d) { return d == 0; }),
         "S-RTC clear command");
-  auto emu = Load(Rom(0x500000, 0x35, 0x55));
+  auto image = Rom(0x500000, 0x35, 0x55);
+  image[0x40ffd8] = 3;
+  auto emu = Load(image);
   auto &bus = emu->GetBus();
   bus.Write(0xbf2801, 0x1e);
   bus.Write(0x002801, 4);
@@ -855,6 +926,8 @@ void BroadcastBoards() {
 
 int main() {
   try {
+    CompleteBoardProfiles();
+    HeaderRamDeclarations();
     BootHeaderRanking();
     DeviceFamilyHeaders();
     DetectionAndReload();

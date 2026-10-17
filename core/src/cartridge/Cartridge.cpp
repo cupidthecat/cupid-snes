@@ -2,6 +2,7 @@
 
 #include "snes/core/Cartridge.hpp"
 
+#include "RomBoardProfile.hpp"
 #include "RomHeaderParser.hpp"
 
 #include "snes/core/Logging.hpp"
@@ -16,11 +17,6 @@
 namespace snes::core {
 
 namespace {
-
-size_t HeaderSramSize(uint8_t shift) {
-  const unsigned bits = std::min(unsigned(shift & 15), 8u);
-  return bits ? size_t(1024) << bits : 0;
-}
 
 size_t MirrorOffset(size_t offset, size_t size) {
   if (size == 0) {
@@ -238,6 +234,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   Cartridge cart;
   cart.rom_ = std::move(normalized);
   cart.header_ = std::move(*header);
+  const auto parsedMapping = cart.header_.mapping;
   std::vector<uint8_t> embeddedFirmware;
   if (const auto kind = SignalFirmware(cart.header_)) {
     const size_t size = CartridgeFirmware::Size(*kind);
@@ -275,10 +272,12 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   }
 
   std::optional<size_t> forcedSramSize;
+  bool forcedMapping = false;
   if (database != nullptr) {
     if (const auto overrideEntry = database->Find(cart.romCrc32_); overrideEntry.has_value()) {
       if (overrideEntry->forceMapping.has_value()) {
         cart.header_.mapping = *overrideEntry->forceMapping;
+        forcedMapping = true;
       }
       if (overrideEntry->forceSpeed.has_value()) {
         cart.header_.speed = *overrideEntry->forceSpeed;
@@ -292,15 +291,29 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     }
   }
 
+  auto boardHeader = cart.header_;
+  if (cart.header_.mapping != MappingType::Bsx && cart.header_.mapping != MappingType::SufamiTurbo)
+    boardHeader.mapping = parsedMapping;
+  const auto profile =
+      detail::ResolveRomBoardProfile(boardHeader, cart.rom_.size(), forcedSramSize, forcedMapping);
+  cart.boardConnected_ = profile.connected;
+  if (!profile.connected) {
+    if (normalization)
+      *normalization = {removedHeader, false};
+    return cart;
+  }
+
   if (cart.header_.chip == EnhancementChip::SuperFx ||
       cart.header_.mapping == MappingType::SuperFx) {
     cart.header_.chip = EnhancementChip::SuperFx;
     cart.header_.mapping = MappingType::SuperFx;
     // A separate expansion declaration supplies RAM when the ordinary field is empty.
-    if (HeaderSramSize(cart.header_.sramSizeShift) == 0)
+    if ((cart.header_.sramSizeShift & 15) == 0)
       cart.header_.sramSizeShift =
-          cart.header_.maker == 0x33 ? cart.rom_[cart.header_.headerOffset - 3] : 5;
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
+          cart.header_.maker == 0x33 && (cart.header_.expansionRamSizeShift & 15)
+              ? cart.header_.expansionRamSizeShift
+              : 5;
+    cart.sram_.assign(profile.ramBytes, 0xff);
     cart.superFx_ = std::make_unique<SuperFx>(cart.rom_, cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St011 ||
              cart.header_.mapping == MappingType::St011) {
@@ -310,7 +323,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.sram_.assign(0x1000, 0);
     cart.st011_ = std::make_unique<St011>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St018) {
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
+    cart.sram_.assign(profile.ramBytes, 0xff);
     cart.st018_ = std::make_unique<St018>(cart.sram_);
   } else if (cart.header_.chip == EnhancementChip::St010 ||
              cart.header_.mapping == MappingType::St010) {
@@ -319,11 +332,10 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.sramSizeShift = 2;
     cart.sram_.assign(0x1000, 0);
   } else {
-    cart.sram_.assign(forcedSramSize.value_or(HeaderSramSize(cart.header_.sramSizeShift)), 0xff);
+    cart.sram_.assign(profile.ramBytes, 0xff);
   }
   if (cart.header_.chip == EnhancementChip::Obc1) {
-    cart.sram_.assign(8192, 0xff);
-    cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
+    cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t>(cart.sram_));
   }
   if (cart.header_.mapping == MappingType::Sdd1)
     cart.sdd1_ = std::make_unique<Sdd1>(cart.rom_, cart.sram_);
@@ -351,11 +363,6 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   if (cart.header_.chip == EnhancementChip::Spc7110 ||
       cart.header_.chip == EnhancementChip::Spc7110Rtc ||
       cart.header_.mapping == MappingType::Spc7110) {
-    if (cart.rom_.size() <= 0x100000) {
-      if (error)
-        *error = "SPC7110 image is missing its data ROM";
-      return std::nullopt;
-    }
     cart.header_.mapping = MappingType::Spc7110;
     if (cart.header_.chip != EnhancementChip::Spc7110Rtc)
       cart.header_.chip = EnhancementChip::Spc7110;
@@ -503,6 +510,8 @@ bool Cartridge::MemselFast() const noexcept {
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
+  if (!boardConnected_)
+    return openBus;
   if (competition_)
     return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
@@ -565,6 +574,8 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 }
 
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
+  if (!boardConnected_)
+    return;
   if (competition_) {
     competition_->Write(cpuAddress, value);
     return;
@@ -844,10 +855,13 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
     return MirrorOffset(linear, rom_.size());
   }
 
-  case MappingType::LoRom:
-    if (addr >= 0x8000 && bank != 0x7e && bank != 0x7f)
+  case MappingType::LoRom: {
+    const bool lowerArmRom = header_.chip == EnhancementChip::St018 &&
+                             ((bank >= 0x40 && bank <= 0x6f) || (bank >= 0xc0 && bank <= 0xef));
+    if ((addr >= 0x8000 || lowerArmRom) && bank != 0x7e && bank != 0x7f)
       return MirrorOffset((size_t(bank) << 15) | (addr & 0x7fff), rom_.size());
     return std::nullopt;
+  }
   case MappingType::LoRomNoMad1:
   case MappingType::LoRomLargeSram: {
     // Mirror each 32 KiB page into both halves of the full-ROM banks.

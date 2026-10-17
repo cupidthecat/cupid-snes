@@ -93,6 +93,7 @@ struct RomHeader {
   uint8_t cartridgeType = 0;
   uint8_t romSizeShift = 0;
   uint8_t sramSizeShift = 0;
+  uint8_t expansionRamSizeShift = 0;
   uint8_t country = 0;
   uint8_t version = 0;
   uint16_t resetVector = 0;
@@ -179,6 +180,9 @@ public:
   bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
   bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
 
+  bool BoardConnected() const noexcept {
+    return boardConnected_;
+  }
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;
   void LoadSram(std::span<const uint8_t> data);
@@ -215,6 +219,7 @@ private:
   RomHeader header_{};
   uint32_t romCrc32_ = 0;
   bool memselFast_ = false;
+  bool boardConnected_ = true;
   size_t slotSize_[2]{};
   size_t slotOffset_[2]{};
   std::vector<uint8_t> memoryPack_;

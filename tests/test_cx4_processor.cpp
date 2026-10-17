@@ -16,7 +16,7 @@ void Check(bool value, const char *message) {
 std::vector<uint8_t> Image() {
   std::vector<uint8_t> image(0x80c00, 0);
   std::fill_n(image.begin(), 0x80000, 0xea);
-  std::fill_n(image.begin() + 0x7fc0, 64, 0);
+  std::fill_n(image.begin() + 0x7fb0, 80, 0);
   image[0x7fc0] = 'T';
   image[0x7fd5] = 0x20;
   image[0x7fd6] = 0xf3;
@@ -63,7 +63,6 @@ void DmaLengthLatch() {
 }
 void MappingAndRomOwnership() {
   auto image = Image();
-  image[0x7fd8] = 3;
   auto machine = std::make_unique<Emulator>();
   Check(machine->LoadCartridge(image) && machine->LoadedCartridge()->HasCx4Processor(),
         "The system loader selects processor execution with appended data firmware");
@@ -73,8 +72,9 @@ void MappingAndRomOwnership() {
   bus.Write(0x006c00, 0xa5);
   Check(bus.Read(0x007c00) == 0, "Unused I/O locations do not become extra work RAM");
   bus.Write(0x700123, 0x66);
-  Check(bus.Read(0x770123) == 0x66 && machine->LoadedCartridge()->SramData().size() == 8192,
-        "The save window mirrors the declared battery RAM");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0x770123) == 0 && machine->LoadedCartridge()->SramData().empty(),
+        "The graphics interface returns zero when its save storage is absent");
   bus.Write(0x7e0000, 0x43);
   Check(bus.Read(0x408000) == 0x43 && bus.Read(0x708000) == 0x43 && bus.Read(0xc08000) == 0x43 &&
             bus.Read(0xff8000) == 0x43,
@@ -101,11 +101,37 @@ void MappingAndRomOwnership() {
   Check(bus.Read(0x006017) == 0x5a && bus.Read(0x008000) == image[0],
         "Reset retains work RAM and returns ROM ownership to the CPU");
   image[0x7fd8] = 6;
-  Check(machine->LoadCartridge(image), "The generated board accepts a larger save allocation");
-  bus.Write(0x700123, 0x71);
-  Check(bus.Read(0x710123) == 0x71,
-        "CPU save-bank addresses mirror their physical address without DSP address reduction");
+  Check(machine->LoadCartridge(image) && !machine->LoadedCartridge()->BoardConnected(),
+        "A save declaration does not invent a different graphics board profile");
+  bus.Write(0x7e0000, 0x71);
+  Check(bus.Read(0x008000) == 0x71 && bus.Read(0x700123) == 0x71,
+        "An unconnected graphics profile retains open bus in ROM and save regions");
 }
+void ExplicitSaveWiring() {
+  for (uint8_t declaration : {3, 6}) {
+    auto image = Image();
+    image[0x7fd8] = declaration;
+    auto detected = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+    Check(detected && !detected->BoardConnected(), "The raw graphics save profile is unconnected");
+    CartridgeDatabase database;
+    DatabaseOverride layout;
+    layout.forceMapping = MappingType::LoRom;
+    database.AddOverride(detected->RomCrc32(), layout);
+    auto cart = Cartridge::FromRomImage(image, nullptr, &database, nullptr);
+    Check(cart && cart->HasCx4Processor() &&
+              cart->SramData().size() == (size_t(1024) << declaration),
+          "An explicit board override retains its requested save wiring");
+    MemoryBus bus;
+    bus.MapWram();
+    bus.MapCartridge(*cart);
+    bus.Write(0x700123, 0x71);
+    Check(bus.Read(declaration == 3 ? 0x770123 : 0x710123) == 0x71,
+          "Explicit save windows retain their physical bank mirrors");
+    cart->Reset();
+    Check(bus.Read(0x700123) == 0x71, "Reset preserves explicitly connected save storage");
+  }
+}
+
 void ConsoleExchange() {
   auto image = Image();
   const uint8_t worker[]{0x9c, 0x49, 0x7f, 0xa9, 0x90, 0x8d, 0x4a, 0x7f, 0x9c, 0x4b, 0x7f, 0x9c,
@@ -208,6 +234,7 @@ int main() {
     ProgramExecution();
     DmaLengthLatch();
     MappingAndRomOwnership();
+    ExplicitSaveWiring();
     ConsoleExchange();
     FirmwareSelectionAndFastRom();
     IdleResumeAndPendingInstruction();

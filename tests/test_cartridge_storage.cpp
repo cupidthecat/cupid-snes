@@ -27,7 +27,7 @@ std::vector<uint8_t> Image(uint8_t mode = 0x20, uint8_t type = 2, size_t size = 
   bytes[header + 0x16] = type;
   bytes[header - 1] = type == 0xf3 ? 0x10 : type == 0xf6 ? 1 : type == 0xf5 && mode == 0x30 ? 2 : 0;
   bytes[header + 0x17] = 10;
-  bytes[header + 0x18] = (type >> 4) == 1 ? 0 : 3;
+  bytes[header + 0x18] = (type >> 4) == 1 || type == 0xf3 || type == 0xf6 ? 0 : 3;
   bytes[header + 0x19] = 1;
   bytes[header + 0x1c] = bytes[header + 0x1d] = 255;
   bytes[header + 0x3d] = 0x80;
@@ -65,13 +65,17 @@ void BoardDefaults() {
                            Board{0x35, 2, 0x500000, 8192}, Board{0x23, 0x35, 0x100000, 8192},
                            Board{0x20, 0x15, 0x100000, 32768}, Board{0x30, 0xf5, 0x100000, 8192},
                            Board{0x20, 3, 0x100000, 8192}, Board{0x20, 5, 0x100000, 8192},
-                           Board{0x20, 0xf3, 0x100000, 8192}, Board{0x32, 0x43, 0x100000, 8192},
+                           Board{0x20, 0xf3, 0x100000, 0}, Board{0x32, 0x43, 0x100000, 8192},
                            Board{0x35, 0x55, 0x500000, 8192}, Board{0x3a, 0xf5, 0x300000, 8192},
                            Board{0x30, 0x25, 0x100000, 8192}}) {
     auto cart = Cartridge::FromRomImage(Image(board.mode, board.type, board.size), nullptr, nullptr,
                                         nullptr);
     Check(cart && cart->SramData().size() == board.ram, "The board exposes its physical RAM size");
-    RetainedSave(*cart, 255);
+    if (board.ram)
+      RetainedSave(*cart, 255);
+    else
+      Check(cart->BoardConnected() && cart->Read(0x008000) == 0x80,
+            "A graphics board without save RAM retains its ROM wiring");
   }
   auto image = Image();
   image[0x7fd8] = 0;

@@ -181,9 +181,11 @@ void Mapping() {
   bus.Write(0x7e0000, 0x56);
   Check(bus.Read(0x408000) == 0x56, "Standard boards do not expose expansion ROM");
   Check(bus.Read(0x580000) == 0, "The second stream bank exposes the reserved zero register");
-  auto broken = rom;
-  broken.resize(0x100000);
-  Check(!emu->LoadCartridge(broken), "An image without data ROM is rejected");
+  auto programOnly = rom;
+  programOnly.resize(0x100000);
+  Check(emu->LoadCartridge(programOnly) && bus.Read(0x008000) == programOnly[0x8000],
+        "A program-only image retains its program ROM mapping");
+  Check(bus.Read(0xd00000) == 0, "An absent data image returns zero");
 }
 void QueuedMathAndDataSize() {
   const auto rom = Rom(false, 0x600000);

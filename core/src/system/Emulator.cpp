@@ -282,8 +282,9 @@ void Emulator::InitSubsystems() {
   dsp1_.reset();
   dsp2_.reset();
   srtc_.reset();
-  const auto chip =
-      cartridge_->HasSignalProcessor() ? EnhancementChip::None : cartridge_->Header().chip;
+  const auto chip = cartridge_->BoardConnected() && !cartridge_->HasSignalProcessor()
+                        ? cartridge_->Header().chip
+                        : EnhancementChip::None;
   const auto *signalBoard = cartridge_->SignalBoard();
   if (chip == EnhancementChip::Dsp1) {
     dsp1_ = std::make_unique<Dsp1>();
