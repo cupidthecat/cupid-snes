@@ -1,9 +1,5 @@
-// snes emulator
-// core/src/io/AutoJoypad.cpp
 // Automatic controller polling and serial latch state.
 
-// AutoJoypad.cpp - SNES auto-joypad polling implementation
-//
 // Implements the 34-step automatic polling sequence.
 // Called every 128 master clocks by the timing system.
 //
@@ -28,17 +24,17 @@ namespace snes::core {
 // Construction & Reset
 
 AutoJoypad::AutoJoypad() {
-    Reset();
+  Reset();
 }
 
 void AutoJoypad::Reset() {
-    autoJoypadPoll_ = false;
-    counter_    = 33;
-    ports_.Reset();
-    manualLatch_ = autoLatch_ = false;
-    port1Data_  = 0;
-    port2Data_  = 0;
-    joy1_ = joy2_ = joy3_ = joy4_ = 0;
+  autoJoypadPoll_ = false;
+  counter_ = 33;
+  ports_.Reset();
+  manualLatch_ = autoLatch_ = false;
+  port1Data_ = 0;
+  port2Data_ = 0;
+  joy1_ = joy2_ = joy3_ = joy4_ = 0;
 }
 
 // FrameBegin - reset for new frame
@@ -53,38 +49,50 @@ void AutoJoypad::FrameBegin() {
 // SetAutoJoypadPoll - $4200 NMITIMEN bit 0
 
 void AutoJoypad::SetAutoJoypadPoll(bool enabled) {
-    autoJoypadPoll_ = enabled;
+  autoJoypadPoll_ = enabled;
 
-    if (counter_ == 0) {
-      autoLatch_ = enabled;
-      ports_.SetLatch(manualLatch_ || autoLatch_);
-    }
+  if (counter_ == 0) {
+    autoLatch_ = enabled;
+    ports_.SetLatch(manualLatch_ || autoLatch_);
+  }
 
-    // Disabling automatic input during shifting ends the sequence.
-    if (!enabled && counter_ >= 2 && counter_ < 33) {
-        counter_ = 33;
-    }
+  // Disabling automatic input during shifting ends the sequence.
+  if (!enabled && counter_ >= 2 && counter_ < 33) {
+    counter_ = 33;
+  }
 }
 
 // InputStateToSnesFormat - button → 16-bit register conversion
 
-uint16_t AutoJoypad::InputStateToSnesFormat(const InputState& input) {
-    uint16_t v = 0;
-    if (input.b)      v |= 0x8000;  // bit 15
-    if (input.y)      v |= 0x4000;  // bit 14
-    if (input.select) v |= 0x2000;  // bit 13
-    if (input.start)  v |= 0x1000;  // bit 12
-    // D-pad: prevent opposing directions simultaneously
-    if (input.up   && !input.down)  v |= 0x0800;  // bit 11
-    if (input.down && !input.up)    v |= 0x0400;  // bit 10
-    if (input.left && !input.right) v |= 0x0200;  // bit 9
-    if (input.right && !input.left) v |= 0x0100;  // bit 8
-    if (input.a)      v |= 0x0080;  // bit 7
-    if (input.x)      v |= 0x0040;  // bit 6
-    if (input.l)      v |= 0x0020;  // bit 5
-    if (input.r)      v |= 0x0010;  // bit 4
-    // bits 3-0: signature (always 0 for standard gamepad)
-    return v;
+uint16_t AutoJoypad::InputStateToSnesFormat(const InputState &input) {
+  uint16_t v = 0;
+  if (input.b)
+    v |= 0x8000; // bit 15
+  if (input.y)
+    v |= 0x4000; // bit 14
+  if (input.select)
+    v |= 0x2000; // bit 13
+  if (input.start)
+    v |= 0x1000; // bit 12
+  // D-pad: prevent opposing directions simultaneously
+  if (input.up && !input.down)
+    v |= 0x0800; // bit 11
+  if (input.down && !input.up)
+    v |= 0x0400; // bit 10
+  if (input.left && !input.right)
+    v |= 0x0200; // bit 9
+  if (input.right && !input.left)
+    v |= 0x0100; // bit 8
+  if (input.a)
+    v |= 0x0080; // bit 7
+  if (input.x)
+    v |= 0x0040; // bit 6
+  if (input.l)
+    v |= 0x0020; // bit 5
+  if (input.r)
+    v |= 0x0010; // bit 4
+  // bits 3-0: signature (always 0 for standard gamepad)
+  return v;
 }
 
 // Tick128 - 128-clock state machine step

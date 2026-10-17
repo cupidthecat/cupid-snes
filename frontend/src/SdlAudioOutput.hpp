@@ -1,10 +1,6 @@
-// snes emulator
-// frontend/src/SdlAudioOutput.hpp
-// SDL audio output interface.
+// SDL3 audio output interface.
 
 #pragma once
-// SdlAudioOutput.hpp - SDL3-based audio output for the SNES emulator
-//
 // Opens an SDL3 audio stream at the native sample rate in stereo float and implements
 // IAudioOutput::Submit() by pushing interleaved samples into SDL's
 // internal queue.  SDL3's audio stream handles buffering, resampling
@@ -25,50 +21,54 @@ namespace snes::frontend {
 
 class SdlAudioOutput final : public snes::core::IAudioOutput {
 public:
-    struct Config {
-      int sampleRate = snes::core::AudioTiming::SampleRate;
-      int channels = 2; // stereo
-    };
+  struct Config {
+    int sampleRate = snes::core::AudioTiming::SampleRate;
+    int channels = 2; // stereo
+  };
 
-    explicit SdlAudioOutput();
-    explicit SdlAudioOutput(const Config& config);
-    ~SdlAudioOutput() override;
+  explicit SdlAudioOutput();
+  explicit SdlAudioOutput(const Config &config);
+  ~SdlAudioOutput() override;
 
-    // Non-copyable / non-movable (owns SDL resources)
-    SdlAudioOutput(const SdlAudioOutput&) = delete;
-    SdlAudioOutput& operator=(const SdlAudioOutput&) = delete;
+  // Non-copyable / non-movable (owns SDL resources)
+  SdlAudioOutput(const SdlAudioOutput &) = delete;
+  SdlAudioOutput &operator=(const SdlAudioOutput &) = delete;
 
-    // IAudioOutput
-    void Submit(const snes::core::AudioBuffer& buffer) override;
+  // IAudioOutput
+  void Submit(const snes::core::AudioBuffer &buffer) override;
 
-    // Playback control
+  // Playback control
 
-    /// Request playback after at least 40 ms of input has been queued.
-    void Resume();
+  /// Request playback after at least 40 ms of input has been queued.
+  void Resume();
 
-    /// Pause the audio device.
-    void Pause();
+  /// Pause the audio device.
+  void Pause();
 
-    /// Returns true if the audio stream was created successfully.
-    bool IsValid() const noexcept { return stream_ != nullptr; }
+  /// Returns true if the audio stream was created successfully.
+  bool IsValid() const noexcept {
+    return stream_ != nullptr;
+  }
 
-    /// Returns queued bytes in the input format (stereo float).
-    int QueuedBytes() const;
+  /// Returns queued bytes in the input format (stereo float).
+  int QueuedBytes() const;
 
-    /// The frame loop should wait while enough audio is already queued.
-    bool NeedsSamples() const;
+  /// The frame loop should wait while enough audio is already queued.
+  bool NeedsSamples() const;
 
-    bool IsPlaying() const noexcept { return playing_; }
-    double QueuedMilliseconds() const;
+  bool IsPlaying() const noexcept {
+    return playing_;
+  }
+  double QueuedMilliseconds() const;
 
 private:
-    void StartIfReady();
+  void StartIfReady();
 
-    SDL_AudioStream* stream_ = nullptr;
-    int sampleRate_ = snes::core::AudioTiming::SampleRate;
-    int targetQueuedBytes_ = 0;
-    bool playbackRequested_ = false;
-    bool playing_ = false;
+  SDL_AudioStream *stream_ = nullptr;
+  int sampleRate_ = snes::core::AudioTiming::SampleRate;
+  int targetQueuedBytes_ = 0;
+  bool playbackRequested_ = false;
+  bool playing_ = false;
 };
 
 } // namespace snes::frontend

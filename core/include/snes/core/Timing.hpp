@@ -1,10 +1,6 @@
-// snes emulator
-// core/include/snes/core/Timing.hpp
 // Master clock and video-region timing interface.
 
 #pragma once
-// Timing.hpp - SNES dot / scanline / frame timing subsystem
-//
 // Tracks horizontal master clocks and vertical scanlines in two-clock steps.
 // Provides the dot-position, scanline, and field state that every other
 // subsystem depends on:
@@ -27,7 +23,7 @@
 //         Odd field: 261 × 1364 + 1 × 1360 = 357,364
 //
 //   VBlank: begins at scanline V = vdisp (225 normal, 240 overscan).
-//   HBlank: dots 274–340 (master clocks 1096–1364) per scanline.
+//   HBlank: dots 274-340 (master clocks 1096-1364) per scanline.
 //
 // The counter is paced externally: call Tick(masterClocks) to advance time.
 // Callbacks fire at the correct position.
@@ -40,181 +36,211 @@ namespace snes::core {
 
 // Region - NTSC vs PAL
 enum class Region : uint8_t {
-    NTSC = 0,
-    PAL  = 1,
+  NTSC = 0,
+  PAL = 1,
 };
 
 // Timing - master-clock-accurate H/V counter
 class Timing {
 public:
-    // Constants
+  // Constants
 
-    /// Master clock frequency (≈21.477 MHz crystal ÷ 1)
-    static constexpr uint32_t kMasterClockHz = 21'477'272;
-    static constexpr uint32_t kMasterClockHzPal = 21'281'370;
+  /// Master clock frequency (≈21.477 MHz crystal ÷ 1)
+  static constexpr uint32_t kMasterClockHz = 21'477'272;
+  static constexpr uint32_t kMasterClockHzPal = 21'281'370;
 
-    /// Normal scanline width in master clocks.
-    static constexpr uint16_t kDotsPerLine = 1364;
+  /// Normal scanline width in master clocks.
+  static constexpr uint16_t kDotsPerLine = 1364;
 
-    /// Short scanline width (NTSC non-interlace odd-field line 240).
-    static constexpr uint16_t kDotsPerLineShort = 1360;
+  /// Short scanline width (NTSC non-interlace odd-field line 240).
+  static constexpr uint16_t kDotsPerLineShort = 1360;
 
-    /// Long scanline width (PAL interlace odd-field line 311).
-    static constexpr uint16_t kDotsPerLineLong = 1368;
+  /// Long scanline width (PAL interlace odd-field line 311).
+  static constexpr uint16_t kDotsPerLineLong = 1368;
 
-    /// Scanlines per frame.
-    static constexpr uint16_t kScanlinesNTSC = 262;
-    static constexpr uint16_t kScanlinesPAL  = 312;
+  /// Scanlines per frame.
+  static constexpr uint16_t kScanlinesNTSC = 262;
+  static constexpr uint16_t kScanlinesPAL = 312;
 
-    /// Master clocks per "normal" frame (even field, NTSC non-interlace).
-    static constexpr uint32_t kMasterClocksPerFrameNTSC = kScanlinesNTSC * kDotsPerLine;  // 357,368
-    static constexpr uint32_t kMasterClocksPerFramePAL  = kScanlinesPAL  * kDotsPerLine;  // 425,568
+  /// Master clocks per "normal" frame (even field, NTSC non-interlace).
+  static constexpr uint32_t kMasterClocksPerFrameNTSC = kScanlinesNTSC * kDotsPerLine; // 357,368
+  static constexpr uint32_t kMasterClocksPerFramePAL = kScanlinesPAL * kDotsPerLine;   // 425,568
 
-    /// HBlank begins at this H counter value (dot 274 × 4 = 1096).
-    static constexpr uint16_t kHBlankStart = 1096;
+  /// HBlank begins at this H counter value (dot 274 × 4 = 1096).
+  static constexpr uint16_t kHBlankStart = 1096;
 
-    /// Initial DRAM refresh position; later lines follow the DMA divider.
-    static constexpr uint16_t kDramRefreshPos = 538;
+  /// Initial DRAM refresh position; later lines follow the DMA divider.
+  static constexpr uint16_t kDramRefreshPos = 538;
 
-    /// DRAM refresh penalty in master clocks (40 clocks = 5 × 8-cycle slots).
-    static constexpr uint16_t kDramRefreshClocks = 40;
+  /// DRAM refresh penalty in master clocks (40 clocks = 5 × 8-cycle slots).
+  static constexpr uint16_t kDramRefreshClocks = 40;
 
-    /// HDMA horizontal trigger position.
-    static constexpr uint16_t kHdmaPosition = 1104;
+  /// HDMA horizontal trigger position.
+  static constexpr uint16_t kHdmaPosition = 1104;
 
-    /// Register sampling point for the scanline renderer.
-    static constexpr uint16_t kRenderCycle = 512;
+  /// Register sampling point for the scanline renderer.
+  static constexpr uint16_t kRenderCycle = 512;
 
-    /// NMI trigger position (H counter = 2, at the start of vblank scanline).
-    static constexpr uint16_t kNmiHPos = 2;
+  /// NMI trigger position (H counter = 2, at the start of vblank scanline).
+  static constexpr uint16_t kNmiHPos = 2;
 
-    // Construction
+  // Construction
 
-    explicit Timing(Region region = Region::NTSC);
+  explicit Timing(Region region = Region::NTSC);
 
-    // Configuration
+  // Configuration
 
-    /// Get/set region (changes scanline count + short/long line rules).
-    Region GetRegion() const noexcept { return region_; }
-    uint32_t MasterClockHz() const noexcept { return region_ == Region::PAL ? kMasterClockHzPal : kMasterClockHz; }
-    void SetRegion(Region r) noexcept;
+  /// Get/set region (changes scanline count + short/long line rules).
+  Region GetRegion() const noexcept {
+    return region_;
+  }
+  uint32_t MasterClockHz() const noexcept {
+    return region_ == Region::PAL ? kMasterClockHzPal : kMasterClockHz;
+  }
+  void SetRegion(Region r) noexcept;
 
-    /// Interlace timing samples the PPU input when scanline 128 begins.
-    bool Interlace() const noexcept { return interlace_; }
-    void SetInterlace(bool v) noexcept {
-      interlaceInput_ = v;
-    }
+  /// Interlace timing samples the PPU input when scanline 128 begins.
+  bool Interlace() const noexcept {
+    return interlace_;
+  }
+  void SetInterlace(bool v) noexcept {
+    interlaceInput_ = v;
+  }
 
-    /// VDisp - number of active (visible) scanlines.
-    /// 225 in normal mode, 240 with overscan.
-    uint16_t VDisp() const noexcept { return vdisp_; }
-    void SetVDisp(uint16_t v) noexcept {
-      vdisp_ = v;
-      updateNextEvent();
-    }
+  /// VDisp - number of active (visible) scanlines.
+  /// 225 in normal mode, 240 with overscan.
+  uint16_t VDisp() const noexcept {
+    return vdisp_;
+  }
+  void SetVDisp(uint16_t v) noexcept {
+    vdisp_ = v;
+    updateNextEvent();
+  }
 
-    // Counter state
+  // Counter state
 
-    /// Current horizontal position (0 .. hPeriod-1), in master clocks.
-    uint16_t HCounter() const noexcept { return hcounter_; }
-    uint16_t DramRefreshPosition() const noexcept { return dramRefreshPosition_; }
-    uint16_t HdmaSetupPosition() const noexcept { return hdmaSetupPosition_; }
+  /// Current horizontal position (0 .. hPeriod-1), in master clocks.
+  uint16_t HCounter() const noexcept {
+    return hcounter_;
+  }
+  uint16_t DramRefreshPosition() const noexcept {
+    return dramRefreshPosition_;
+  }
+  uint16_t HdmaSetupPosition() const noexcept {
+    return hdmaSetupPosition_;
+  }
 
-    /// Horizontal dot number for the latched PPU beam counter.
-    uint16_t HDot() const noexcept;
+  /// Horizontal dot number for the latched PPU beam counter.
+  uint16_t HDot() const noexcept;
 
-    /// Current vertical scanline counter (0 .. vPeriod-1).
-    uint16_t VCounter() const noexcept { return vcounter_; }
+  /// Current vertical scanline counter (0 .. vPeriod-1).
+  uint16_t VCounter() const noexcept {
+    return vcounter_;
+  }
 
-    /// Current field (0 = even, 1 = odd).  Toggles every frame.
-    bool Field() const noexcept { return field_; }
+  /// Current field (0 = even, 1 = odd).  Toggles every frame.
+  bool Field() const noexcept {
+    return field_;
+  }
 
-    /// Master clocks in the current scanline.
-    uint16_t HPeriod() const noexcept { return hperiod_; }
-    uint16_t PreviousHPeriod() const noexcept {
-      return previousHPeriod_;
-    }
+  /// Master clocks in the current scanline.
+  uint16_t HPeriod() const noexcept {
+    return hperiod_;
+  }
+  uint16_t PreviousHPeriod() const noexcept {
+    return previousHPeriod_;
+  }
 
-    /// Scanlines in the current frame.
-    uint16_t VPeriod() const noexcept { return vperiod_; }
-    uint16_t PreviousVPeriod() const noexcept {
-      return previousVPeriod_;
-    }
+  /// Scanlines in the current frame.
+  uint16_t VPeriod() const noexcept {
+    return vperiod_;
+  }
+  uint16_t PreviousVPeriod() const noexcept {
+    return previousVPeriod_;
+  }
 
-    /// Total master clocks elapsed since power-on / reset.
-    uint64_t MasterClocksElapsed() const noexcept { return masterClocksElapsed_; }
+  /// Total master clocks elapsed since power-on / reset.
+  uint64_t MasterClocksElapsed() const noexcept {
+    return masterClocksElapsed_;
+  }
 
-    /// Is the current dot position in HBlank?
-    bool InHBlank() const noexcept { return hcounter_ >= kHBlankStart; }
+  /// Is the current dot position in HBlank?
+  bool InHBlank() const noexcept {
+    return hcounter_ >= kHBlankStart;
+  }
 
-    /// Is the current scanline in VBlank?
-    bool InVBlank() const noexcept { return vcounter_ >= vdisp_; }
+  /// Is the current scanline in VBlank?
+  bool InVBlank() const noexcept {
+    return vcounter_ >= vdisp_;
+  }
 
-    /// Frame index (incremented every time V wraps to 0).
-    uint64_t FrameCount() const noexcept { return frameCount_; }
+  /// Frame index (incremented every time V wraps to 0).
+  uint64_t FrameCount() const noexcept {
+    return frameCount_;
+  }
 
-    // Core tick interface
+  // Core tick interface
 
-    /// Advance the timing subsystem by `clocks` master clocks.
-    /// Fires callbacks (onScanline, onVBlank, onHBlank, etc.) at the
-    /// appropriate positions as H/V counters wrap.
-    void Tick(uint32_t clocks);
+  /// Advance the timing subsystem by `clocks` master clocks.
+  /// Fires callbacks (onScanline, onVBlank, onHBlank, etc.) at the
+  /// appropriate positions as H/V counters wrap.
+  void Tick(uint32_t clocks);
 
-    /// Reset all counters to power-on state.
-    void Reset();
+  /// Reset all counters to power-on state.
+  void Reset();
 
-    // Callbacks - set by the integration layer (Emulator / StepFrame)
+  // Callbacks - set by the integration layer (Emulator / StepFrame)
 
-    /// Called at V=0, H=0 (start of a new frame).
-    std::function<void()> onFrameBegin;
+  /// Called at V=0, H=0 (start of a new frame).
+  std::function<void()> onFrameBegin;
 
-    /// Initialize HDMA during scanline zero after the divider-dependent delay.
-    std::function<void()> onHdmaSetup;
+  /// Initialize HDMA during scanline zero after the divider-dependent delay.
+  std::function<void()> onHdmaSetup;
 
-    /// Called when V counter enters a new scanline (H wraps to 0).
-    /// Parameter: new V counter value.
-    std::function<void(uint16_t vcounter)> onScanline;
+  /// Called when V counter enters a new scanline (H wraps to 0).
+  /// Parameter: new V counter value.
+  std::function<void(uint16_t vcounter)> onScanline;
 
-    /// Called when H counter reaches the render sampling point on a visible
-    /// scanline. The PPU line cache should snapshot register state here.
-    std::function<void(uint16_t vcounter)> onRenderCycle;
+  /// Called when H counter reaches the render sampling point on a visible
+  /// scanline. The PPU line cache should snapshot register state here.
+  std::function<void(uint16_t vcounter)> onRenderCycle;
 
-    /// Called when V counter reaches vdisp (VBlank start), H=0.
-    /// This is the moment to fire NMI (after a few-dot delay).
-    std::function<void()> onVBlankBegin;
+  /// Called when V counter reaches vdisp (VBlank start), H=0.
+  /// This is the moment to fire NMI (after a few-dot delay).
+  std::function<void()> onVBlankBegin;
 
-    /// Called when H counter crosses kHBlankStart on a visible scanline.
-    /// Useful for signaling HBlank-related behavior.
-    std::function<void(uint16_t vcounter)> onHBlank;
+  /// Called when H counter crosses kHBlankStart on a visible scanline.
+  /// Useful for signaling HBlank-related behavior.
+  std::function<void(uint16_t vcounter)> onHBlank;
 
-    /// Called when H counter reaches kNmiHPos on the VBlank scanline.
-    /// This is the actual NMI assertion point.
-    std::function<void()> onNmiPoint;
+  /// Called when H counter reaches kNmiHPos on the VBlank scanline.
+  /// This is the actual NMI assertion point.
+  std::function<void()> onNmiPoint;
 
-    /// Called when H counter reaches kDramRefreshPos on any scanline.
-    /// The caller should deduct kDramRefreshClocks from the CPU budget.
-    std::function<void()> onDramRefresh;
+  /// Called when H counter reaches kDramRefreshPos on any scanline.
+  /// The caller should deduct kDramRefreshClocks from the CPU budget.
+  std::function<void()> onDramRefresh;
 
-    /// Called when H counter reaches kHdmaPosition on a visible scanline.
-    /// The caller should run HDMA transfers.
-    std::function<void(uint16_t vcounter)> onHdmaTransfer;
+  /// Called when H counter reaches kHdmaPosition on a visible scanline.
+  /// The caller should run HDMA transfers.
+  std::function<void(uint16_t vcounter)> onHdmaTransfer;
 
-    /// Called every 4 master clocks for NMI/IRQ condition evaluation.
-    /// Parameters: (hcounter, vcounter, vdisp, hperiod).
-    std::function<void(uint16_t, uint16_t, uint16_t, uint16_t)> onIrqPoll;
+  /// Called every 4 master clocks for NMI/IRQ condition evaluation.
+  /// Parameters: (hcounter, vcounter, vdisp, hperiod).
+  std::function<void(uint16_t, uint16_t, uint16_t, uint16_t)> onIrqPoll;
 
-    /// Called every 128 master clocks for auto-joypad polling.
-    /// Parameters: (hcounter, vcounter, vdisp).
-    std::function<void(uint16_t, uint16_t, uint16_t)> onJoypadPoll;
+  /// Called every 128 master clocks for auto-joypad polling.
+  /// Parameters: (hcounter, vcounter, vdisp).
+  std::function<void(uint16_t, uint16_t, uint16_t)> onJoypadPoll;
 
-    // Utility
+  // Utility
 
-    /// Compute the total master clocks in one complete frame for the
-    /// current region/interlace/field configuration.
-    uint32_t MasterClocksThisFrame() const;
+  /// Compute the total master clocks in one complete frame for the
+  /// current region/interlace/field configuration.
+  uint32_t MasterClocksThisFrame() const;
 
-    /// Compute the H period for a given scanline in the current configuration.
-    uint16_t HPeriodForScanline(uint16_t scanline) const;
+  /// Compute the H period for a given scanline in the current configuration.
+  uint16_t HPeriodForScanline(uint16_t scanline) const;
 
 private:
   void tickOnce(uint8_t clocks = 2);
@@ -250,7 +276,6 @@ private:
   bool hdmaFired_ = false;
   bool renderCycleFired_ = false;
   bool nmiFired_ = false;
-
 };
 
 } // namespace snes::core

@@ -1,5 +1,3 @@
-// snes emulator
-// core/include/snes/core/Cartridge.hpp
 // Cartridge metadata, address mapping, enhancement devices, and saves.
 
 #pragma once
@@ -19,8 +17,8 @@
 #include "snes/core/SuperFx.hpp"
 #include <memory>
 
-#include <cstddef>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -31,82 +29,93 @@
 namespace snes::core {
 
 enum class MappingType {
-    Unknown,
-    LoRom,
-    HiRom,
-    ExHiRom,
-    ExLoRom,
-    LoRomNoMad1,
-    LoRom24Mbit,
-    LoRomLargeSram,
-    SufamiTurbo,
-    BroadcastLoRom,
-    BroadcastHiRom,
-    Sdd1,
-    DecompressedSdd1,
-    St010,
-    Spc7110,
-    Sa1,
-    SuperFx,
-    St011,
-    BroadcastSa1,
-    Bsx
+  Unknown,
+  LoRom,
+  HiRom,
+  ExHiRom,
+  ExLoRom,
+  LoRomNoMad1,
+  LoRom24Mbit,
+  LoRomLargeSram,
+  SufamiTurbo,
+  BroadcastLoRom,
+  BroadcastHiRom,
+  Sdd1,
+  DecompressedSdd1,
+  St010,
+  Spc7110,
+  Sa1,
+  SuperFx,
+  St011,
+  BroadcastSa1,
+  Bsx
 };
 
-const char* MappingName(MappingType mapping) noexcept;
+const char *MappingName(MappingType mapping) noexcept;
 
 enum class EnhancementChip {
-    None, Dsp1, Dsp2, Dsp3, Dsp4, Obc1, Srtc, SuperFx, Sa1,
-    Sdd1, Spc7110, Spc7110Rtc, Cx4, St010, St011, St018
+  None,
+  Dsp1,
+  Dsp2,
+  Dsp3,
+  Dsp4,
+  Obc1,
+  Srtc,
+  SuperFx,
+  Sa1,
+  Sdd1,
+  Spc7110,
+  Spc7110Rtc,
+  Cx4,
+  St010,
+  St011,
+  St018
 };
 
-const char* ChipName(EnhancementChip chip) noexcept;
+const char *ChipName(EnhancementChip chip) noexcept;
 
-enum class RomSpeed {
-    Slow,
-    Fast
-};
+enum class RomSpeed { Slow, Fast };
 
 struct RomHeader {
-    size_t headerOffset = 0;
-    std::string title;
-    MappingType mapping = MappingType::Unknown;
-    RomSpeed speed = RomSpeed::Slow;
-    uint8_t mapMode = 0;
-    uint8_t maker = 0;
-    EnhancementChip chip = EnhancementChip::None;
-    uint8_t cartridgeType = 0;
-    uint8_t romSizeShift = 0;
-    uint8_t sramSizeShift = 0;
-    uint8_t country = 0;
-    uint8_t version = 0;
-    uint16_t resetVector = 0;
-    uint16_t checksum = 0;
-    uint16_t checksumComplement = 0;
-    uint32_t score = 0;
+  size_t headerOffset = 0;
+  std::string title;
+  MappingType mapping = MappingType::Unknown;
+  RomSpeed speed = RomSpeed::Slow;
+  uint8_t mapMode = 0;
+  uint8_t maker = 0;
+  EnhancementChip chip = EnhancementChip::None;
+  uint8_t cartridgeType = 0;
+  uint8_t romSizeShift = 0;
+  uint8_t sramSizeShift = 0;
+  uint8_t country = 0;
+  uint8_t version = 0;
+  uint16_t resetVector = 0;
+  uint16_t checksum = 0;
+  uint16_t checksumComplement = 0;
+  uint32_t score = 0;
 };
 
 struct RomNormalizationInfo {
-    bool hadCopierHeader = false;
-    bool hadInterleave = false;
+  bool hadCopierHeader = false;
+  bool hadInterleave = false;
 };
 
 struct DatabaseOverride {
-    std::optional<MappingType> forceMapping;
-    std::optional<size_t> forceSramSize;
-    std::optional<RomSpeed> forceSpeed;
-    std::optional<std::string> forceTitle;
+  std::optional<MappingType> forceMapping;
+  std::optional<size_t> forceSramSize;
+  std::optional<RomSpeed> forceSpeed;
+  std::optional<std::string> forceTitle;
 };
 
 class CartridgeDatabase {
 public:
-    CartridgeDatabase();
+  CartridgeDatabase();
 
-    void AddOverride(uint32_t crc32, DatabaseOverride entry);
-    std::optional<DatabaseOverride> Find(uint32_t crc32) const;
+  void AddOverride(uint32_t crc32, DatabaseOverride entry);
+  std::optional<DatabaseOverride> Find(uint32_t crc32) const;
 
 private:
-    std::unordered_map<uint32_t, DatabaseOverride> overrides_;
+  std::unordered_map<uint32_t, DatabaseOverride> overrides_;
 };
 
 class Cartridge {
@@ -171,58 +180,60 @@ public:
   std::vector<uint8_t> SaveRtc() {
     return spc7110_ ? spc7110_->SaveRtc() : std::vector<uint8_t>{};
   }
-    bool LoadRtc(std::span<const uint8_t> data) { return spc7110_ && spc7110_->LoadRtc(data); }
+  bool LoadRtc(std::span<const uint8_t> data) {
+    return spc7110_ && spc7110_->LoadRtc(data);
+  }
 
 private:
-    static std::optional<RomHeader> ParseHeader(std::span<const uint8_t> rom);
-    static std::optional<RomHeader> ParseHeaderAt(std::span<const uint8_t> rom, size_t offset);
-    void InitializeBroadcast(std::span<const uint8_t> pack = {});
+  static std::optional<RomHeader> ParseHeader(std::span<const uint8_t> rom);
+  static std::optional<RomHeader> ParseHeaderAt(std::span<const uint8_t> rom, size_t offset);
+  void InitializeBroadcast(std::span<const uint8_t> pack = {});
 
-    static std::vector<uint8_t> RemoveCopierHeader(std::span<const uint8_t> rom,
-                                                   bool* removed);
-    static std::optional<RomHeader> NormalizeRomLayout(std::vector<uint8_t>& rom, bool& deinterleaved);
-    static std::vector<uint8_t> DeinterleaveRom(std::span<const uint8_t> rom);
+  static std::vector<uint8_t> RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed);
+  static std::optional<RomHeader> NormalizeRomLayout(std::vector<uint8_t> &rom,
+                                                     bool &deinterleaved);
+  static std::vector<uint8_t> DeinterleaveRom(std::span<const uint8_t> rom);
 
-    std::optional<size_t> ResolveRomOffset(uint32_t cpuAddress) const;
-    std::optional<size_t> ResolveSramOffset(uint32_t cpuAddress) const;
-    bool SelectsLoRomSram(uint32_t cpuAddress) const;
-    std::optional<size_t> ResolveMemoryPackOffset(uint32_t cpuAddress) const;
-    bool SelectsFlashIo(uint32_t cpuAddress) const;
-    uint8_t ReadMemoryPack(uint32_t cpuAddress, size_t offset) const;
-    void WriteMemoryPack(uint32_t cpuAddress, size_t offset, uint8_t value);
+  std::optional<size_t> ResolveRomOffset(uint32_t cpuAddress) const;
+  std::optional<size_t> ResolveSramOffset(uint32_t cpuAddress) const;
+  bool SelectsLoRomSram(uint32_t cpuAddress) const;
+  std::optional<size_t> ResolveMemoryPackOffset(uint32_t cpuAddress) const;
+  bool SelectsFlashIo(uint32_t cpuAddress) const;
+  uint8_t ReadMemoryPack(uint32_t cpuAddress, size_t offset) const;
+  void WriteMemoryPack(uint32_t cpuAddress, size_t offset, uint8_t value);
 
-    static uint32_t ComputeCrc32(std::span<const uint8_t> data);
+  static uint32_t ComputeCrc32(std::span<const uint8_t> data);
 
-    std::vector<uint8_t> rom_;
-    std::vector<uint8_t> sram_;
-    RomHeader header_{};
-    uint32_t romCrc32_ = 0;
-    bool memselFast_ = false;
-    size_t slotSize_[2]{};
-    size_t slotOffset_[2]{};
-    std::vector<uint8_t> memoryPack_;
-    bool memoryPackReadOnly_ = false;
-    bool broadcast24Mbit_ = false;
-    bool flashProgram_ = false;
-    bool flashVendor_ = false;
-    bool flashExtendedStatus_ = false;
-    mutable bool flashStatus_ = false;
-    uint8_t flashCommand_ = 0;
-    std::array<uint8_t, 8> sdd1Registers_{0, 0, 0, 0, 0, 1, 2, 3};
-    St010 st010_;
-    std::unique_ptr<Spc7110> spc7110_;
-    std::unique_ptr<Sa1> sa1_;
-    std::unique_ptr<SuperFx> superFx_;
-    std::unique_ptr<Cx4> cx4_;
-    std::unique_ptr<Cx4Processor> cx4Processor_;
-    std::unique_ptr<St011> st011_;
-    std::unique_ptr<St018> st018_;
-    std::unique_ptr<St018Processor> armDsp_;
-    std::unique_ptr<Bsx> bsx_;
-    std::unique_ptr<Dsp3> dsp3_;
-    std::unique_ptr<Dsp4> dsp4_;
-    std::unique_ptr<Obc1> obc1_;
-    std::unique_ptr<NecDsp> necDsp_;
+  std::vector<uint8_t> rom_;
+  std::vector<uint8_t> sram_;
+  RomHeader header_{};
+  uint32_t romCrc32_ = 0;
+  bool memselFast_ = false;
+  size_t slotSize_[2]{};
+  size_t slotOffset_[2]{};
+  std::vector<uint8_t> memoryPack_;
+  bool memoryPackReadOnly_ = false;
+  bool broadcast24Mbit_ = false;
+  bool flashProgram_ = false;
+  bool flashVendor_ = false;
+  bool flashExtendedStatus_ = false;
+  mutable bool flashStatus_ = false;
+  uint8_t flashCommand_ = 0;
+  std::array<uint8_t, 8> sdd1Registers_{0, 0, 0, 0, 0, 1, 2, 3};
+  St010 st010_;
+  std::unique_ptr<Spc7110> spc7110_;
+  std::unique_ptr<Sa1> sa1_;
+  std::unique_ptr<SuperFx> superFx_;
+  std::unique_ptr<Cx4> cx4_;
+  std::unique_ptr<Cx4Processor> cx4Processor_;
+  std::unique_ptr<St011> st011_;
+  std::unique_ptr<St018> st018_;
+  std::unique_ptr<St018Processor> armDsp_;
+  std::unique_ptr<Bsx> bsx_;
+  std::unique_ptr<Dsp3> dsp3_;
+  std::unique_ptr<Dsp4> dsp4_;
+  std::unique_ptr<Obc1> obc1_;
+  std::unique_ptr<NecDsp> necDsp_;
 };
 
 } // namespace snes::core

@@ -1,4 +1,3 @@
-// snes emulator
 // SA-1 normal DMA and packed/unpacked character conversion.
 #include "snes/core/Sa1.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
@@ -84,24 +83,27 @@ void Sa1::StepDma() {
 }
 
 uint8_t Sa1::ConversionDepth() const noexcept {
-    switch (registers_[0x31] & 3) {
-    case 0: return 8;
-    case 1: return 4;
-    default: return 2;
-    }
+  switch (registers_[0x31] & 3) {
+  case 0:
+    return 8;
+  case 1:
+    return 4;
+  default:
+    return 2;
+  }
 }
 
-void Sa1::WritePlanarTile(const std::array<uint8_t, 64>& pixels, uint16_t destination) {
-    const unsigned depth = ConversionDepth();
-    for (unsigned plane = 0; plane < depth; ++plane) {
-        for (unsigned y = 0; y < 8; ++y) {
-            uint8_t value = 0;
-            for (unsigned x = 0; x < 8; ++x)
-                value |= ((pixels[y * 8 + x] >> plane) & 1) << (7 - x);
-            const unsigned offset = (plane / 2) * 16 + y * 2 + (plane & 1);
-            iram_[(destination + offset) & 0x7ff] = value;
-        }
+void Sa1::WritePlanarTile(const std::array<uint8_t, 64> &pixels, uint16_t destination) {
+  const unsigned depth = ConversionDepth();
+  for (unsigned plane = 0; plane < depth; ++plane) {
+    for (unsigned y = 0; y < 8; ++y) {
+      uint8_t value = 0;
+      for (unsigned x = 0; x < 8; ++x)
+        value |= ((pixels[y * 8 + x] >> plane) & 1) << (7 - x);
+      const unsigned offset = (plane / 2) * 16 + y * 2 + (plane & 1);
+      iram_[(destination + offset) & 0x7ff] = value;
     }
+  }
 }
 
 void Sa1::StartConversion() {
@@ -139,23 +141,23 @@ uint8_t Sa1::ReadConverted(uint32_t offset) {
 }
 
 void Sa1::PushConversionRows() {
-    // Each completed eight-pixel register row is visible immediately. The two
-    // register halves alternate while the output walks eight planar rows.
-    const unsigned registerBase = 0x40 + (conversionRows_ & 1) * 8;
-    const unsigned tileBytes = 8 * ConversionDepth();
-    const unsigned base = (RegisterWord(0x35) & 0x7ff) & ~(tileBytes * 2 - 1);
-    for (unsigned plane = 0; plane < ConversionDepth(); ++plane) {
-        uint8_t value = 0;
-        for (unsigned pixel = 0; pixel < 8; ++pixel)
-            value |= ((registers_[registerBase + pixel] >> plane) & 1) << (7 - pixel);
-        const unsigned offset = conversionBuffer_ * tileBytes + (plane / 2) * 16 +
-                                conversionRows_ * 2 + (plane & 1);
-        iram_[(base + offset) & 0x7ff] = value;
-    }
-    if (++conversionRows_ == 8) {
-        conversionRows_ = 0;
-        conversionBuffer_ ^= 1;
-    }
+  // Each completed eight-pixel register row is visible immediately. The two
+  // register halves alternate while the output walks eight planar rows.
+  const unsigned registerBase = 0x40 + (conversionRows_ & 1) * 8;
+  const unsigned tileBytes = 8 * ConversionDepth();
+  const unsigned base = (RegisterWord(0x35) & 0x7ff) & ~(tileBytes * 2 - 1);
+  for (unsigned plane = 0; plane < ConversionDepth(); ++plane) {
+    uint8_t value = 0;
+    for (unsigned pixel = 0; pixel < 8; ++pixel)
+      value |= ((registers_[registerBase + pixel] >> plane) & 1) << (7 - pixel);
+    const unsigned offset =
+        conversionBuffer_ * tileBytes + (plane / 2) * 16 + conversionRows_ * 2 + (plane & 1);
+    iram_[(base + offset) & 0x7ff] = value;
+  }
+  if (++conversionRows_ == 8) {
+    conversionRows_ = 0;
+    conversionBuffer_ ^= 1;
+  }
 }
 
 } // namespace snes::core

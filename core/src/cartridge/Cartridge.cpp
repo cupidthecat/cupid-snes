@@ -1,5 +1,3 @@
-// snes emulator
-// core/src/cartridge/Cartridge.cpp
 // Cartridge loading, header detection, mapping, and save RAM.
 
 #include "snes/core/Cartridge.hpp"
@@ -21,116 +19,116 @@ namespace {
 constexpr std::array<size_t, 4> kHeaderOffsets{0x7FC0, 0xFFC0, 0x407FC0, 0x40FFC0};
 
 size_t HeaderRomSize(uint8_t shift) {
-    if (shift < 8 || shift > 30) {
-        return 0;
-    }
+  if (shift < 8 || shift > 30) {
+    return 0;
+  }
 
-    return static_cast<size_t>(1024) << shift;
+  return static_cast<size_t>(1024) << shift;
 }
 
 size_t HeaderSramSize(uint8_t shift) {
-    if (shift == 0) {
-        return 0;
-    }
+  if (shift == 0) {
+    return 0;
+  }
 
-    if (shift > 14) {
-        return 0;
-    }
+  if (shift > 14) {
+    return 0;
+  }
 
-    return static_cast<size_t>(1024) << shift;
+  return static_cast<size_t>(1024) << shift;
 }
 
 MappingType MappingFromModeByte(uint8_t mapMode) {
-    if ((mapMode & 0xf0) != 0x20 && (mapMode & 0xf0) != 0x30) return MappingType::Unknown;
-    switch (mapMode & 0x0F) {
-    case 0x00:
-        return MappingType::LoRom;
-    case 0x01:
-        return MappingType::HiRom;
-    case 0x05:
-        return MappingType::ExHiRom;
-    default:
-        return MappingType::Unknown;
-    }
+  if ((mapMode & 0xf0) != 0x20 && (mapMode & 0xf0) != 0x30)
+    return MappingType::Unknown;
+  switch (mapMode & 0x0F) {
+  case 0x00:
+    return MappingType::LoRom;
+  case 0x01:
+    return MappingType::HiRom;
+  case 0x05:
+    return MappingType::ExHiRom;
+  default:
+    return MappingType::Unknown;
+  }
 }
 
 RomSpeed SpeedFromModeByte(uint8_t mapMode) {
-    return (mapMode & 0x10) != 0 ? RomSpeed::Fast : RomSpeed::Slow;
+  return (mapMode & 0x10) != 0 ? RomSpeed::Fast : RomSpeed::Slow;
 }
 
 bool IsMostlyPrintable(std::span<const uint8_t> bytes) {
-    size_t printable = 0;
+  size_t printable = 0;
 
-    for (auto value : bytes) {
-        if (value == 0 || value == ' ') {
-            ++printable;
-            continue;
-        }
-
-        if (std::isprint(static_cast<unsigned char>(value)) != 0) {
-            ++printable;
-        }
+  for (auto value : bytes) {
+    if (value == 0 || value == ' ') {
+      ++printable;
+      continue;
     }
 
-    return printable >= (bytes.size() * 3) / 4;
+    if (std::isprint(static_cast<unsigned char>(value)) != 0) {
+      ++printable;
+    }
+  }
+
+  return printable >= (bytes.size() * 3) / 4;
 }
 
 std::string TrimTitle(std::span<const uint8_t> bytes) {
-    std::string out;
-    out.reserve(bytes.size());
+  std::string out;
+  out.reserve(bytes.size());
 
-    for (auto value : bytes) {
-        if (value == 0) {
-            break;
-        }
-
-        out.push_back(static_cast<char>(value));
+  for (auto value : bytes) {
+    if (value == 0) {
+      break;
     }
 
-    while (!out.empty() && (out.back() == ' ' || out.back() == '\0')) {
-        out.pop_back();
-    }
+    out.push_back(static_cast<char>(value));
+  }
 
-    return out;
+  while (!out.empty() && (out.back() == ' ' || out.back() == '\0')) {
+    out.pop_back();
+  }
+
+  return out;
 }
 
 uint16_t Read16(std::span<const uint8_t> data, size_t offset) {
-    return static_cast<uint16_t>(data[offset]) |
-           (static_cast<uint16_t>(data[offset + 1]) << 8);
+  return static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
 }
 
 size_t MirrorOffset(size_t offset, size_t size) {
-    if (size == 0) {
-        return 0;
-    }
+  if (size == 0) {
+    return 0;
+  }
 
-    // Fold unconnected address lines while retaining each populated block.
-    // For example, a 3 MiB image repeats its last MiB at offsets 3..4 MiB.
-    size_t base = 0;
-    while (offset >= size) {
-        const size_t block = std::bit_floor(offset);
-        offset -= block;
-        if (size > block) {
-            base += block;
-            size -= block;
-        }
+  // Fold unconnected address lines while retaining each populated block.
+  // For example, a 3 MiB image repeats its last MiB at offsets 3..4 MiB.
+  size_t base = 0;
+  while (offset >= size) {
+    const size_t block = std::bit_floor(offset);
+    offset -= block;
+    if (size > block) {
+      base += block;
+      size -= block;
     }
-    return base + offset;
+  }
+  return base + offset;
 }
 
 bool IsFastRegion(uint32_t cpuAddress) {
-    const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
-    const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
+  const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
+  const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
 
-    if (bank >= 0xC0) {
-        return true;
-    }
+  if (bank >= 0xC0) {
+    return true;
+  }
 
-    if (bank >= 0x80 && bank <= 0xBF && addr >= 0x8000) {
-        return true;
-    }
+  if (bank >= 0x80 && bank <= 0xBF && addr >= 0x8000) {
+    return true;
+  }
 
-    return false;
+  return false;
 }
 
 EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
@@ -193,9 +191,9 @@ EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
 }
 
 bool HasDedicatedRomMapper(EnhancementChip chip) {
-    return chip == EnhancementChip::SuperFx || chip == EnhancementChip::Sa1 ||
-           chip == EnhancementChip::Sdd1 || chip == EnhancementChip::Spc7110 ||
-           chip == EnhancementChip::Spc7110Rtc;
+  return chip == EnhancementChip::SuperFx || chip == EnhancementChip::Sa1 ||
+         chip == EnhancementChip::Sdd1 || chip == EnhancementChip::Spc7110 ||
+         chip == EnhancementChip::Spc7110Rtc;
 }
 
 std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
@@ -222,73 +220,109 @@ std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
 }
 
 bool HasSignature(std::span<const uint8_t> bytes, size_t offset, std::string_view signature) {
-    return offset <= bytes.size() && signature.size() <= bytes.size() - offset &&
-        std::equal(signature.begin(), signature.end(), bytes.begin() + offset);
+  return offset <= bytes.size() && signature.size() <= bytes.size() - offset &&
+         std::equal(signature.begin(), signature.end(), bytes.begin() + offset);
 }
 
 } // namespace
 
-const char* MappingName(MappingType mapping) noexcept {
-    switch (mapping) {
-    case MappingType::LoRom: return "LoROM";
-    case MappingType::HiRom: return "HiROM";
-    case MappingType::ExLoRom: return "ExLoROM";
-    case MappingType::ExHiRom: return "ExHiROM";
-    case MappingType::LoRomNoMad1: return "LoROM (NoMAD-1)";
-    case MappingType::LoRom24Mbit: return "LoROM (24 Mbit board)";
-    case MappingType::LoRomLargeSram: return "LoROM (large SRAM board)";
-    case MappingType::St010: return "ST010 LoROM";
-    case MappingType::Spc7110: return "SPC7110 HiROM";
-    case MappingType::Sa1: return "SA-1";
-    case MappingType::SuperFx: return "Super FX";
-    case MappingType::St011: return "ST011 LoROM";
-    case MappingType::BroadcastSa1: return "BS cartridge (SA-1)";
-    case MappingType::Bsx: return "BS-X BIOS";
-    case MappingType::SufamiTurbo: return "Sufami Turbo";
-    case MappingType::BroadcastLoRom: return "BS cartridge (LoROM)";
-    case MappingType::BroadcastHiRom: return "BS cartridge (HiROM)";
-    case MappingType::Sdd1: return "S-DD1";
-    case MappingType::DecompressedSdd1: return "S-DD1 (decompressed image)";
-    default: return "Unknown";
-    }
+const char *MappingName(MappingType mapping) noexcept {
+  switch (mapping) {
+  case MappingType::LoRom:
+    return "LoROM";
+  case MappingType::HiRom:
+    return "HiROM";
+  case MappingType::ExLoRom:
+    return "ExLoROM";
+  case MappingType::ExHiRom:
+    return "ExHiROM";
+  case MappingType::LoRomNoMad1:
+    return "LoROM (NoMAD-1)";
+  case MappingType::LoRom24Mbit:
+    return "LoROM (24 Mbit board)";
+  case MappingType::LoRomLargeSram:
+    return "LoROM (large SRAM board)";
+  case MappingType::St010:
+    return "ST010 LoROM";
+  case MappingType::Spc7110:
+    return "SPC7110 HiROM";
+  case MappingType::Sa1:
+    return "SA-1";
+  case MappingType::SuperFx:
+    return "Super FX";
+  case MappingType::St011:
+    return "ST011 LoROM";
+  case MappingType::BroadcastSa1:
+    return "BS cartridge (SA-1)";
+  case MappingType::Bsx:
+    return "BS-X BIOS";
+  case MappingType::SufamiTurbo:
+    return "Sufami Turbo";
+  case MappingType::BroadcastLoRom:
+    return "BS cartridge (LoROM)";
+  case MappingType::BroadcastHiRom:
+    return "BS cartridge (HiROM)";
+  case MappingType::Sdd1:
+    return "S-DD1";
+  case MappingType::DecompressedSdd1:
+    return "S-DD1 (decompressed image)";
+  default:
+    return "Unknown";
+  }
 }
 
-const char* ChipName(EnhancementChip chip) noexcept {
-    switch (chip) {
-    case EnhancementChip::None: return "None";
-    case EnhancementChip::Dsp1: return "DSP-1";
-    case EnhancementChip::Dsp2: return "DSP-2";
-    case EnhancementChip::Dsp3: return "DSP-3";
-    case EnhancementChip::Dsp4: return "DSP-4";
-    case EnhancementChip::Obc1: return "OBC1";
-    case EnhancementChip::Srtc: return "S-RTC";
-    case EnhancementChip::SuperFx: return "Super FX";
-    case EnhancementChip::Sa1: return "SA-1";
-    case EnhancementChip::Sdd1: return "S-DD1";
-    case EnhancementChip::Spc7110: return "SPC7110";
-    case EnhancementChip::Spc7110Rtc: return "SPC7110 + RTC";
-    case EnhancementChip::Cx4: return "Cx4";
-    case EnhancementChip::St010: return "ST010";
-    case EnhancementChip::St011: return "ST011";
-    case EnhancementChip::St018: return "ST018";
-    }
-    return "Unknown";
+const char *ChipName(EnhancementChip chip) noexcept {
+  switch (chip) {
+  case EnhancementChip::None:
+    return "None";
+  case EnhancementChip::Dsp1:
+    return "DSP-1";
+  case EnhancementChip::Dsp2:
+    return "DSP-2";
+  case EnhancementChip::Dsp3:
+    return "DSP-3";
+  case EnhancementChip::Dsp4:
+    return "DSP-4";
+  case EnhancementChip::Obc1:
+    return "OBC1";
+  case EnhancementChip::Srtc:
+    return "S-RTC";
+  case EnhancementChip::SuperFx:
+    return "Super FX";
+  case EnhancementChip::Sa1:
+    return "SA-1";
+  case EnhancementChip::Sdd1:
+    return "S-DD1";
+  case EnhancementChip::Spc7110:
+    return "SPC7110";
+  case EnhancementChip::Spc7110Rtc:
+    return "SPC7110 + RTC";
+  case EnhancementChip::Cx4:
+    return "Cx4";
+  case EnhancementChip::St010:
+    return "ST010";
+  case EnhancementChip::St011:
+    return "ST011";
+  case EnhancementChip::St018:
+    return "ST018";
+  }
+  return "Unknown";
 }
 
 CartridgeDatabase::CartridgeDatabase() {
-    AddOverride(0x00000000, DatabaseOverride{});
+  AddOverride(0x00000000, DatabaseOverride{});
 }
 
 void CartridgeDatabase::AddOverride(uint32_t crc32, DatabaseOverride entry) {
-    overrides_[crc32] = std::move(entry);
+  overrides_[crc32] = std::move(entry);
 }
 
 std::optional<DatabaseOverride> CartridgeDatabase::Find(uint32_t crc32) const {
-    if (const auto it = overrides_.find(crc32); it != overrides_.end()) {
-        return it->second;
-    }
+  if (const auto it = overrides_.find(crc32); it != overrides_.end()) {
+    return it->second;
+  }
 
-    return std::nullopt;
+  return std::nullopt;
 }
 
 std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romImage,
@@ -520,45 +554,51 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   return cart;
 }
 
-std::optional<Cartridge> Cartridge::FromSufamiTurbo(
-    std::span<const uint8_t> bios, std::span<const uint8_t> slotA,
-    std::span<const uint8_t> slotB, std::string* error) {
-    if (error) error->clear();
-    const auto normalizedBios = RemoveCopierHeader(bios, nullptr);
-    const std::array slots{RemoveCopierHeader(slotA, nullptr), RemoveCopierHeader(slotB, nullptr)};
-    if (normalizedBios.size() != 0x40000 || !HasSignature(normalizedBios, 0, "BANDAI SFC-ADX") ||
-        !HasSignature(normalizedBios, 0x10, "SFC-ADX BACKUP")) {
-        if (error) *error = "Invalid Sufami Turbo BIOS (expected a 256 KiB base cartridge)";
-        return std::nullopt;
+std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bios,
+                                                    std::span<const uint8_t> slotA,
+                                                    std::span<const uint8_t> slotB,
+                                                    std::string *error) {
+  if (error)
+    error->clear();
+  const auto normalizedBios = RemoveCopierHeader(bios, nullptr);
+  const std::array slots{RemoveCopierHeader(slotA, nullptr), RemoveCopierHeader(slotB, nullptr)};
+  if (normalizedBios.size() != 0x40000 || !HasSignature(normalizedBios, 0, "BANDAI SFC-ADX") ||
+      !HasSignature(normalizedBios, 0x10, "SFC-ADX BACKUP")) {
+    if (error)
+      *error = "Invalid Sufami Turbo BIOS (expected a 256 KiB base cartridge)";
+    return std::nullopt;
+  }
+  for (const auto &slot : slots) {
+    if (!slot.empty() &&
+        (slot.size() < 0x80000 || slot.size() > 0x100000 ||
+         !HasSignature(slot, 0, "BANDAI SFC-ADX") || HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
+      if (error)
+        *error = "Invalid Sufami Turbo slot image (expected a 512 KiB to 1 MiB game)";
+      return std::nullopt;
     }
-    for (const auto& slot : slots) {
-        if (!slot.empty() && (slot.size() < 0x80000 || slot.size() > 0x100000 ||
-            !HasSignature(slot, 0, "BANDAI SFC-ADX") || HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
-            if (error) *error = "Invalid Sufami Turbo slot image (expected a 512 KiB to 1 MiB game)";
-            return std::nullopt;
-        }
-    }
-    auto cart = FromRomImage(normalizedBios, nullptr, nullptr, error);
-    if (!cart) return std::nullopt;
-    cart->header_.mapping = MappingType::SufamiTurbo;
-    cart->header_.chip = EnhancementChip::None;
-    // A stable 16 KiB region per slot keeps saves independent of slot occupancy.
-    cart->sram_.assign(0x8000, 0xff);
-    for (unsigned i = 0; i < 2; ++i) {
-        cart->slotOffset_[i] = cart->rom_.size();
-        cart->slotSize_[i] = slots[i].size();
-        cart->rom_.insert(cart->rom_.end(), slots[i].begin(), slots[i].end());
-    }
-    cart->romCrc32_ = ComputeCrc32(cart->rom_);
-    return cart;
+  }
+  auto cart = FromRomImage(normalizedBios, nullptr, nullptr, error);
+  if (!cart)
+    return std::nullopt;
+  cart->header_.mapping = MappingType::SufamiTurbo;
+  cart->header_.chip = EnhancementChip::None;
+  // A stable 16 KiB region per slot keeps saves independent of slot occupancy.
+  cart->sram_.assign(0x8000, 0xff);
+  for (unsigned i = 0; i < 2; ++i) {
+    cart->slotOffset_[i] = cart->rom_.size();
+    cart->slotSize_[i] = slots[i].size();
+    cart->rom_.insert(cart->rom_.end(), slots[i].begin(), slots[i].end());
+  }
+  cart->romCrc32_ = ComputeCrc32(cart->rom_);
+  return cart;
 }
 
-const RomHeader& Cartridge::Header() const noexcept {
-    return header_;
+const RomHeader &Cartridge::Header() const noexcept {
+  return header_;
 }
 
 uint32_t Cartridge::RomCrc32() const noexcept {
-    return romCrc32_;
+  return romCrc32_;
 }
 
 void Cartridge::Reset() {
@@ -598,11 +638,11 @@ void Cartridge::Reset() {
 }
 
 void Cartridge::SetMemselFast(bool enabled) noexcept {
-    memselFast_ = enabled;
+  memselFast_ = enabled;
 }
 
 bool Cartridge::MemselFast() const noexcept {
-    return memselFast_;
+  return memselFast_;
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
@@ -740,7 +780,7 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
 }
 
 uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
-    return (memselFast_ && IsFastRegion(cpuAddress)) ? 6u : 8u;
+  return (memselFast_ && IsFastRegion(cpuAddress)) ? 6u : 8u;
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
@@ -778,24 +818,27 @@ bool Cartridge::CpuIrqPending() const noexcept {
          (superFx_ && superFx_->CpuIrqPending()) || (bsx_ && bsx_->CpuIrqPending());
 }
 
-std::vector<uint8_t> Cartridge::BeginDma(unsigned channel, uint32_t address,
-                                       uint16_t size, bool fixed, bool fromBBus) {
-    if (header_.mapping != MappingType::Sdd1 || channel >= 8 || !fixed || fromBBus ||
-        address < 0xc00000 || address > 0xffffff ||
-        !(sdd1Registers_[0] & sdd1Registers_[1] & (1u << channel))) return {};
-    return DecompressSdd1([this, address](uint32_t offset) {
+std::vector<uint8_t> Cartridge::BeginDma(unsigned channel, uint32_t address, uint16_t size,
+                                         bool fixed, bool fromBBus) {
+  if (header_.mapping != MappingType::Sdd1 || channel >= 8 || !fixed || fromBBus ||
+      address < 0xc00000 || address > 0xffffff ||
+      !(sdd1Registers_[0] & sdd1Registers_[1] & (1u << channel)))
+    return {};
+  return DecompressSdd1(
+      [this, address](uint32_t offset) {
         // Fetch through the MMC so input can cross a bank window or ROM mirror.
         return Read(0xc00000 | ((address + offset) & 0x3fffff));
-    }, size ? size : 0x10000);
+      },
+      size ? size : 0x10000);
 }
 
 void Cartridge::EndDma(unsigned channel) {
-    if (header_.mapping == MappingType::Sdd1 && channel < 8)
-        sdd1Registers_[1] &= uint8_t(~(1u << channel));
+  if (header_.mapping == MappingType::Sdd1 && channel < 8)
+    sdd1Registers_[1] &= uint8_t(~(1u << channel));
 }
 
 std::span<const uint8_t> Cartridge::RomData() const noexcept {
-    return rom_;
+  return rom_;
 }
 
 std::span<const uint8_t> Cartridge::SramData() const noexcept {
@@ -809,14 +852,14 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
     necDsp_->LoadRam(data);
     return;
   }
-    if (sram_.empty()) {
-        return;
-    }
+  if (sram_.empty()) {
+    return;
+  }
 
-    const auto bytes = std::min(sram_.size(), data.size());
-    std::copy_n(data.begin(), bytes, sram_.begin());
-    if (obc1_)
-      obc1_->Reset();
+  const auto bytes = std::min(sram_.size(), data.size());
+  std::copy_n(data.begin(), bytes, sram_.begin());
+  if (obc1_)
+    obc1_->Reset();
 }
 
 bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
@@ -841,415 +884,449 @@ bool Cartridge::MapCx4Processor(MemoryBus &bus, uint8_t slot) const {
 }
 
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {
-    if (header_.mapping != MappingType::SufamiTurbo || slot >= 2 || slotSize_[slot] == 0) return {};
-    return std::span<const uint8_t>(sram_).subspan(slot * 0x4000, 0x4000);
+  if (header_.mapping != MappingType::SufamiTurbo || slot >= 2 || slotSize_[slot] == 0)
+    return {};
+  return std::span<const uint8_t>(sram_).subspan(slot * 0x4000, 0x4000);
 }
 
 void Cartridge::LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
-    const auto size = SlotSramData(slot).size();
-    if (size) std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slot * 0x4000);
+  const auto size = SlotSramData(slot).size();
+  if (size)
+    std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slot * 0x4000);
 }
 
 std::optional<RomHeader> Cartridge::ParseHeader(std::span<const uint8_t> rom) {
-    std::optional<RomHeader> best;
-    for (const auto base : kHeaderOffsets) {
-        // Dedicated bank controllers keep their header in the first ROM region.
-        // Their graphics/data banks are not ordinary extended-ROM boot chips.
-        if (base >= 0x400000 && best && HasDedicatedRomMapper(best->chip)) break;
-        auto candidate = ParseHeaderAt(rom, base);
-        if (candidate && (!best || candidate->score > best->score ||
-            (base >= 0x400000 && candidate->score == best->score))) {
-            best = std::move(candidate);
-        }
+  std::optional<RomHeader> best;
+  for (const auto base : kHeaderOffsets) {
+    // Dedicated bank controllers keep their header in the first ROM region.
+    // Their graphics/data banks are not ordinary extended-ROM boot chips.
+    if (base >= 0x400000 && best && HasDedicatedRomMapper(best->chip))
+      break;
+    auto candidate = ParseHeaderAt(rom, base);
+    if (candidate && (!best || candidate->score > best->score ||
+                      (base >= 0x400000 && candidate->score == best->score))) {
+      best = std::move(candidate);
     }
-    return best;
+  }
+  return best;
 }
 
 std::optional<RomHeader> Cartridge::ParseHeaderAt(std::span<const uint8_t> rom, size_t base) {
-    if (base > rom.size() || rom.size() - base < 64) return std::nullopt;
-    const auto bytes = rom.subspan(base, 64);
-    if (std::all_of(bytes.begin(), bytes.end(), [](uint8_t byte) { return byte == 0xff; })) return std::nullopt;
+  if (base > rom.size() || rom.size() - base < 64)
+    return std::nullopt;
+  const auto bytes = rom.subspan(base, 64);
+  if (std::all_of(bytes.begin(), bytes.end(), [](uint8_t byte) { return byte == 0xff; }))
+    return std::nullopt;
 
-    RomHeader candidate;
-    candidate.headerOffset = base;
-    candidate.title = TrimTitle(rom.subspan(base, 21));
+  RomHeader candidate;
+  candidate.headerOffset = base;
+  candidate.title = TrimTitle(rom.subspan(base, 21));
 
-    const auto mapMode = rom[base + 0x15];
-    candidate.mapMode = mapMode;
-    candidate.maker = rom[base + 0x1a];
-    candidate.mapping = MappingFromModeByte(mapMode);
-    candidate.speed = SpeedFromModeByte(mapMode);
-    candidate.cartridgeType = rom[base + 0x16];
-    candidate.romSizeShift = rom[base + 0x17];
-    candidate.sramSizeShift = rom[base + 0x18];
-    candidate.country = rom[base + 0x19];
-    candidate.version = rom[base + 0x1B];
-    candidate.checksumComplement = Read16(rom, base + 0x1C);
-    candidate.checksum = Read16(rom, base + 0x1E);
-    candidate.resetVector = Read16(rom, base + 0x3C);
-    candidate.chip = DetectChip(candidate, rom[base - 1]);
+  const auto mapMode = rom[base + 0x15];
+  candidate.mapMode = mapMode;
+  candidate.maker = rom[base + 0x1a];
+  candidate.mapping = MappingFromModeByte(mapMode);
+  candidate.speed = SpeedFromModeByte(mapMode);
+  candidate.cartridgeType = rom[base + 0x16];
+  candidate.romSizeShift = rom[base + 0x17];
+  candidate.sramSizeShift = rom[base + 0x18];
+  candidate.country = rom[base + 0x19];
+  candidate.version = rom[base + 0x1B];
+  candidate.checksumComplement = Read16(rom, base + 0x1C);
+  candidate.checksum = Read16(rom, base + 0x1E);
+  candidate.resetVector = Read16(rom, base + 0x3C);
+  candidate.chip = DetectChip(candidate, rom[base - 1]);
 
-    // A bootable cartridge must supply a reset vector in cartridge space.
-    if (candidate.resetVector < 0x8000) return std::nullopt;
+  // A bootable cartridge must supply a reset vector in cartridge space.
+  if (candidate.resetVector < 0x8000)
+    return std::nullopt;
 
-    uint32_t score = 4;
-    if (candidate.mapping != MappingType::Unknown || HasDedicatedRomMapper(candidate.chip)) score += 4;
-    if ((candidate.checksum ^ candidate.checksumComplement) == 0xFFFF) score += 6;
-    if (IsMostlyPrintable(rom.subspan(base, 21))) score += 2;
-    if (HeaderRomSize(candidate.romSizeShift) > 0) score += 1;
-    candidate.score = score;
+  uint32_t score = 4;
+  if (candidate.mapping != MappingType::Unknown || HasDedicatedRomMapper(candidate.chip))
+    score += 4;
+  if ((candidate.checksum ^ candidate.checksumComplement) == 0xFFFF)
+    score += 6;
+  if (IsMostlyPrintable(rom.subspan(base, 21)))
+    score += 2;
+  if (HeaderRomSize(candidate.romSizeShift) > 0)
+    score += 1;
+  candidate.score = score;
 
-    // Prototype headers may omit the mode byte. The header's physical
-    // position still identifies the layout used by the reset vector.
-    if (candidate.mapping == MappingType::Unknown) {
-        candidate.mapping = base == 0x7fc0 ? MappingType::LoRom :
-                            base == 0xffc0 ? MappingType::HiRom :
-                            base == 0x407fc0 ? MappingType::ExLoRom : MappingType::ExHiRom;
-        candidate.speed = RomSpeed::Slow;
-    }
-    if (base == 0x407fc0 && candidate.mapping == MappingType::LoRom)
-        candidate.mapping = MappingType::ExLoRom;
-    if (base == 0x40ffc0 && candidate.mapping == MappingType::HiRom)
-        candidate.mapping = MappingType::ExHiRom;
-    return candidate;
+  // Prototype headers may omit the mode byte. The header's physical
+  // position still identifies the layout used by the reset vector.
+  if (candidate.mapping == MappingType::Unknown) {
+    candidate.mapping = base == 0x7fc0     ? MappingType::LoRom
+                        : base == 0xffc0   ? MappingType::HiRom
+                        : base == 0x407fc0 ? MappingType::ExLoRom
+                                           : MappingType::ExHiRom;
+    candidate.speed = RomSpeed::Slow;
+  }
+  if (base == 0x407fc0 && candidate.mapping == MappingType::LoRom)
+    candidate.mapping = MappingType::ExLoRom;
+  if (base == 0x40ffc0 && candidate.mapping == MappingType::HiRom)
+    candidate.mapping = MappingType::ExHiRom;
+  return candidate;
 }
 
-std::vector<uint8_t> Cartridge::RemoveCopierHeader(std::span<const uint8_t> rom, bool* removed) {
+std::vector<uint8_t> Cartridge::RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed) {
+  if (removed != nullptr) {
+    *removed = false;
+  }
+
+  if (rom.size() > 512 && (rom.size() % 1024) == 512) {
     if (removed != nullptr) {
-        *removed = false;
+      *removed = true;
     }
 
-    if (rom.size() > 512 && (rom.size() % 1024) == 512) {
-        if (removed != nullptr) {
-            *removed = true;
-        }
+    return std::vector<uint8_t>(rom.begin() + 512, rom.end());
+  }
 
-        return std::vector<uint8_t>(rom.begin() + 512, rom.end());
-    }
-
-    return std::vector<uint8_t>(rom.begin(), rom.end());
+  return std::vector<uint8_t>(rom.begin(), rom.end());
 }
 
-std::optional<RomHeader> Cartridge::NormalizeRomLayout(std::vector<uint8_t>& rom, bool& deinterleaved) {
-    auto header = ParseHeader(rom);
-    if (header && MappingFromModeByte(header->mapMode) == MappingType::ExHiRom &&
-        (header->headerOffset == 0x7fc0 || header->headerOffset == 0x407fc0) &&
-        rom.size() > 0x400000 && rom.size() <= 0x800000 && rom.size() % 0x10000 == 0) {
-        bool nativeHeader = false;
-        for (size_t offset : {0xffc0u, 0x40ffc0u}) {
-            auto candidate = ParseHeaderAt(rom, offset);
-            if (!candidate || candidate->score < header->score) continue;
-            const auto mapping = MappingFromModeByte(candidate->mapMode);
-            if (mapping == MappingType::HiRom || mapping == MappingType::ExHiRom) {
-                header = std::move(candidate);
-                nativeHeader = true;
-            }
-        }
-        if (!nativeHeader) {
-            // Each physical chip has its own odd/even bank permutation. The
-            // displaced mode-$25/$35 header identifies which chip boots.
-            const size_t bootSize = rom.size() - 0x400000;
-            const bool bootFirst = header->headerOffset == 0x7fc0;
-            const auto image = std::span<const uint8_t>(rom);
-            auto candidate = DeinterleaveRom(image.subspan(bootFirst ? bootSize : 0, 0x400000));
-            const auto boot = DeinterleaveRom(image.subspan(bootFirst ? 0 : 0x400000, bootSize));
-            candidate.insert(candidate.end(), boot.begin(), boot.end());
-            auto candidateHeader = ParseHeader(candidate);
-            if (candidateHeader && candidateHeader->mapping == MappingType::ExHiRom &&
-                candidateHeader->headerOffset == 0x40ffc0 && candidateHeader->mapMode == header->mapMode &&
-                candidateHeader->score >= header->score) {
-                rom = std::move(candidate);
-                header = std::move(candidateHeader);
-                deinterleaved = true;
-            }
-        }
+std::optional<RomHeader> Cartridge::NormalizeRomLayout(std::vector<uint8_t> &rom,
+                                                       bool &deinterleaved) {
+  auto header = ParseHeader(rom);
+  if (header && MappingFromModeByte(header->mapMode) == MappingType::ExHiRom &&
+      (header->headerOffset == 0x7fc0 || header->headerOffset == 0x407fc0) &&
+      rom.size() > 0x400000 && rom.size() <= 0x800000 && rom.size() % 0x10000 == 0) {
+    bool nativeHeader = false;
+    for (size_t offset : {0xffc0u, 0x40ffc0u}) {
+      auto candidate = ParseHeaderAt(rom, offset);
+      if (!candidate || candidate->score < header->score)
+        continue;
+      const auto mapping = MappingFromModeByte(candidate->mapMode);
+      if (mapping == MappingType::HiRom || mapping == MappingType::ExHiRom) {
+        header = std::move(candidate);
+        nativeHeader = true;
+      }
     }
-    const bool interleavedHi = header && header->headerOffset == 0x7fc0 &&
-                              MappingFromModeByte(header->mapMode) == MappingType::HiRom;
-    const bool interleavedLo = header && header->headerOffset == 0xffc0 &&
-                              MappingFromModeByte(header->mapMode) == MappingType::LoRom;
-    if ((!header || interleavedHi || interleavedLo) && !rom.empty() && rom.size() % 0x10000 == 0) {
-        auto candidate = DeinterleaveRom(rom);
-        auto candidateHeader = ParseHeader(candidate);
-        const auto mapping = interleavedHi ? MappingType::HiRom : MappingType::LoRom;
-        const size_t offset = interleavedHi ? 0xffc0 : 0x7fc0;
-        // Accept a permutation only when it restores a matching reset header.
-        // This also recovers LoROM headers displaced beyond both usual offsets.
-        if (candidateHeader && candidateHeader->headerOffset == offset && candidateHeader->mapping == mapping &&
-            (MappingFromModeByte(candidateHeader->mapMode) != MappingType::Unknown ||
-             HasDedicatedRomMapper(candidateHeader->chip)) &&
-            (!header || (candidateHeader->mapMode == header->mapMode && candidateHeader->score >= header->score))) {
-            rom = std::move(candidate);
-            header = std::move(candidateHeader);
-            deinterleaved = true;
-        }
+    if (!nativeHeader) {
+      // Each physical chip has its own odd/even bank permutation. The
+      // displaced mode-$25/$35 header identifies which chip boots.
+      const size_t bootSize = rom.size() - 0x400000;
+      const bool bootFirst = header->headerOffset == 0x7fc0;
+      const auto image = std::span<const uint8_t>(rom);
+      auto candidate = DeinterleaveRom(image.subspan(bootFirst ? bootSize : 0, 0x400000));
+      const auto boot = DeinterleaveRom(image.subspan(bootFirst ? 0 : 0x400000, bootSize));
+      candidate.insert(candidate.end(), boot.begin(), boot.end());
+      auto candidateHeader = ParseHeader(candidate);
+      if (candidateHeader && candidateHeader->mapping == MappingType::ExHiRom &&
+          candidateHeader->headerOffset == 0x40ffc0 &&
+          candidateHeader->mapMode == header->mapMode && candidateHeader->score >= header->score) {
+        rom = std::move(candidate);
+        header = std::move(candidateHeader);
+        deinterleaved = true;
+      }
     }
+  }
+  const bool interleavedHi = header && header->headerOffset == 0x7fc0 &&
+                             MappingFromModeByte(header->mapMode) == MappingType::HiRom;
+  const bool interleavedLo = header && header->headerOffset == 0xffc0 &&
+                             MappingFromModeByte(header->mapMode) == MappingType::LoRom;
+  if ((!header || interleavedHi || interleavedLo) && !rom.empty() && rom.size() % 0x10000 == 0) {
+    auto candidate = DeinterleaveRom(rom);
+    auto candidateHeader = ParseHeader(candidate);
+    const auto mapping = interleavedHi ? MappingType::HiRom : MappingType::LoRom;
+    const size_t offset = interleavedHi ? 0xffc0 : 0x7fc0;
+    // Accept a permutation only when it restores a matching reset header.
+    // This also recovers LoROM headers displaced beyond both usual offsets.
+    if (candidateHeader && candidateHeader->headerOffset == offset &&
+        candidateHeader->mapping == mapping &&
+        (MappingFromModeByte(candidateHeader->mapMode) != MappingType::Unknown ||
+         HasDedicatedRomMapper(candidateHeader->chip)) &&
+        (!header || (candidateHeader->mapMode == header->mapMode &&
+                     candidateHeader->score >= header->score))) {
+      rom = std::move(candidate);
+      header = std::move(candidateHeader);
+      deinterleaved = true;
+    }
+  }
 
-    if (header && header->headerOffset < 0x400000 && !HasDedicatedRomMapper(header->chip) &&
-        rom.size() > 0x400000 && rom.size() <= 0x800000 && rom.size() % 0x8000 == 0) {
-        // Extended dumps may store the boot chip before the four-MiB data chip.
-        // Keep one canonical order so reset vectors, bank mirrors and CRC agree.
-        auto candidate = rom;
-        std::rotate(candidate.begin(), candidate.begin() + (rom.size() - 0x400000), candidate.end());
-        auto candidateHeader = ParseHeader(candidate);
-        if (candidateHeader && candidateHeader->headerOffset == header->headerOffset + 0x400000 &&
-            (candidateHeader->mapping == MappingType::ExLoRom || candidateHeader->mapping == MappingType::ExHiRom)) {
-            rom = std::move(candidate);
-            header = std::move(candidateHeader);
-        }
+  if (header && header->headerOffset < 0x400000 && !HasDedicatedRomMapper(header->chip) &&
+      rom.size() > 0x400000 && rom.size() <= 0x800000 && rom.size() % 0x8000 == 0) {
+    // Extended dumps may store the boot chip before the four-MiB data chip.
+    // Keep one canonical order so reset vectors, bank mirrors and CRC agree.
+    auto candidate = rom;
+    std::rotate(candidate.begin(), candidate.begin() + (rom.size() - 0x400000), candidate.end());
+    auto candidateHeader = ParseHeader(candidate);
+    if (candidateHeader && candidateHeader->headerOffset == header->headerOffset + 0x400000 &&
+        (candidateHeader->mapping == MappingType::ExLoRom ||
+         candidateHeader->mapping == MappingType::ExHiRom)) {
+      rom = std::move(candidate);
+      header = std::move(candidateHeader);
     }
-    return header;
+  }
+  return header;
 }
 
 std::vector<uint8_t> Cartridge::DeinterleaveRom(std::span<const uint8_t> rom) {
-    const size_t half = rom.size() / 2;
-    std::vector<uint8_t> out(rom.size(), 0);
+  const size_t half = rom.size() / 2;
+  std::vector<uint8_t> out(rom.size(), 0);
 
-    if ((rom.size() % 0x10000) != 0 || half == 0) {
-        std::copy(rom.begin(), rom.end(), out.begin());
-        return out;
-    }
-
-    const size_t bankCount = rom.size() / 0x8000;
-    const size_t halfBanks = bankCount / 2;
-
-    for (size_t i = 0; i < halfBanks; ++i) {
-        const size_t dstA = (i * 2) * 0x8000;
-        const size_t dstB = (i * 2 + 1) * 0x8000;
-        const size_t srcA = (halfBanks + i) * 0x8000;
-        const size_t srcB = i * 0x8000;
-
-        std::copy_n(rom.begin() + srcA, 0x8000, out.begin() + dstA);
-        std::copy_n(rom.begin() + srcB, 0x8000, out.begin() + dstB);
-    }
-
+  if ((rom.size() % 0x10000) != 0 || half == 0) {
+    std::copy(rom.begin(), rom.end(), out.begin());
     return out;
+  }
+
+  const size_t bankCount = rom.size() / 0x8000;
+  const size_t halfBanks = bankCount / 2;
+
+  for (size_t i = 0; i < halfBanks; ++i) {
+    const size_t dstA = (i * 2) * 0x8000;
+    const size_t dstB = (i * 2 + 1) * 0x8000;
+    const size_t srcA = (halfBanks + i) * 0x8000;
+    const size_t srcB = i * 0x8000;
+
+    std::copy_n(rom.begin() + srcA, 0x8000, out.begin() + dstA);
+    std::copy_n(rom.begin() + srcB, 0x8000, out.begin() + dstB);
+  }
+
+  return out;
 }
 
 std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
-    if (rom_.empty()) {
+  if (rom_.empty()) {
+    return std::nullopt;
+  }
+
+  const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
+  const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
+
+  if (SelectsLoRomSram(cpuAddress))
+    return std::nullopt;
+
+  switch (header_.mapping) {
+  case MappingType::Spc7110:
+    return std::nullopt;
+  case MappingType::St011:
+  case MappingType::St010:
+    if (addr >= 0x8000 && bank != 0x7e && bank != 0x7f)
+      return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
+    return std::nullopt;
+  case MappingType::Sdd1:
+    if (bank >= 0xc0)
+      return MirrorOffset((size_t(sdd1Registers_[4 + ((bank - 0xc0) >> 4)] & 7) << 20) |
+                              (cpuAddress & 0xfffff),
+                          rom_.size());
+    if (bank >= 0x70 && bank <= 0x7d && addr < 0x8000)
+      return std::nullopt;
+    if (bank >= 0x60 && bank <= 0x7d)
+      return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
+    if (!(bank & 0x40) && addr >= 0x8000)
+      return MirrorOffset((size_t(bank & 0x3f) << 15) | (addr & 0x7fff), rom_.size());
+    return std::nullopt;
+  case MappingType::DecompressedSdd1: {
+    if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000))
+      return std::nullopt;
+    const size_t banks = rom_.size() >> 16;
+    if (bank >= 0xc0 ? size_t(0x80 + bank - 0xc0) >= banks : size_t(bank) >= banks)
+      return std::nullopt;
+    size_t page = bank;
+    if (bank >= 0xc0)
+      page = banks + (bank - 0xc0) + (addr < 0x8000 ? 0x80 : 0);
+    else if (addr < 0x8000)
+      page += banks;
+    const size_t offset = (page << 15) | (addr & 0x7fff);
+    return offset < rom_.size() ? std::optional<size_t>(offset) : std::nullopt;
+  }
+  case MappingType::BroadcastLoRom: {
+    if (broadcast24Mbit_) {
+      if ((bank & 0x40) || addr < 0x8000)
         return std::nullopt;
+      const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
+      return MirrorOffset(chip + (size_t(bank & 0x1f) << 15) + (addr & 0x7fff), rom_.size());
+    }
+    if (bank == 0x7e || bank == 0x7f || ((bank & 0x40) ? addr >= 0x8000 : addr < 0x8000))
+      return std::nullopt;
+    return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
+  }
+  case MappingType::BroadcastHiRom:
+    if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000) || (bank & 0x20))
+      return std::nullopt;
+    return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
+  case MappingType::SufamiTurbo: {
+    if (addr < 0x8000 || (bank & 0x7f) >= 0x60)
+      return std::nullopt;
+    const unsigned window = (bank & 0x7f) / 0x20;
+    const size_t linear = (size_t(bank & 0x1f) << 15) | (addr & 0x7fff);
+    if (window == 0)
+      return MirrorOffset(linear, std::min(rom_.size(), size_t(0x40000)));
+    const unsigned slot = window - 1;
+    if (slotSize_[slot] == 0)
+      return std::nullopt;
+    return slotOffset_[slot] + MirrorOffset(linear, slotSize_[slot]);
+  }
+  case MappingType::ExLoRom: {
+    if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000))
+      return std::nullopt;
+    const size_t linear = (static_cast<size_t>(bank & 0x7f) << 15) | (addr & 0x7fff);
+    if (bank & 0x80)
+      return MirrorOffset(linear, std::min(rom_.size(), size_t(0x400000)));
+    if (rom_.size() <= 0x400000)
+      return MirrorOffset(linear, rom_.size());
+    return 0x400000 + MirrorOffset(linear, rom_.size() - 0x400000);
+  }
+
+  case MappingType::LoRom24Mbit: {
+    if ((bank & 0x40) || addr < 0x8000)
+      return std::nullopt;
+    const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
+    const size_t linear = chip + (static_cast<size_t>(bank & 0x1f) << 15) + (addr & 0x7fff);
+    return MirrorOffset(linear, rom_.size());
+  }
+
+  case MappingType::LoRomNoMad1:
+  case MappingType::LoRomLargeSram:
+  case MappingType::LoRom: {
+    // Mirror each 32 KiB page into both halves of the full-ROM banks.
+    const bool fullRomBank = (bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0;
+    if (fullRomBank || (addr >= 0x8000 && bank != 0x7E && bank != 0x7F)) {
+      const auto linear =
+          (static_cast<size_t>(bank & 0x7F) << 15) | static_cast<size_t>(addr & 0x7FFF);
+      return MirrorOffset(linear, rom_.size());
     }
 
-    const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
-    const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
+    return std::nullopt;
+  }
 
-    if (SelectsLoRomSram(cpuAddress)) return std::nullopt;
-
-    switch (header_.mapping) {
-    case MappingType::Spc7110:
-        return std::nullopt;
-    case MappingType::St011:
-    case MappingType::St010:
-        if (addr >= 0x8000 && bank != 0x7e && bank != 0x7f)
-            return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
-        return std::nullopt;
-    case MappingType::Sdd1:
-        if (bank >= 0xc0)
-            return MirrorOffset((size_t(sdd1Registers_[4 + ((bank - 0xc0) >> 4)] & 7) << 20) |
-                                (cpuAddress & 0xfffff), rom_.size());
-        if (bank >= 0x70 && bank <= 0x7d && addr < 0x8000) return std::nullopt;
-        if (bank >= 0x60 && bank <= 0x7d)
-            return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
-        if (!(bank & 0x40) && addr >= 0x8000)
-            return MirrorOffset((size_t(bank & 0x3f) << 15) | (addr & 0x7fff), rom_.size());
-        return std::nullopt;
-    case MappingType::DecompressedSdd1: {
-        if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000))
-            return std::nullopt;
-        const size_t banks = rom_.size() >> 16;
-        if (bank >= 0xc0 ? size_t(0x80 + bank - 0xc0) >= banks : size_t(bank) >= banks)
-            return std::nullopt;
-        size_t page = bank;
-        if (bank >= 0xc0) page = banks + (bank - 0xc0) + (addr < 0x8000 ? 0x80 : 0);
-        else if (addr < 0x8000) page += banks;
-        const size_t offset = (page << 15) | (addr & 0x7fff);
-        return offset < rom_.size() ? std::optional<size_t>(offset) : std::nullopt;
-    }
-    case MappingType::BroadcastLoRom: {
-        if (broadcast24Mbit_) {
-            if ((bank & 0x40) || addr < 0x8000) return std::nullopt;
-            const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
-            return MirrorOffset(chip + (size_t(bank & 0x1f) << 15) + (addr & 0x7fff), rom_.size());
-        }
-        if (bank == 0x7e || bank == 0x7f || ((bank & 0x40) ? addr >= 0x8000 : addr < 0x8000))
-            return std::nullopt;
-        return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
-    }
-    case MappingType::BroadcastHiRom:
-        if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000) || (bank & 0x20))
-            return std::nullopt;
-        return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
-    case MappingType::SufamiTurbo: {
-        if (addr < 0x8000 || (bank & 0x7f) >= 0x60) return std::nullopt;
-        const unsigned window = (bank & 0x7f) / 0x20;
-        const size_t linear = (size_t(bank & 0x1f) << 15) | (addr & 0x7fff);
-        if (window == 0) return MirrorOffset(linear, std::min(rom_.size(), size_t(0x40000)));
-        const unsigned slot = window - 1;
-        if (slotSize_[slot] == 0) return std::nullopt;
-        return slotOffset_[slot] + MirrorOffset(linear, slotSize_[slot]);
-    }
-    case MappingType::ExLoRom: {
-        if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000))
-            return std::nullopt;
-        const size_t linear = (static_cast<size_t>(bank & 0x7f) << 15) | (addr & 0x7fff);
-        if (bank & 0x80) return MirrorOffset(linear, std::min(rom_.size(), size_t(0x400000)));
-        if (rom_.size() <= 0x400000) return MirrorOffset(linear, rom_.size());
-        return 0x400000 + MirrorOffset(linear, rom_.size() - 0x400000);
+  case MappingType::HiRom: {
+    if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
+      const auto linear = (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
+      return MirrorOffset(linear, rom_.size());
     }
 
-    case MappingType::LoRom24Mbit: {
-        if ((bank & 0x40) || addr < 0x8000) return std::nullopt;
-        const size_t chip = (bank & 0x20) ? 0x100000 : (bank & 0x80) ? 0x200000 : 0;
-        const size_t linear = chip + (static_cast<size_t>(bank & 0x1f) << 15) + (addr & 0x7fff);
-        return MirrorOffset(linear, rom_.size());
+    if ((bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && addr >= 0x8000) {
+      const auto linear = (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
+      return MirrorOffset(linear, rom_.size());
     }
 
-    case MappingType::LoRomNoMad1:
-    case MappingType::LoRomLargeSram:
-    case MappingType::LoRom: {
-        // Mirror each 32 KiB page into both halves of the full-ROM banks.
-        const bool fullRomBank = (bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0;
-        if (fullRomBank || (addr >= 0x8000 && bank != 0x7E && bank != 0x7F)) {
-            const auto linear =
-                (static_cast<size_t>(bank & 0x7F) << 15) |
-                static_cast<size_t>(addr & 0x7FFF);
-            return MirrorOffset(linear, rom_.size());
-        }
+    return std::nullopt;
+  }
 
-        return std::nullopt;
+  case MappingType::ExHiRom: {
+    size_t linear = std::numeric_limits<size_t>::max();
+
+    if (bank >= 0xC0) {
+      linear = (static_cast<size_t>(bank - 0xC0) * 0x10000) + addr;
+    } else if (bank >= 0x40 && bank <= 0x7D) {
+      linear = 0x400000 + (static_cast<size_t>(bank - 0x40) * 0x10000) + addr;
+    } else if ((bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && addr >= 0x8000) {
+      const size_t half = (bank & 0x80) ? 0 : 0x400000;
+      linear = half + (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
     }
 
-    case MappingType::HiRom: {
-        if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
-            const auto linear = (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
-            return MirrorOffset(linear, rom_.size());
-        }
-
-        if ((bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && addr >= 0x8000) {
-            const auto linear = (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
-            return MirrorOffset(linear, rom_.size());
-        }
-
-        return std::nullopt;
+    if (linear == std::numeric_limits<size_t>::max()) {
+      return std::nullopt;
     }
 
-    case MappingType::ExHiRom: {
-        size_t linear = std::numeric_limits<size_t>::max();
+    return MirrorOffset(linear, rom_.size());
+  }
 
-        if (bank >= 0xC0) {
-            linear = (static_cast<size_t>(bank - 0xC0) * 0x10000) + addr;
-        } else if (bank >= 0x40 && bank <= 0x7D) {
-            linear = 0x400000 + (static_cast<size_t>(bank - 0x40) * 0x10000) + addr;
-        } else if ((bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && addr >= 0x8000) {
-            const size_t half = (bank & 0x80) ? 0 : 0x400000;
-            linear = half + (static_cast<size_t>(bank & 0x3F) * 0x10000) + addr;
-        }
-
-        if (linear == std::numeric_limits<size_t>::max()) {
-            return std::nullopt;
-        }
-
-        return MirrorOffset(linear, rom_.size());
-    }
-
-    case MappingType::Unknown:
-    default:
-        return std::nullopt;
-    }
+  case MappingType::Unknown:
+  default:
+    return std::nullopt;
+  }
 }
 
 bool Cartridge::SelectsLoRomSram(uint32_t cpuAddress) const {
-    switch (header_.mapping) {
-    case MappingType::St011:
-    case MappingType::St010:
-    case MappingType::LoRom: case MappingType::ExLoRom:
-    case MappingType::BroadcastLoRom:
-    case MappingType::LoRomNoMad1: case MappingType::LoRom24Mbit: break;
-    default: return false;
-    }
-    const unsigned bank = (cpuAddress >> 16) & 0xff;
-    if (!((bank >= 0x70 && bank <= 0x7d) || (bank >= 0xf0 && !sram_.empty()))) return false;
-    return (cpuAddress & 0xffff) < 0x8000 || header_.chip == EnhancementChip::St018 ||
-           header_.mapping == MappingType::LoRomNoMad1 ||
-           (header_.romSizeShift <= 11 && sram_.size() <= 0x8000);
+  switch (header_.mapping) {
+  case MappingType::St011:
+  case MappingType::St010:
+  case MappingType::LoRom:
+  case MappingType::ExLoRom:
+  case MappingType::BroadcastLoRom:
+  case MappingType::LoRomNoMad1:
+  case MappingType::LoRom24Mbit:
+    break;
+  default:
+    return false;
+  }
+  const unsigned bank = (cpuAddress >> 16) & 0xff;
+  if (!((bank >= 0x70 && bank <= 0x7d) || (bank >= 0xf0 && !sram_.empty())))
+    return false;
+  return (cpuAddress & 0xffff) < 0x8000 || header_.chip == EnhancementChip::St018 ||
+         header_.mapping == MappingType::LoRomNoMad1 ||
+         (header_.romSizeShift <= 11 && sram_.size() <= 0x8000);
 }
 
 std::optional<size_t> Cartridge::ResolveSramOffset(uint32_t cpuAddress) const {
-    if (sram_.empty()) {
-        return std::nullopt;
-    }
+  if (sram_.empty()) {
+    return std::nullopt;
+  }
 
-    const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
-    const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
+  const auto bank = static_cast<uint8_t>(cpuAddress >> 16);
+  const auto addr = static_cast<uint16_t>(cpuAddress & 0xFFFF);
 
-    switch (header_.mapping) {
-    case MappingType::Spc7110:
-        if ((bank == 0 || bank == 0x30) && addr >= 0x6000 && addr < 0x8000)
-            return MirrorOffset(addr & 0x1fff, sram_.size());
-        return std::nullopt;
-    case MappingType::Sdd1:
-        if ((bank >= 0x70 && bank <= 0x7d && addr < 0x8000) ||
-            (bank >= 0xa0 && bank <= 0xbf && addr >= 0x6000 && addr < 0x8000))
-            return MirrorOffset((size_t(bank & 0xf) << 15) | (addr & 0x7fff), sram_.size());
-        return std::nullopt;
-    case MappingType::SufamiTurbo: {
-        const unsigned mirroredBank = bank & 0x7f;
-        if (addr < 0x8000 || !((mirroredBank >= 0x60 && mirroredBank <= 0x63) ||
-            (mirroredBank >= 0x70 && mirroredBank <= 0x73))) return std::nullopt;
-        const unsigned slot = mirroredBank >= 0x70 ? 1 : 0;
-        if (slotSize_[slot] == 0) return std::nullopt;
-        return slot * 0x4000 + (addr & 0x3fff);
+  switch (header_.mapping) {
+  case MappingType::Spc7110:
+    if ((bank == 0 || bank == 0x30) && addr >= 0x6000 && addr < 0x8000)
+      return MirrorOffset(addr & 0x1fff, sram_.size());
+    return std::nullopt;
+  case MappingType::Sdd1:
+    if ((bank >= 0x70 && bank <= 0x7d && addr < 0x8000) ||
+        (bank >= 0xa0 && bank <= 0xbf && addr >= 0x6000 && addr < 0x8000))
+      return MirrorOffset((size_t(bank & 0xf) << 15) | (addr & 0x7fff), sram_.size());
+    return std::nullopt;
+  case MappingType::SufamiTurbo: {
+    const unsigned mirroredBank = bank & 0x7f;
+    if (addr < 0x8000 || !((mirroredBank >= 0x60 && mirroredBank <= 0x63) ||
+                           (mirroredBank >= 0x70 && mirroredBank <= 0x73)))
+      return std::nullopt;
+    const unsigned slot = mirroredBank >= 0x70 ? 1 : 0;
+    if (slotSize_[slot] == 0)
+      return std::nullopt;
+    return slot * 0x4000 + (addr & 0x3fff);
+  }
+  case MappingType::LoRomLargeSram:
+    if (bank >= 0x70 && bank <= 0x73) {
+      const size_t linear = static_cast<size_t>(bank - 0x70) * 0x8000 + addr;
+      return MirrorOffset(linear, sram_.size());
     }
-    case MappingType::LoRomLargeSram:
-        if (bank >= 0x70 && bank <= 0x73) {
-            const size_t linear = static_cast<size_t>(bank - 0x70) * 0x8000 + addr;
-            return MirrorOffset(linear, sram_.size());
-        }
-        return std::nullopt;
-    case MappingType::ExLoRom:
-    case MappingType::LoRomNoMad1:
-    case MappingType::LoRom24Mbit:
-    case MappingType::BroadcastLoRom:
-    case MappingType::St011:
-    case MappingType::St010:
-    case MappingType::LoRom: {
-        if (SelectsLoRomSram(cpuAddress)) {
-            const auto linear = (static_cast<size_t>(bank & 0x0F) * 0x8000) + (addr & 0x7fff);
-            return MirrorOffset(linear, sram_.size());
-        }
-        return std::nullopt;
+    return std::nullopt;
+  case MappingType::ExLoRom:
+  case MappingType::LoRomNoMad1:
+  case MappingType::LoRom24Mbit:
+  case MappingType::BroadcastLoRom:
+  case MappingType::St011:
+  case MappingType::St010:
+  case MappingType::LoRom: {
+    if (SelectsLoRomSram(cpuAddress)) {
+      const auto linear = (static_cast<size_t>(bank & 0x0F) * 0x8000) + (addr & 0x7fff);
+      return MirrorOffset(linear, sram_.size());
     }
+    return std::nullopt;
+  }
 
-    case MappingType::HiRom:
-    case MappingType::BroadcastHiRom:
-    case MappingType::ExHiRom: {
-        if (((bank >= 0x20 && bank <= 0x3F) || (bank >= 0xA0 && bank <= 0xBF)) &&
-            addr >= 0x6000 && addr <= 0x7FFF) {
-            const auto linear = (static_cast<size_t>(bank & 0x1F) * 0x2000) + (addr - 0x6000);
-            return MirrorOffset(linear, sram_.size());
-        }
-        return std::nullopt;
+  case MappingType::HiRom:
+  case MappingType::BroadcastHiRom:
+  case MappingType::ExHiRom: {
+    if (((bank >= 0x20 && bank <= 0x3F) || (bank >= 0xA0 && bank <= 0xBF)) && addr >= 0x6000 &&
+        addr <= 0x7FFF) {
+      const auto linear = (static_cast<size_t>(bank & 0x1F) * 0x2000) + (addr - 0x6000);
+      return MirrorOffset(linear, sram_.size());
     }
+    return std::nullopt;
+  }
 
-    case MappingType::Unknown:
-    default:
-        return std::nullopt;
-    }
+  case MappingType::Unknown:
+  default:
+    return std::nullopt;
+  }
 }
 
 uint32_t Cartridge::ComputeCrc32(std::span<const uint8_t> data) {
-    constexpr uint32_t polynomial = 0xEDB88320;
+  constexpr uint32_t polynomial = 0xEDB88320;
 
-    uint32_t crc = 0xFFFFFFFF;
-    for (auto byte : data) {
-        crc ^= byte;
-        for (int i = 0; i < 8; ++i) {
-            crc = (crc >> 1) ^ ((crc & 1) ? polynomial : 0);
-        }
+  uint32_t crc = 0xFFFFFFFF;
+  for (auto byte : data) {
+    crc ^= byte;
+    for (int i = 0; i < 8; ++i) {
+      crc = (crc >> 1) ^ ((crc & 1) ? polynomial : 0);
     }
+  }
 
-    return ~crc;
+  return ~crc;
 }
 
 } // namespace snes::core
