@@ -72,20 +72,14 @@ uint32_t SnesCpu::Step() {
     // The I flag was sampled before the instruction's final cycle. CLI, SEI
     // and PLP can change it after that sample; do not test the new value here.
     if (irqPending_) {
-        irqPending_ = false;
-        enterInterrupt(Interrupt::Irq);
-        return instructionClocks_;
+      irqPending_ = false;
+      enterInterrupt(Interrupt::Irq);
+      return instructionClocks_;
     }
 
-    // WAI: if the CPU is in WAI state, consume an idle cycle and return
     if (regs().wai) {
-        idle();
-        lastCycle();
-        // A masked IRQ releases WAI without entering the interrupt handler.
-        if (nmiPending_ || irqLine_) {
-            regs().wai = false;
-        }
-        return instructionClocks_;
+      waitCycle();
+      return instructionClocks_;
     }
 
     // Execute one instruction
@@ -110,64 +104,82 @@ void SnesCpu::SetIrqLevel(bool active) {
 // Bus interface overrides
 
 void SnesCpu::idle() {
-    if (beforeCycle_) beforeCycle_(6);
-    addClocks(6);
-    if (onBusPhase_)
-      onBusPhase_();
-    if (onAluStep_) onAluStep_(false);
+  if (beforeCycle_)
+    beforeCycle_(6);
+  addClocks(6);
+  if (onBusPhase_)
+    onBusPhase_();
+  if (onAluStep_)
+    onAluStep_(false);
 }
 
 uint8_t SnesCpu::read(uint32_t address) {
-    const uint8_t speed = bus_.Speed(address);
-    if (beforeCycle_)
-      beforeCycle_(speed);
-    regs().mar = address & 0x00ffffff;
-    addClocks(speed - 4);
-    if (onCoprocessorSync_)
-      onCoprocessorSync_();
-    if (onBusPhase_)
-      onBusPhase_();
-    uint8_t data = bus_.ReadCpu(address);
-    addClocks(4);
-    if (onAluStep_)
-      onAluStep_(false);
-    // Internal register reads leave the external memory data latch intact.
-    if ((address & 0x40fc00) != 0x4000) {
-      regs().mdr = data;
-      bus_.SetOpenBus(data);
-    }
-    return data;
+  const uint8_t speed = bus_.Speed(address);
+  if (beforeCycle_)
+    beforeCycle_(speed);
+  regs().mar = address & 0x00ffffff;
+  addClocks(speed - 4);
+  if (onCoprocessorSync_)
+    onCoprocessorSync_();
+  if (onBusPhase_)
+    onBusPhase_();
+  uint8_t data = bus_.ReadCpu(address);
+  addClocks(4);
+  if (onAluStep_)
+    onAluStep_(false);
+  // Internal register reads leave the external memory data latch intact.
+  if ((address & 0x40fc00) != 0x4000) {
+    regs().mdr = data;
+    bus_.SetOpenBus(data);
+  }
+  return data;
 }
 
 void SnesCpu::write(uint32_t address, uint8_t data) {
-    if (onAluStep_) onAluStep_(true);
-    const uint8_t speed = bus_.Speed(address);
-    if (beforeCycle_) beforeCycle_(speed);
-    regs().mar = address & 0x00ffffff;
-    addClocks(speed);
-    if (onCoprocessorSync_)
-      onCoprocessorSync_();
-    if (onBusPhase_)
-      onBusPhase_();
-    bus_.Write(address, regs().mdr = data);
+  if (onAluStep_)
+    onAluStep_(true);
+  const uint8_t speed = bus_.Speed(address);
+  if (beforeCycle_)
+    beforeCycle_(speed);
+  regs().mar = address & 0x00ffffff;
+  addClocks(speed);
+  if (onCoprocessorSync_)
+    onCoprocessorSync_();
+  if (onBusPhase_)
+    onBusPhase_();
+  bus_.Write(address, regs().mdr = data);
 }
 
 void SnesCpu::lastCycle() {
-    // Instruction handlers call this before their final bus or idle cycle.
-    if (onInterruptPoll_ && !onInterruptPoll_()) return;
-    pollInterrupts();
+  // Instruction handlers call this before their final bus or idle cycle.
+  if (onInterruptPoll_ && !onInterruptPoll_())
+    return;
+  pollInterrupts();
 }
 
 bool SnesCpu::interruptPending() const {
-    return nmiEdge_ || nmiPending_ || irqPending_ || (irqLine_ && !flagI());
+  return nmiEdge_ || nmiPending_ || irqPending_ || (irqLine_ && !flagI());
+}
+
+void SnesCpu::instructionWait() {
+  regs().wai = true;
+  waitCycle();
+}
+
+void SnesCpu::waitCycle() {
+  lastCycle();
+  idle();
+  if (!regs().wai)
+    idle();
 }
 
 // Internal helpers
 
 void SnesCpu::addClocks(uint32_t clocks) {
-    cycles_ += clocks;
-    instructionClocks_ += clocks;
-    if (onClock_) onClock_(clocks);
+  cycles_ += clocks;
+  instructionClocks_ += clocks;
+  if (onClock_)
+    onClock_(clocks);
 }
 
 void SnesCpu::pollInterrupts() {
@@ -178,6 +190,8 @@ void SnesCpu::pollInterrupts() {
     }
 
     irqPending_ = irqLine_ && !flagI();
+    if (nmiPending_ || irqLine_)
+      regs().wai = false;
 }
 
 // DRAM Refresh - 40-master-clock penalty per scanline
@@ -192,11 +206,12 @@ void SnesCpu::pollInterrupts() {
 
 void SnesCpu::ApplyDramRefreshPenalty() {
     for (int i = 0; i < 5; i++) {
-        dramRefreshState_ = 1;
-        cycles_ += 6;
-        dramRefreshState_ = 2;
-        cycles_ += 2;
-        if (onAluStep_) onAluStep_(false);
+      dramRefreshState_ = 1;
+      cycles_ += 6;
+      dramRefreshState_ = 2;
+      cycles_ += 2;
+      if (onAluStep_)
+        onAluStep_(false);
     }
     dramRefreshState_ = 0;
 }

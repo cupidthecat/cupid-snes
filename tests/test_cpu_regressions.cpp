@@ -2,10 +2,11 @@
 // tests/test_cpu_regressions.cpp
 // Regression coverage for CPU instructions, interrupts, and stops.
 
-#include "snes/core/SnesCpu.hpp"
 #include "snes/core/CpuIoRegisters.hpp"
 #include "snes/core/Dma.hpp"
 #include "snes/core/MemoryBus.hpp"
+#include "snes/core/SnesCpu.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <memory>
@@ -239,58 +240,66 @@ void IndexedIndirectPointerBank() {
 void InterruptVectorBusState() {
   struct ObservedBus : Bus {
     SnesCpu *cpu = nullptr;
+    bool replaceLow = false;
     std::vector<uint32_t> pc;
     uint8_t Read(uint32_t address) override {
-      if (cpu && address >= 0xffe0 && address <= 0xffff)
+      if (cpu && address >= 0xffe0 && address <= 0xffff) {
         pc.push_back((uint32_t(cpu->regs().pb) << 16) | cpu->regs().pc);
+        if (replaceLow && (address & 1))
+          cpu->regs().pc = static_cast<uint16_t>((cpu->regs().pc & 0xff00) | 0x78);
+      }
       return Bus::Read(address);
     }
   };
   for (unsigned kind = 0; kind < 4; ++kind)
     for (bool emulation : {false, true})
-      for (uint8_t bank : {0, 0x12}) {
-        ObservedBus bus;
-        SnesCpu cpu(bus);
-        Boot(cpu, bus);
-        auto &r = cpu.regs();
-        r.e = emulation;
-        r.p = 0x39;
-        r.pb = bank;
-        bus.ram[0x8000] = kind == 0 ? 0x00 : kind == 1 ? 0x02 : 0xea;
-        const uint16_t vectors[2][4] = {{0xffe6, 0xffe4, 0xffea, 0xffee},
-                                        {0xfffe, 0xfff4, 0xfffa, 0xfffe}};
-        const uint16_t vector = vectors[emulation][kind];
-        bus.ram[vector] = 0x34;
-        bus.ram[vector + 1] = 0x12;
-        if (kind == 2)
-          cpu.RequestNmi();
-        if (kind == 3)
-          cpu.SetIrqLevel(true);
-        if (kind >= 2) {
+      for (bool replaceLow : {false, true})
+        for (uint8_t bank : {0, 0x12}) {
+          ObservedBus bus;
+          SnesCpu cpu(bus);
+          Boot(cpu, bus);
+          auto &r = cpu.regs();
+          r.e = emulation;
+          r.p = 0x39;
+          r.pb = bank;
+          bus.ram[0x8000] = kind == 0 ? 0x00 : kind == 1 ? 0x02 : 0xea;
+          const uint16_t vectors[2][4] = {{0xffe6, 0xffe4, 0xffea, 0xffee},
+                                          {0xfffe, 0xfff4, 0xfffa, 0xfffe}};
+          const uint16_t vector = vectors[emulation][kind];
+          bus.ram[vector] = 0x34;
+          bus.ram[vector + 1] = 0x12;
+          if (kind == 2)
+            cpu.RequestNmi();
+          if (kind == 3)
+            cpu.SetIrqLevel(true);
+          if (kind >= 2) {
+            cpu.Step();
+            cpu.SetIrqLevel(false);
+          }
+          const unsigned returnPc = kind < 2 ? 0x8002 : 0x8001;
+          bus.cpu = &cpu;
+          bus.replaceLow = replaceLow;
+          std::vector<uint32_t> sampledPc;
+          cpu.SetInterruptPollCallback([&] {
+            sampledPc.push_back((uint32_t(r.pb) << 16) | r.pc);
+            return false;
+          });
           cpu.Step();
-          cpu.SetIrqLevel(false);
+          Check("Interrupt vector-read count", unsigned(bus.pc.size()), 2);
+          if (bus.pc.size() == 2) {
+            Check("The low vector read retains the program bank and return PC", bus.pc[0],
+                  (uint32_t(bank) << 16) | returnPc);
+            Check("The high vector read observes the fetched PC low byte", bus.pc[1],
+                  (uint32_t(bank) << 16) | 0x8034);
+          }
+          Check("Interrupt sample count", unsigned(sampledPc.size()), 1);
+          if (sampledPc.size() == 1)
+            Check("Interrupt sampling observes the partial vector and live program bank",
+                  sampledPc[0], (uint32_t(bank) << 16) | 0x8034);
+          Check("Interrupt clears its program bank after fetching the vector", r.pb, 0);
+          Check("A high vector read preserves the live low PC byte", r.pc,
+                replaceLow ? 0x1278 : 0x1234);
         }
-        const unsigned returnPc = kind < 2 ? 0x8002 : 0x8001;
-        bus.cpu = &cpu;
-        std::vector<uint32_t> sampledPc;
-        cpu.SetInterruptPollCallback([&] {
-          sampledPc.push_back((uint32_t(r.pb) << 16) | r.pc);
-          return false;
-        });
-        cpu.Step();
-        Check("Interrupt vector-read count", unsigned(bus.pc.size()), 2);
-        if (bus.pc.size() == 2) {
-          Check("The low vector read retains the program bank and return PC", bus.pc[0],
-                (uint32_t(bank) << 16) | returnPc);
-          Check("The high vector read observes the fetched PC low byte", bus.pc[1],
-                (uint32_t(bank) << 16) | 0x8034);
-        }
-        Check("Interrupt sample count", unsigned(sampledPc.size()), 1);
-        if (sampledPc.size() == 1)
-          Check("Interrupt sampling observes the partial vector and live program bank",
-                sampledPc[0], (uint32_t(bank) << 16) | 0x8034);
-        Check("Interrupt clears its program bank after fetching the vector", r.pb, 0);
-      }
   ObservedBus bus;
   SnesCpu cpu(bus);
   cpu.Reset();
@@ -404,6 +413,59 @@ void ExtendedStackInstructions() {
             Check("Following push uses restored stack", bus.writes.back(), finalStack);
         }
     }
+}
+
+void WaitInterruptTiming() {
+  struct WaitBus : Bus {
+    uint8_t Speed(uint32_t) const override {
+      return 8;
+    }
+  };
+  for (bool emulation : {false, true})
+    for (unsigned kind = 0; kind < 3; ++kind)
+      for (unsigned arrival = 0; arrival <= 64; arrival += 2)
+        for (unsigned lockedUntil : {0u, 19u, 32u, 65u}) {
+          WaitBus bus;
+          SnesCpu cpu(bus);
+          Boot(cpu, bus);
+          cpu.regs().e = emulation;
+          if (kind != 2)
+            cpu.regs().p &= ~Processor65816::FlagI;
+          bus.ram[0x8000] = 0xcb;
+          unsigned clocks = 0;
+          bool sent = false;
+          const auto signal = [&] {
+            sent = true;
+            if (kind == 0)
+              cpu.RequestNmi();
+            else
+              cpu.SetIrqLevel(true);
+          };
+          cpu.SetClockCallback([&](uint32_t amount) {
+            clocks += amount;
+            if (!sent && clocks >= arrival)
+              signal();
+          });
+          cpu.SetInterruptPollCallback([&] { return clocks >= lockedUntil; });
+          if (!arrival)
+            signal();
+          for (unsigned step = 0; step < 64; ++step) {
+            cpu.Step();
+            if ((kind == 2 && !cpu.regs().wai) || (kind != 2 && cpu.regs().pc == 0x9000))
+              break;
+          }
+          const unsigned available = std::max(arrival, lockedUntil);
+          const unsigned sample = 8 + (available > 8 ? (available - 8 + 5) / 6 * 6 : 0);
+          const unsigned expected = sample + 12 + (kind == 2 ? 0 : emulation ? 54 : 62);
+          Check("WAI samples before an idle and retains its final wake cycle", clocks, expected);
+          Check("WAI clears after the accepted sample", cpu.regs().wai, false);
+          Check("Masked WAI wake preserves the next opcode", cpu.regs().pc,
+                kind == 2 ? 0x8001 : 0x9000);
+          Check("Masked WAI wake leaves the stack untouched", unsigned(bus.writes.size()),
+                kind == 2   ? 0
+                : emulation ? 3
+                            : 4);
+        }
 }
 
 void WaitInterrupt() {
@@ -655,6 +717,7 @@ int main(int argc, char** argv) {
       InterruptVectorBusState();
       InterruptStack();
       ExtendedStackInstructions();
+      WaitInterruptTiming();
       WaitInterrupt();
       StackInstructionTiming();
       PullBankBoundaries();
