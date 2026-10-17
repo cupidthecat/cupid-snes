@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 using namespace snes::core;
@@ -24,6 +25,12 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, uint8_t maker = 0) {
   rom[0x7fc0] = 'T';
   rom[0x7fd5] = mode;
   rom[0x7fd6] = type;
+  rom[0x7fbf] = type == 0xf3 ? 0x10 : 0;
+  const std::string_view title = mode == 0x20 && type == 5   ? "DUNGEON MASTER"
+                                 : mode == 0x30 && type == 5 ? "SD\xb6\xde\xdd\xc0\xde\xd1GX"
+                                 : mode == 0x30 && type == 3 ? "TOP GEAR 3000"
+                                                             : "T";
+  std::copy(title.begin(), title.end(), rom.begin() + 0x7fc0);
   rom[0x7fd7] = 10;
   rom[0x7fd9] = 1;
   rom[0x7fda] = maker;

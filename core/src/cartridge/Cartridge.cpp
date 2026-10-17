@@ -2,6 +2,8 @@
 
 #include "snes/core/Cartridge.hpp"
 
+#include "HeaderTitle.hpp"
+
 #include "snes/core/Logging.hpp"
 #include "snes/core/Sdd1.hpp"
 
@@ -46,8 +48,14 @@ MappingType MappingFromModeByte(uint8_t mapMode) {
     return MappingType::LoRom;
   case 0x01:
     return MappingType::HiRom;
+  case 0x02:
+    return MappingType::Sdd1;
+  case 0x03:
+    return MappingType::Sa1;
   case 0x05:
     return MappingType::ExHiRom;
+  case 0x0a:
+    return MappingType::Spc7110;
   default:
     return MappingType::Unknown;
   }
@@ -72,25 +80,6 @@ bool IsMostlyPrintable(std::span<const uint8_t> bytes) {
   }
 
   return printable >= (bytes.size() * 3) / 4;
-}
-
-std::string TrimTitle(std::span<const uint8_t> bytes) {
-  std::string out;
-  out.reserve(bytes.size());
-
-  for (auto value : bytes) {
-    if (value == 0) {
-      break;
-    }
-
-    out.push_back(static_cast<char>(value));
-  }
-
-  while (!out.empty() && (out.back() == ' ' || out.back() == '\0')) {
-    out.pop_back();
-  }
-
-  return out;
 }
 
 uint16_t Read16(std::span<const uint8_t> data, size_t offset) {
@@ -132,59 +121,53 @@ bool IsFastRegion(uint32_t cpuAddress) {
 }
 
 EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
-  const auto mode = header.mapMode;
   const auto type = header.cartridgeType;
-  if (header.maker == 0x33 && (type >> 4) == 0x0f && (type & 15) >= 3) {
-    if (subtype == 1)
-      return header.title == "2DAN MORITA SHOUGI" ? EnhancementChip::St011 : EnhancementChip::St010;
-    if (subtype == 2)
-      return EnhancementChip::St018;
-    if (subtype == 0x10)
-      return EnhancementChip::Cx4;
+  if ((type & 15) >= 3) {
+    switch (type >> 4) {
+    case 0:
+      if (header.title == "DUNGEON MASTER")
+        return EnhancementChip::Dsp2;
+      if (header.title == "SD\xe3\x82\xac\xe3\x83\xb3\xe3\x83\x80\xe3\x83\xa0GX")
+        return EnhancementChip::Dsp3;
+      if (header.title == "TOP GEAR 3000" || header.title == "PLANETS CHAMP TG3000")
+        return EnhancementChip::Dsp4;
+      return EnhancementChip::Dsp1;
+    case 1:
+      return EnhancementChip::SuperFx;
+    case 2:
+      return EnhancementChip::Obc1;
+    case 3:
+      return EnhancementChip::Sa1;
+    case 4:
+      return EnhancementChip::Sdd1;
+    case 5:
+      return EnhancementChip::Srtc;
+    case 15:
+      switch (subtype) {
+      case 0:
+        if ((type & 15) == 5)
+          return EnhancementChip::Spc7110;
+        if ((type & 15) == 9)
+          return EnhancementChip::Spc7110Rtc;
+        break;
+      case 1:
+        return header.title == "2DAN MORITA SHOUGI" ? EnhancementChip::St011
+                                                    : EnhancementChip::St010;
+      case 2:
+        return EnhancementChip::St018;
+      case 0x10:
+        return EnhancementChip::Cx4;
+      }
+      break;
+    }
   }
-  if (type == 3)
-    return mode == 0x30 ? EnhancementChip::Dsp4 : EnhancementChip::Dsp1;
-  if (type == 5) {
-    if (mode == 0x20)
-      return EnhancementChip::Dsp2;
-    if (mode == 0x30 && header.maker == 0xb2)
-      return EnhancementChip::Dsp3;
-    return EnhancementChip::Dsp1;
-  }
-  switch ((unsigned(type) << 8) | mode) {
-  case 0x2530:
-    return EnhancementChip::Obc1;
-  case 0x5525:
-  case 0x5535:
-    return EnhancementChip::Srtc;
-  case 0x1320:
-  case 0x1420:
-  case 0x1520:
-  case 0x1a20:
-  case 0x1330:
-  case 0x1430:
-  case 0x1530:
-  case 0x1a30:
-    return EnhancementChip::SuperFx;
-  case 0x3423:
-  case 0x3523:
+  switch (header.mapping) {
+  case MappingType::Sa1:
     return EnhancementChip::Sa1;
-  case 0x4332:
-  case 0x4532:
+  case MappingType::Sdd1:
     return EnhancementChip::Sdd1;
-  case 0xf52a:
-  case 0xf53a:
+  case MappingType::Spc7110:
     return EnhancementChip::Spc7110;
-  case 0xf92a:
-  case 0xf93a:
-    return EnhancementChip::Spc7110Rtc;
-  case 0xf320:
-  case 0xf330:
-    return header.maker == 0x33 ? EnhancementChip::None : EnhancementChip::Cx4;
-  case 0xf530:
-    return EnhancementChip::St018;
-  case 0xf630:
-    return header.romSizeShift == 9 ? EnhancementChip::St011 : EnhancementChip::St010;
   default:
     return EnhancementChip::None;
   }
@@ -398,6 +381,9 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Sa1;
   if (cart.header_.chip == EnhancementChip::SuperFx)
     cart.header_.mapping = MappingType::SuperFx;
+  if (cart.header_.chip == EnhancementChip::Spc7110 ||
+      cart.header_.chip == EnhancementChip::Spc7110Rtc)
+    cart.header_.mapping = MappingType::Spc7110;
   if (cart.header_.chip == EnhancementChip::St011)
     cart.header_.mapping = MappingType::St011;
   if (cart.rom_.size() == 0x100000 && HasSignature(cart.rom_, 0x7fc0, "Satellaview BS-X     ")) {
@@ -938,12 +924,14 @@ std::optional<RomHeader> Cartridge::ParseHeaderAt(std::span<const uint8_t> rom, 
 
   RomHeader candidate;
   candidate.headerOffset = base;
-  candidate.title = TrimTitle(rom.subspan(base, 21));
+  candidate.title = detail::DecodeHeaderTitle(rom.subspan(base, 21));
 
   const auto mapMode = rom[base + 0x15];
   candidate.mapMode = mapMode;
   candidate.maker = rom[base + 0x1a];
   candidate.mapping = MappingFromModeByte(mapMode);
+  if (candidate.title == "YUYU NO QUIZ DE GO!GO")
+    candidate.mapping = MappingType::LoRom;
   candidate.speed = SpeedFromModeByte(mapMode);
   candidate.cartridgeType = rom[base + 0x16];
   candidate.romSizeShift = rom[base + 0x17];
