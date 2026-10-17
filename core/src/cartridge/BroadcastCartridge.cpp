@@ -5,24 +5,21 @@
 
 namespace snes::core {
 namespace {
+bool MaskRomPack(std::span<const uint8_t> bytes) {
+  return bytes.size() > 0xff06 && bytes[0xff00] == 'M' && bytes[0xff02] == 'P' &&
+         (bytes[0xff06] & 0xf0) == 0x70;
+}
+
 bool ValidMemoryPack(std::span<const uint8_t> bytes) {
-  const bool maskRom = bytes.size() > 0xff06 && bytes[0xff00] == 'M' && bytes[0xff02] == 'P' &&
-                       (bytes[0xff06] & 0xf0) == 0x70;
   return bytes.empty() || bytes.size() == 0x100000 || bytes.size() == 0x200000 ||
-         bytes.size() == 0x400000 || (bytes.size() == 0x80000 && maskRom);
+         bytes.size() == 0x400000 || (bytes.size() == 0x80000 && MaskRomPack(bytes));
 }
 } // namespace
 
 void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
   bsx_.reset();
-  header_.sramSizeShift = 5;
-  sram_.assign(0x8000, 0xff);
-  if (pack.empty())
-    memoryPack_.assign(0x100000, 0xff);
-  else
-    memoryPack_.assign(pack.begin(), pack.end());
-  memoryPackReadOnly_ = memoryPack_[0xff00] == 'M' && memoryPack_[0xff02] == 'P' &&
-                        (memoryPack_[0xff06] & 0xf0) == 0x70;
+  memoryPack_.assign(pack.begin(), pack.end());
+  memoryPackReadOnly_ = MaskRomPack(memoryPack_);
   bsx_ = std::make_unique<Bsx>(rom_, memoryPack_, sram_);
   bsx_->SetTimeSource([]() {
     BroadcastTime time;
@@ -66,6 +63,8 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
     return std::nullopt;
   const auto &header = cart->header_;
   if (header.mapping == MappingType::Bsx) {
+    if (!cart->boardConnected_)
+      return cart;
     auto normalizedPack = RemoveCopierHeader(pack, nullptr);
     if (!ValidMemoryPack(normalizedPack)) {
       if (error)
@@ -76,26 +75,32 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
     return cart;
   }
   if (header.mapping == MappingType::BroadcastSa1) {
+    if (!cart->boardConnected_)
+      return cart;
     auto expansion = RemoveCopierHeader(pack, nullptr);
-    if (!expansion.empty() && expansion.size() != 0x80000) {
+    if (expansion.size() != 0x80000 && !ValidMemoryPack(expansion)) {
       if (error)
-        *error = "SA-1 slot expansion must be 512 KiB";
+        *error = "Invalid SA-1 memory pack capacity";
       return std::nullopt;
     }
     cart->memoryPack_ = std::move(expansion);
-    cart->memoryPackReadOnly_ = true;
-    cart->sa1_->SetExpansionRom(cart->memoryPack_);
+    cart->memoryPackReadOnly_ =
+        cart->memoryPack_.size() == 0x80000 || MaskRomPack(cart->memoryPack_);
+    if (!cart->memoryPack_.empty())
+      cart->memoryPackDevice_ =
+          std::make_unique<BsMemory>(cart->memoryPack_, cart->memoryPackReadOnly_);
+    cart->sa1_->SetExpansionRom(cart->memoryPack_, cart->memoryPackDevice_.get());
     return cart;
   }
-  const bool lo =
-      header.mapping == MappingType::LoRom || header.mapping == MappingType::LoRom24Mbit;
-  if ((!lo && header.mapping != MappingType::HiRom) || header.maker != 0x33 ||
-      cart->rom_[header.headerOffset - 14] != 'Z' || cart->rom_[header.headerOffset - 11] == ' ' ||
+  const bool lo = header.mapping == MappingType::BroadcastLoRom;
+  if ((!lo && header.mapping != MappingType::BroadcastHiRom) ||
       header.chip != EnhancementChip::None) {
     if (error)
       *error = "Expected a BS slot base cartridge without an enhancement processor";
     return std::nullopt;
   }
+  if (!cart->boardConnected_)
+    return cart;
   auto normalizedPack = RemoveCopierHeader(pack, nullptr);
   if (!ValidMemoryPack(normalizedPack)) {
     if (error)
@@ -104,13 +109,12 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
   }
   cart->header_.mapping = lo ? MappingType::BroadcastLoRom : MappingType::BroadcastHiRom;
   cart->memoryPack_ = std::move(normalizedPack);
-  if (cart->memoryPack_.empty())
-    cart->memoryPack_.assign(0x100000, 0xff);
   const auto &bytes = cart->memoryPack_;
-  cart->memoryPackReadOnly_ =
-      bytes[0xff00] == 'M' && bytes[0xff02] == 'P' && (bytes[0xff06] & 0xf0) == 0x70;
-  cart->memoryPackDevice_ =
-      std::make_unique<BsMemory>(cart->memoryPack_, cart->memoryPackReadOnly_);
+  if (!bytes.empty()) {
+    cart->memoryPackReadOnly_ = MaskRomPack(bytes);
+    cart->memoryPackDevice_ =
+        std::make_unique<BsMemory>(cart->memoryPack_, cart->memoryPackReadOnly_);
+  }
   return cart;
 }
 

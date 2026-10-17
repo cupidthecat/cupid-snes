@@ -73,7 +73,7 @@ struct Bsx::Impl {
     if (bank < 16 && (offset & 0xf000) == 0x5000)
       return {Region::Mapper, bank};
     if (bank >= 0x10 && bank <= 0x17 && (offset & 0xf000) == 0x5000)
-      return {Region::Sram, ((bank & 7) << 12) | (offset & 0xfff)};
+      return {Region::Sram, (bank << 12) | (offset & 0xfff)};
     if (halfBank < 0x40 && offset >= 0x2188 && offset <= 0x219f)
       return {Region::Radio, offset - 0x2188};
 
@@ -85,7 +85,7 @@ struct Bsx::Impl {
       return {};
     }
     if (halfBank < 0x40 && active[bank < 0x80 ? 7 : 8])
-      return {Region::Bios, ((bank & 0x1f) << 15) | (offset & 0x7fff)};
+      return {Region::Bios, ((bank & 0x3f) << 15) | (offset & 0x7fff)};
 
     if (ramEnabled) {
       const unsigned position = unsigned(active[5] != 0) + 2 * unsigned(active[6] != 0);

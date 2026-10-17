@@ -1,6 +1,7 @@
 #include "RomHeaderParser.hpp"
 
 #include "HeaderTitle.hpp"
+#include "RomBoardProfile.hpp"
 
 #include <array>
 
@@ -190,6 +191,8 @@ std::optional<RomHeader> ParseRomHeader(std::span<const uint8_t> rom) {
     if (candidate && (!selected || candidate->score > selected->score))
       selected = std::move(candidate);
   }
+  if (selected)
+    SelectRomBoard(*selected, rom);
   return selected;
 }
 

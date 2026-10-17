@@ -6,6 +6,8 @@ DSP firmware identity follows the title: `PILOTWINGS` selects DSP-1, `DUNGEON MA
 
 Header titles skip zero and $FF padding, trim outer spaces, and decode halfwidth Japanese kana and voiced marks to UTF-8. The same decoded title controls firmware selection and displayed metadata. Unknown title bytes appear as `?`. `YUYU NO QUIZ DE GO!GO` retains LoROM layout despite its title overwriting the mode byte.
 
+Valid extended identifiers take precedence over the raw device family. With maker byte $33, `ZBSJ` selects the broadcast BIOS controller, and other uppercase or numeric `Z??J` identifiers select LoROM, HiROM, or SA-1 slot boards. All four characters must be valid. A title alone does not enable these boards. Save RAM comes from the ordinary header declaration, then the expansion declaration when needed; a profile without its required RAM stays unconnected. An absent memory pack remains empty. See [broadcast controllers and memory packs](broadcast-memory.md).
+
 [Cartridge memory initialization](cartridge-memory.md) describes erased external RAM, processor work RAM, save loading, and reset retention.
 
 The detected processor does not by itself connect a board. The loader also resolves the mapping family, declared RAM, and ROM geometry. OBC1 needs a LoROM board with save RAM; S-RTC needs ExHiROM with save RAM. Automatic Cx4 and ST010/ST011 profiles use LoROM without an ordinary save declaration. ST018 uses LoROM with save RAM. SPC7110 needs save RAM, and its seven-MiB expansion profile also needs the RTC. An unrecognized combination retains the loaded image and metadata but connects no cartridge ROM, RAM, or processor to the CPU bus. Reads preserve open bus and writes have no effect. An explicit database mapping can select custom wiring.

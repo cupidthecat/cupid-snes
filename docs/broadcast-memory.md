@@ -1,6 +1,8 @@
 # Broadcast controllers and memory packs
 
-The BIOS cartridge controller provides 512 KiB PSRAM, 32 KiB battery RAM, a memory-pack slot, and radio registers. Ordinary LoROM and HiROM slot boards use the same memory-pack device. BIOS, game images, and recorded broadcasts are supplied separately.
+The BIOS cartridge controller provides 512 KiB PSRAM, header-sized battery RAM, a memory-pack slot, and radio registers. The normal BIOS declares 32 KiB battery RAM. LoROM, HiROM, and SA-1 slot boards use the same memory-pack device. BIOS, game images, and recorded broadcasts are supplied separately.
+
+A valid extended identifier selects the board before processor detection. Maker byte $33 enables four uppercase letters or digits: `ZBSJ` selects the BIOS controller, while other `Z??J` identifiers select the slot variant of the header's LoROM, HiROM, or SA-1 map. The BIOS title alone does not select a controller. These profiles need a save-RAM declaration; unsupported combinations remain unconnected.
 
 ## Controller and slot maps
 
@@ -8,7 +10,9 @@ Controller registers occupy `$00-$0F:$5000-$5FFF`. Reads return only D7; reserve
 
 PSRAM mapping includes full windows and packed 8 KiB snippets. The ordinary LoROM slot keeps its three base-ROM windows separate from the pack and exposes SRAM only in the lower halves of its SRAM banks. HiROM pack aliases share one command state. Unmapped banks retain open bus.
 
-Supported packs are 512 KiB mask ROMs and 1, 2, or 4 MiB flash or mask ROM images. An omitted pack starts as blank 1 MiB flash. Mask ROMs ignore flash commands. Flash array accesses use a four-bit physical block identity, so larger flash allocations alias the first MiB; mask ROMs retain their full capacity.
+Supported packs are 512 KiB mask ROMs and 1, 2, or 4 MiB flash or mask ROM images. An omitted pack leaves the slot empty. Supply an erased image to insert blank flash. Mask ROMs ignore flash commands. Flash array accesses use a four-bit physical block identity, so larger flash allocations alias the first MiB; mask ROMs retain their full capacity.
+
+SA-1 MMC pages 4-7 select a populated pack. Low-bank ROM windows use these pages only when the corresponding mapping-mode bit is set. Without a pack, every page retains base-ROM mirroring. The CPU's BW-RAM window remains $40-$4F, and SA-1 ROM writes do not issue flash commands. Loading a flash save and resetting the console preserve the attached storage.
 
 ## Flash commands and timing
 
