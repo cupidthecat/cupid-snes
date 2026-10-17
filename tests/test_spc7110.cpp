@@ -26,7 +26,8 @@ std::vector<uint8_t> Rom(bool rtc = false, size_t size = 0x300000) {
   for (size_t i = 0; i < size; ++i)
     rom[i] = uint8_t((i >> 20) * 31 + i);
   std::fill_n(rom.begin() + 0xffc0, 64, 0);
-  rom[0x8000] = 0xdb;
+  rom[0x8000] = 0x78;
+  rom[0x8001] = 0xdb;
   rom[0xffc0] = 'T';
   rom[0xffd5] = 0x3a;
   rom[0xffd6] = rtc ? 0xf9 : 0xf5;
@@ -157,7 +158,7 @@ void Mapping() {
   auto emu = std::make_unique<Emulator>();
   Check(emu->LoadCartridge(rom), "SPC7110 loads");
   auto &bus = emu->GetBus();
-  Check(bus.Read(0x008000) == 0xdb && bus.Read(0xc08000) == 0xdb,
+  Check(bus.Read(0x008000) == 0x78 && bus.Read(0xc08000) == 0x78,
         "Program ROM is visible through both bank groups");
   Check(bus.Read(0x108000) == rom[0x108000],
         "The next CPU program window routes through the data controller");

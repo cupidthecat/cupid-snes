@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 using namespace snes::core;
@@ -24,7 +25,7 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, size_t size = 0x100000) {
   bytes[0x7fd5] = mode;
   bytes[0x7fd6] = type;
   bytes[0x7fd7] = 10;
-  bytes[0x7fd8] = 7;
+  bytes[0x7fd8] = (type >> 4) == 1 ? 0 : 7;
   bytes[0x7fd9] = 1;
   bytes[0x7fdc] = bytes[0x7fdd] = 0xff;
   bytes[0x7ffd] = 0x80;
@@ -447,69 +448,65 @@ void SuperFxIntegration() {
   Check(machine->LoadCartridge(large), "Reload a four-MiB GSU2 cartridge");
   Check(machine->LoadedCartridge()->SramData().size() == 0x20000,
         "GSU2 work RAM follows the extended header");
-  Check(bus.Read(0xc01234) == 0x12 && bus.Read(0xe01234) == 0x56 && bus.Read(0xf01234) == 0x9a,
-        "GSU2 console banks expose the second half of a four-MiB ROM");
-  bus.Write(0xf01234, 0);
-  Check(bus.Read(0xf01234) == 0x9a, "GSU2 upper ROM banks do not alias writable RAM");
+  Check(bus.Read(0xc01234) == 0x12, "GSU2 retains its connected linear ROM window");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0xe01234) == 0xa5, "A larger ROM does not connect unused CPU banks");
+  bus.Write(0xf01234, 0x49);
+  Check(bus.Read(0x701234) == 0x49, "Upper RAM aliases remain RAM with a larger ROM");
   bus.Write(0x711234, 0x87);
   Check(machine->LoadedCartridge()->SramData()[0x11234] == 0x87,
         "GSU2 RAM remains at its separate banks");
 }
 
 void SuperFxExtendedBoards() {
-  auto rom = Rom(0x20, 0x1a, 0x400000);
-  rom[0x7fda] = 0x33;
-  rom[0x7fbd] = 8;
-  auto machine = Machine(rom);
-  auto &bus = machine->GetBus();
-  bus.Write(0x721234, 0x42);
-  bus.Write(0x731234, 0x63);
-  Check(machine->LoadedCartridge()->SramData()[0x21234] == 0x42 &&
-            machine->LoadedCartridge()->SramData()[0x31234] == 0x63,
-        "Console bus exposes all four connected GSU RAM banks");
-  Check(bus.Read(0x721234) == 0x42 && bus.Read(0x731234) == 0x63,
-        "Extended GSU RAM reads reach the same saved storage");
+  for (const auto [ordinary, expansion, bytes] :
+       {std::tuple{0, 8, size_t(0x40000)}, std::tuple{7, 8, size_t(0x20000)},
+        std::tuple{0, 10, size_t(0x40000)}, std::tuple{0xf3, 8, size_t(0x2000)}}) {
+    auto rom = Rom(0x20, 0x15, 0x400000);
+    rom[0x7fd8] = uint8_t(ordinary);
+    rom[0x7fda] = 0x33;
+    rom[0x7fbd] = uint8_t(expansion);
+    auto machine = Machine(rom);
+    Check(machine->LoadedCartridge()->SramData().size() == bytes,
+          "GSU RAM uses the ordinary declaration before the capped expansion declaration");
+    auto &bus = machine->GetBus();
+    bus.Write(0x701234, 0x42);
+    Check(bus.Read(0xf01234) == 0x42, "The two CPU RAM windows retain their upper aliases");
+    const auto ram = machine->LoadedCartridge()->SramData();
+    const std::vector<uint8_t> before(ram.begin(), ram.end());
+    bus.Write(0x721234, 0x99);
+    Check(std::equal(before.begin(), before.end(), ram.begin()),
+          "Unconnected CPU banks cannot modify stored GSU RAM");
+    bus.Write(0x7e0000, 0xa5);
+    Check(bus.Read(0x721234) == 0xa5 && bus.Read(0xf21234) == 0xa5,
+          "Additional RAM capacity does not connect more CPU banks");
+  }
 
-  rom[0x7fbd] = 10;
-  Check(machine->LoadCartridge(rom), "Load a GSU board with one MiB of CPU RAM");
-  for (unsigned bank = 0x70; bank <= 0x7d; ++bank)
-    bus.Write((bank << 16) | 0x1234, uint8_t(bank));
-  for (unsigned bank = 0x70; bank <= 0x7d; ++bank) {
-    Check(bus.Read((bank << 16) | 0x1234) == bank &&
-              machine->LoadedCartridge()->SramData()[((bank - 0x70) << 16) | 0x1234] == bank,
-          "CPU expansion RAM banks retain independent address lines");
+  for (size_t size : {0x400000u, 0x600000u, 0xb00000u}) {
+    auto rom = Rom(0x20, 0x15, size);
+    rom[0x7fda] = 0x33;
+    rom[0x7fbd] = 8;
+    rom[0x7fd7] = 14;
+    rom[0x1234] = 0x10;
+    rom[0x201234] = 0x20;
+    if (size > 0x400000)
+      rom[0x401234] = 0x40;
+    if (size > 0x800000)
+      rom[0x801234] = 0x80;
+    auto machine = Machine(rom);
+    auto &bus = machine->GetBus();
+    const uint8_t upper = size > 0x400000 ? 0x40 : 0x10;
+    Check(bus.Read(0x009234) == 0x10 && bus.Read(0x809234) == upper && bus.Read(0x401234) == upper,
+          "GSU ROM windows retain physical address lines across larger images");
+    Check(bus.Read(0xc01234) == (size > 0x800000 ? 0x80 : upper),
+          "Non-power-of-two GSU images fold their connected linear ROM addresses");
+    for (uint32_t hole : {0x601234u, 0x721234u, 0xe01234u, 0xf21234u}) {
+      bus.Write(0x7e0000, 0xa5);
+      Check(bus.Read(hole) == 0xa5, "ROM size metadata does not connect unused CPU windows");
+    }
   }
-  bus.Write(0x7e1234, 0x91);
-  bus.Write(0x7f1234, 0xa2);
-  Check(bus.Read(0x7e1234) == 0x91 && bus.Read(0x7f1234) == 0xa2 && bus.Read(0x761234) == 0x76,
-        "Console WRAM has priority over expansion RAM at banks 7E and 7F");
-
-  auto expanded = Rom(0x20, 0x1a, 0xb00000);
-  for (size_t bank = 0; bank < expanded.size() / 0x10000; ++bank) {
-    expanded[bank * 0x10000 + 0x1234] = uint8_t(bank);
-    expanded[bank * 0x10000 + 0x9234] = uint8_t(bank);
-  }
-  expanded[0x7fd7] = 14;
-  expanded[0x7fda] = 0x33;
-  expanded[0x7fbd] = 8;
-  Check(machine->LoadCartridge(expanded),
-        "Load an eleven-MiB GSU image with the extended layout marker");
-  for (unsigned bank = 0; bank < 0x40; ++bank) {
-    Check(bus.Read((bank << 16) | 0x9234) == bank / 2 &&
-              bus.Read(((bank + 0x80) << 16) | 0x9234) == 0x20 + bank / 2,
-          "Extended GSU system windows select separate two-MiB ROM regions");
-    Check(bus.Read(((bank + 0xc0) << 16) | 0x1234) == 0x40 + bank,
-          "Extended GSU upper linear window selects ROM bytes four through eight MiB");
-  }
-  for (unsigned bank = 0x40; bank <= 0x6f; ++bank)
-    Check(bus.Read((bank << 16) | 0x1234) == bank + 0x40,
-          "Extended GSU lower linear window exposes the final three MiB");
-  bus.Write(0x601234, 0);
-  Check(bus.Read(0x601234) == 0xa0, "Extended GSU ROM windows ignore writes");
-  bus.Write(0x731234, 0xd7);
-  Check(machine->LoadedCartridge()->SramData()[0x31234] == 0xd7,
-        "Extended ROM retains the separate four-bank RAM window");
 }
+
 } // namespace
 
 int main() {

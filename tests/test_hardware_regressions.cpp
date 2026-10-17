@@ -176,9 +176,9 @@ void AdditionalCartridgeLayouts() {
           unsigned(MappingType::ExLoRom));
     Check("Extended LoROM lower reset bank", bus.Read(0x008000), 0x44);
     Check("Extended LoROM upper reset bank", bus.Read(0x808000), 0x11);
-    Check("Extended LoROM full upper bank", bus.Read(0xc00000), 0x22);
-    Check("Extended LoROM full lower bank", bus.Read(0x400000), size > 0x600000 ? 0x66 : 0x44);
-    Check("Extended LoROM tail mirror", bus.Read(0x600000),
+    Check("Extended LoROM upper ROM window", bus.Read(0xc08000), 0x22);
+    Check("Extended LoROM lower ROM window", bus.Read(0x408000), size > 0x600000 ? 0x66 : 0x44);
+    Check("Extended LoROM tail mirror", bus.Read(0x608000),
           size == 0x700000   ? 0x66
           : size == 0x500000 ? 0x44
                              : 0xea);
@@ -194,8 +194,8 @@ void AdditionalCartridgeLayouts() {
     return rom;
   };
   auto emu = Load(namedRom(0x100000, "WANDERERS FROM YS", 3));
-  Check("NoMAD-1 detection", unsigned(emu->LoadedCartridge()->Header().mapping),
-        unsigned(MappingType::LoRomNoMad1));
+  Check("Title does not replace the declared board",
+        unsigned(emu->LoadedCartridge()->Header().mapping), unsigned(MappingType::LoRom));
   emu->GetBus().Write(0x708123, 0x57);
   Check("NoMAD-1 SRAM upper half", emu->GetBus().Read(0x700123), 0x57);
   Check("NoMAD-1 SRAM upper-bank mirror", emu->GetBus().Read(0xf08123), 0x57);
@@ -208,26 +208,24 @@ void AdditionalCartridgeLayouts() {
     rom[0x100000] = 0x22;
     rom[0x200000] = 0x33;
     emu = Load(rom);
-    Check("24 Mbit board detection", unsigned(emu->LoadedCartridge()->Header().mapping),
-          unsigned(MappingType::LoRom24Mbit));
+    Check("A title retains its declared ROM board",
+          unsigned(emu->LoadedCartridge()->Header().mapping), unsigned(MappingType::LoRom));
     for (unsigned bank : {0x00u, 0x20u, 0x80u, 0xa0u})
       Check("24 Mbit ROM chip selection", emu->GetBus().Read((bank << 16) | 0x8000),
-            bank & 0x20   ? 0x22
-            : bank & 0x80 ? 0x33
-                          : 0x11);
+            bank & 0x20 ? 0x22 : 0x11);
     emu->GetBus().Write(0x700123, 0x63);
     Check("24 Mbit SRAM mirror", emu->GetBus().Read(0xf00123), 0x63);
   }
   for (const char *title : {"THOROUGHBRED BREEDER3", "RPG-TCOOL 2"}) {
     emu = Load(namedRom(0x300000, title, 7));
-    Check("Large SRAM board detection", unsigned(emu->LoadedCartridge()->Header().mapping),
-          unsigned(MappingType::LoRomLargeSram));
+    Check("A title retains its declared RAM board",
+          unsigned(emu->LoadedCartridge()->Header().mapping), unsigned(MappingType::LoRom));
     for (unsigned bank = 0x70; bank <= 0x73; ++bank)
       emu->GetBus().Write((bank << 16) | 0x123, static_cast<uint8_t>(bank));
     for (unsigned bank = 0x70; bank <= 0x73; ++bank) {
       Check("Large SRAM independent bank", emu->GetBus().Read((bank << 16) | 0x123), bank);
-      Check("Large SRAM overlapping upper half", emu->GetBus().Read((bank << 16) | 0x8123),
-            bank == 0x73 ? 0x70 : bank + 1);
+      Check("Large-ROM board keeps ROM above its RAM window",
+            emu->GetBus().Read((bank << 16) | 0x8123), 0xea);
     }
   }
 }

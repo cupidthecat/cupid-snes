@@ -155,7 +155,9 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, uint8_t maker, bool st011, 
   bytes[header + 0x1a] = maker;
   bytes[header + 0x1c] = bytes[header + 0x1d] = 0xff;
   bytes[header + 0x3d] = 0x80;
-  bytes[mode == 0x21 ? 0x8000 : 0] = 0xdb;
+  const size_t entry = mode == 0x21 ? 0x8000 : 0;
+  bytes[entry] = 0x78;
+  bytes[entry + 1] = 0xdb;
   return bytes;
 }
 

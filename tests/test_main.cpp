@@ -479,18 +479,14 @@ int main() {
     // Read ROM at $80:9234
     assert(bus.Read(0x809234) == 0x5A);
 
-    // LoROM full-ROM banks must still mirror 32KB pages.
-    // $C0:0000 and $C0:8000 both map to ROM offset $0000.
-    assert(bus.Read(0xC00000) == 0x11);
-    assert(bus.Read(0xC08000) == 0x11);
-
-    // $C1:0000 maps to ROM offset $8000 (next 32KB page).
-    assert(bus.Read(0xC10000) == 0x22);
-
-    // Low full-ROM banks mirror the same pages; WRAM still owns $7E/$7F.
-    assert(bus.Read(0x400000) == 0x11);
+    for (uint32_t hole : {0xc00000u, 0xc10000u, 0x400000u, 0x410000u}) {
+      bus.Write(0x7e0000, 0xa5);
+      assert(bus.Read(hole) == 0xa5);
+    }
+    assert(bus.Read(0xc08000) == 0x11);
+    assert(bus.Read(0xc18000) == 0x22);
     assert(bus.Read(0x408000) == 0x11);
-    assert(bus.Read(0x410000) == 0x22);
+    assert(bus.Read(0x418000) == 0x22);
     bus.Write(0x7E8000, 0x37);
     assert(bus.Read(0x7E8000) == 0x37);
 
