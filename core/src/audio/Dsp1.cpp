@@ -15,6 +15,7 @@ Dsp1::Dsp1() {
 
 void Dsp1::Reset() {
   sr_ = DRC | RQM;
+  statusReadHigh_ = false;
   dr_ = 0x0080;
   freeze_ = false;
   fsmMajorState_ = WAIT_COMMAND;
@@ -23,9 +24,10 @@ void Dsp1::Reset() {
 
 // Register access
 
-uint8_t Dsp1::GetSr() const {
-  // The cartridge exposes the status byte containing the ready flag.
-  return sr_;
+uint8_t Dsp1::GetSr() {
+  const uint8_t value = statusReadHigh_ ? sr_ : 0;
+  statusReadHigh_ = !statusReadHigh_;
+  return value;
 }
 
 uint8_t Dsp1::GetDr() {

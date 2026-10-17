@@ -266,3 +266,7 @@ add_test(NAME snes_srtc_timing_tests COMMAND snes_srtc_timing_tests)
 add_executable(snes_cartridge_storage_tests test_cartridge_storage.cpp)
 target_link_libraries(snes_cartridge_storage_tests PRIVATE snes_core)
 add_test(NAME snes_cartridge_storage_tests COMMAND snes_cartridge_storage_tests)
+
+add_executable(snes_competition_cartridge_tests test_competition_cartridges.cpp)
+target_link_libraries(snes_competition_cartridge_tests PRIVATE snes_core)
+add_test(NAME snes_competition_cartridge_tests COMMAND snes_competition_cartridge_tests)

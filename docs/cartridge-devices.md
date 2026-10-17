@@ -12,7 +12,7 @@ DSP-2 cartridges use data ports at $20-$3F/$A0-$BF:$6000-$6FFF and $8000-$BFFF. 
 
 The implementation handles packed-pixel conversion to SNES bitplanes, transparent color selection, bitmap overlays, pixel reversal, unsigned 16-bit multiplication, and fixed-point bitmap scaling. Parameter RAM survives between commands. Empty bitmap requests complete without leaving the parser waiting for a payload. This defines recovery for empty requests; it does not reproduce undocumented hardware behavior for them.
 
-DSP-1 remains available through its existing board windows. DSP-3 and DSP-4 have separate command engines and narrower cartridge windows, described in [original hardware support](original-hardware.md).
+DSP-1 remains available through its existing board windows. Its command model maintains separate byte phases for status and data accesses. DSP-3 and DSP-4 have separate command engines and narrower cartridge windows, described in [original hardware support](original-hardware.md). The [timed competition boards](competition-cartridges.md) combine DSP-1 with selectable ROM chips and a countdown controller.
 
 ## OBC1
 

@@ -18,7 +18,7 @@ public:
 
   Dsp1();
 
-  uint8_t GetSr() const;
+  uint8_t GetSr();
   uint8_t GetDr();
   void SetDr(uint8_t value);
   void Reset();
@@ -60,6 +60,7 @@ private:
   } shared_;
 
   uint8_t sr_;
+  bool statusReadHigh_ = false;
   uint16_t dr_;
   unsigned fsmMajorState_;
   uint8_t command_;

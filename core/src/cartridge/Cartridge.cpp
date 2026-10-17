@@ -256,6 +256,10 @@ const char *MappingName(MappingType mapping) noexcept {
     return "BS cartridge (SA-1)";
   case MappingType::Bsx:
     return "BS-X BIOS";
+  case MappingType::Competition92:
+    return "Campus Challenge '92";
+  case MappingType::Competition94:
+    return "PowerFest '94";
   case MappingType::SufamiTurbo:
     return "Sufami Turbo";
   case MappingType::BroadcastLoRom:
@@ -305,6 +309,8 @@ const char *ChipName(EnhancementChip chip) noexcept {
     return "ST011";
   case EnhancementChip::St018:
     return "ST018";
+  case EnhancementChip::Competition:
+    return "Competition timer + DSP-1";
   }
   return "Unknown";
 }
@@ -602,6 +608,8 @@ uint32_t Cartridge::RomCrc32() const noexcept {
 }
 
 void Cartridge::Reset() {
+  if (competition_)
+    competition_->Reset();
   if (necDsp_)
     necDsp_->Reset();
   memselFast_ = false;
@@ -646,6 +654,8 @@ bool Cartridge::MemselFast() const noexcept {
 }
 
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
+  if (competition_)
+    return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
     return cx4Processor_->Read(cpuAddress, openBus);
   if (necDsp_) {
@@ -702,6 +712,10 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 }
 
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
+  if (competition_) {
+    competition_->Write(cpuAddress, value);
+    return;
+  }
   if (cx4Processor_) {
     cx4Processor_->Write(cpuAddress, value);
     return;
@@ -784,6 +798,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (competition_)
+    competition_->Advance(masterClocks);
   if (spc7110_)
     spc7110_->Advance(masterClocks);
   if (cx4Processor_)
@@ -799,6 +815,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (competition_)
+    competition_->SetPal(pal);
   if (spc7110_)
     spc7110_->SetPal(pal);
   if (cx4Processor_)
@@ -838,16 +856,24 @@ void Cartridge::EndDma(unsigned channel) {
 }
 
 std::span<const uint8_t> Cartridge::RomData() const noexcept {
+  if (competition_)
+    return competition_->BootRom();
   return rom_;
 }
 
 std::span<const uint8_t> Cartridge::SramData() const noexcept {
+  if (competition_)
+    return competition_->SaveRam();
   if (necDsp_ && necDsp_->HasSaveRam())
     return necDsp_->SaveRam();
   return sram_;
 }
 
 void Cartridge::LoadSram(std::span<const uint8_t> data) {
+  if (competition_) {
+    competition_->LoadRam(data);
+    return;
+  }
   if (necDsp_ && necDsp_->HasSaveRam()) {
     necDsp_->LoadRam(data);
     return;

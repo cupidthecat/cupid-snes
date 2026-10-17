@@ -88,6 +88,12 @@ public:
                               std::string *error = nullptr);
   bool LoadBroadcastCartridgeFromFiles(const std::string &base, const std::string &pack,
                                        std::string *error = nullptr);
+  bool LoadCompetitionCartridge(CompetitionBoard::Settings settings,
+                                const std::array<std::span<const uint8_t>, 4> &images,
+                                std::string *error = nullptr);
+  bool LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings settings,
+                                         const std::array<std::string, 4> &paths,
+                                         std::string *error = nullptr);
   bool LoadMemoryPack(std::span<const uint8_t> data) {
     return cartridge_ && cartridge_->LoadMemoryPack(data);
   }
