@@ -73,6 +73,7 @@ std::vector<uint8_t> Rom(bool seta = false) {
   std::copy(title.begin(), title.end(), rom.begin() + 0x7fc0);
   rom[0x7fd5] = seta ? 0x30 : 0x20;
   rom[0x7fd6] = seta ? 0xf6 : 3;
+  rom[0x7fbf] = seta ? 1 : 0;
   rom[0x7fd7] = seta ? 6 : 5;
   rom[0x7fd9] = 1;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;

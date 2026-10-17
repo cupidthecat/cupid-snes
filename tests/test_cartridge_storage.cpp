@@ -25,6 +25,7 @@ std::vector<uint8_t> Image(uint8_t mode = 0x20, uint8_t type = 2, size_t size = 
   bytes[header] = 'T';
   bytes[header + 0x15] = mode;
   bytes[header + 0x16] = type;
+  bytes[header - 1] = type == 0xf3 ? 0x10 : type == 0xf6 ? 1 : type == 0xf5 && mode == 0x30 ? 2 : 0;
   bytes[header + 0x17] = 10;
   bytes[header + 0x18] = 3;
   bytes[header + 0x19] = 1;
@@ -130,6 +131,8 @@ void ProcessorOwnedMemory() {
   for (uint8_t shift : {9, 10}) {
     auto image = Image(0x30, 0xf6);
     image[0x7fd7] = shift;
+    if (shift == 9)
+      std::copy_n("2DAN MORITA SHOUGI", 18, image.begin() + 0x7fc0);
     auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, &firmware);
     Check(cart && cart->HasSignalProcessor() && cart->SramData().size() == 4096,
           "SETA save RAM belongs to its signal processor");

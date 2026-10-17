@@ -139,8 +139,15 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, uint8_t maker, bool st011, 
   std::vector<uint8_t> bytes(0x100000);
   const size_t header = mode == 0x21 ? 0xffc0 : 0x7fc0;
   std::fill_n(bytes.begin() + header, 21, ' ');
-  const std::string title = original ? "PILOTWINGS" : "TEST DSP";
+  const std::string title = original                    ? "PILOTWINGS"
+                            : st011                     ? "2DAN MORITA SHOUGI"
+                            : type == 0xf6              ? "F1 ROC II"
+                            : mode == 0x20 && type == 5 ? "DUNGEON MASTER"
+                            : mode == 0x30 && type == 5 ? "SD\xb6\xde\xdd\xc0\xde\xd1GX"
+                            : mode == 0x30 && type == 3 ? "TOP GEAR 3000"
+                                                        : "TEST DSP";
   std::copy(title.begin(), title.end(), bytes.begin() + header);
+  bytes[header - 1] = type == 0xf6 ? 1 : 0;
   bytes[header + 0x15] = mode;
   bytes[header + 0x16] = type;
   bytes[header + 0x17] = st011 ? 9 : 10;

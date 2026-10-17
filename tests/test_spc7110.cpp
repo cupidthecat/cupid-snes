@@ -30,6 +30,7 @@ std::vector<uint8_t> Rom(bool rtc = false, size_t size = 0x300000) {
   rom[0xffc0] = 'T';
   rom[0xffd5] = 0x3a;
   rom[0xffd6] = rtc ? 0xf9 : 0xf5;
+  rom[0xffbf] = 0;
   rom[0xffd7] = size > 0x500000 ? 13 : 12;
   rom[0xffd8] = 3;
   rom[0xffdc] = rom[0xffdd] = 0xff;

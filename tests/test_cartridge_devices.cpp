@@ -10,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 using namespace snes::core;
@@ -28,7 +29,7 @@ std::vector<uint8_t> Rom(size_t size = 0x100000, uint8_t mode = 0x20, uint8_t ty
   const size_t header = mode == 0x35 || mode == 0x25     ? 0x40ffc0
                         : (mode & 1) && (mode & 15) == 1 ? 0xffc0
                                                          : 0x7fc0;
-  std::fill_n(bytes.begin() + header, 64, 0);
+  std::fill_n(bytes.begin() + header - 16, 80, 0);
   std::fill_n(bytes.begin() + header, 21, ' ');
   bytes[header] = 'T';
   bytes[header + 0x15] = mode;
@@ -49,6 +50,70 @@ std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &bytes) {
   if (!emu->LoadCartridge(bytes, &error))
     throw std::runtime_error(error);
   return emu;
+}
+
+void DeviceFamilyHeaders() {
+  for (const auto [mode, type, chip] :
+       {std::tuple{uint8_t(0x22), uint8_t(0x45), EnhancementChip::Sdd1},
+        std::tuple{uint8_t(0x33), uint8_t(0x35), EnhancementChip::Sa1},
+        std::tuple{uint8_t(0x30), uint8_t(0x16), EnhancementChip::SuperFx},
+        std::tuple{uint8_t(0x20), uint8_t(0x4f), EnhancementChip::Sdd1},
+        std::tuple{uint8_t(0x20), uint8_t(0x25), EnhancementChip::Obc1}}) {
+    auto image = Rom(0x100000, mode, type);
+    const auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+    Check(cart && cart->Header().chip == chip, "Device families retain both ROM-speed variants");
+    Check(cart->Header().speed == ((mode & 0x10) ? RomSpeed::Fast : RomSpeed::Slow),
+          "Enhancement headers retain the declared ROM speed");
+  }
+  auto conflicting = Rom(0x300000, 0x23, 0xf5);
+  auto controller = Cartridge::FromRomImage(conflicting, nullptr, nullptr, nullptr);
+  Check(controller && controller->Header().chip == EnhancementChip::Spc7110 &&
+            controller->Header().mapping == MappingType::Spc7110,
+        "A device family's controller takes priority over a conflicting mapping mode");
+  const auto identified = [](std::string_view title, uint8_t mode, uint8_t type, uint8_t subtype,
+                             uint8_t maker) {
+    auto image = Rom(0x100000, mode, type);
+    std::fill_n(image.begin() + 0x7fc0, 21, ' ');
+    std::copy(title.begin(), title.end(), image.begin() + 0x7fc0);
+    image[0x7fbf] = subtype;
+    image[0x7fda] = maker;
+    return Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+  };
+  auto dsp1 = identified("PILOTWINGS", 0x20, 5, 0, 0);
+  auto dsp2 = identified("DUNGEON MASTER", 0x30, 5, 0, 0);
+  auto dsp4 = identified("TOP GEAR 3000", 0x20, 3, 0, 0);
+  Check(dsp1 && dsp1->Header().chip == EnhancementChip::Dsp1 && dsp2 &&
+            dsp2->Header().chip == EnhancementChip::Dsp2 && dsp4 &&
+            dsp4->Header().chip == EnhancementChip::Dsp4,
+        "Firmware identity follows identifying title bytes across speed variants");
+  auto padded = identified(std::string_view("DUNGEON\0 MASTER", 15), 0x30, 5, 0, 0);
+  Check(padded && padded->Header().chip == EnhancementChip::Dsp2 &&
+            padded->Header().title == "DUNGEON MASTER",
+        "Embedded padding does not terminate the identifying title");
+  auto japanese = identified("SD\xb6\xde\xdd\xc0\xde\xd1GX", 0x20, 5, 0, 0);
+  Check(japanese && japanese->Header().chip == EnhancementChip::Dsp3 &&
+            japanese->Header().title == "SD\xe3\x82\xac\xe3\x83\xb3\xe3\x83\x80\xe3\x83\xa0GX",
+        "Halfwidth kana and voiced marks identify Japanese firmware titles");
+  auto quizImage = Rom();
+  const std::string_view quizTitle = "YUYU NO QUIZ DE GO!GO";
+  std::copy(quizTitle.begin(), quizTitle.end(), quizImage.begin() + 0x7fc0);
+  quizImage[0x7fd5] = 0x21;
+  auto quiz = Cartridge::FromRomImage(quizImage, nullptr, nullptr, nullptr);
+  Check(quiz && quiz->Header().mapping == MappingType::LoRom,
+        "The extra title character does not select the wrong ROM layout");
+  for (uint8_t mode : {0x22, 0x32, 0x23, 0x33}) {
+    auto implicit = identified("T", mode, 0, 0, 0);
+    Check(implicit && implicit->Header().chip ==
+                          ((mode & 15) == 2 ? EnhancementChip::Sdd1 : EnhancementChip::Sa1),
+          "A dedicated mapping mode selects its controller without a processor type");
+  }
+  for (uint8_t maker : {uint8_t(0), uint8_t(0x33), uint8_t(0xb2)}) {
+    auto st011 = identified("2DAN MORITA SHOUGI", 0x30, 0xf5, 1, maker);
+    auto cx4 = identified("T", 0x20, 0xf5, 0x10, maker);
+    Check(st011 && st011->Header().chip == EnhancementChip::St011 && cx4 &&
+              cx4->Header().chip == EnhancementChip::Cx4,
+          "Extended subtype selection does not depend on the maker byte");
+  }
 }
 
 void DetectionAndReload() {
@@ -79,8 +144,19 @@ void DetectionAndReload() {
                      f.mode, f.type);
     const size_t header = f.mode == 0x35 ? 0x40ffc0 : f.mode == 0x21 ? 0xffc0 : 0x7fc0;
     bytes[header + 0x1a] = f.maker;
+    const std::string_view title = f.chip == EnhancementChip::Dsp2 ? "DUNGEON MASTER"
+                                   : f.chip == EnhancementChip::Dsp3
+                                       ? "SD\xb6\xde\xdd\xc0\xde\xd1GX"
+                                   : f.chip == EnhancementChip::Dsp4 ? "TOP GEAR 3000"
+                                                                     : "T";
+    std::copy(title.begin(), title.end(), bytes.begin() + header);
+    bytes[header - 1] = f.chip == EnhancementChip::Cx4     ? 0x10
+                        : f.chip == EnhancementChip::St018 ? 2
+                        : f.chip == EnhancementChip::St010 ? 1
+                                                           : 0;
     auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
-    Check(cart && cart->Header().chip == f.chip, "Chip detection uses mode, type and maker");
+    Check(cart && cart->Header().chip == f.chip,
+          "Chip detection uses device family, subtype and title");
     auto emu = Load(Rom());
     emu->GetBus().Write(0x7e0123, 0x5a);
     std::string error;
@@ -96,10 +172,11 @@ void DetectionAndReload() {
     }
   }
   auto st011 = Rom(0x100000, 0x30, 0xf6);
-  st011[0x7fd7] = 9;
+  st011[0x7fbf] = 1;
+  std::copy_n("2DAN MORITA SHOUGI", 18, st011.begin() + 0x7fc0);
   Check(Cartridge::FromRomImage(st011, nullptr, nullptr, nullptr)->Header().chip ==
             EnhancementChip::St011,
-        "ST011 detection includes ROM size");
+        "ST011 detection uses its identifying title");
   auto emu = Load(Rom());
   emu->StepFrame();
   Check(emu->LoadCartridge(Rom()), "Reload succeeds");
@@ -280,6 +357,7 @@ void EnhancementHeaderSelection() {
       std::copy_n(bytes.begin() + 0x7fc0, 64, bytes.begin() + header);
       std::fill_n(bytes.begin() + 0x7fc0, 64, 0);
     }
+    bytes[header - 1] = 0;
     bytes[header + 0x18] = 3;
     // Graphics/data ROM may contain another plausible header. The board
     // already identifies its own bank controller in the reset header.
@@ -372,7 +450,9 @@ void NativeExtendedHiRomIsNotInterleaved() {
 }
 
 void BitmapProcessor() {
-  auto emu = Load(Rom(0x100000, 0x20, 5));
+  auto image = Rom(0x100000, 0x20, 5);
+  std::copy_n("DUNGEON MASTER", 14, image.begin() + 0x7fc0);
+  auto emu = Load(image);
   auto &bus = emu->GetBus();
   const std::array<unsigned, 4> ports{0x308000, 0x3f8001, 0xb08fff, 0xbfbfff};
   for (unsigned port : ports)
@@ -791,6 +871,7 @@ void BroadcastBoards() {
 
 int main() {
   try {
+    DeviceFamilyHeaders();
     DetectionAndReload();
     LoaderAndRam();
     BitmapProcessor();

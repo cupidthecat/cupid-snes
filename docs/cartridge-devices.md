@@ -1,6 +1,10 @@
 # Cartridge devices and region timing
 
-The loader distinguishes cartridge processors using the mapping byte, cartridge type, maker code, and extended processor subtype. An unsupported device produces an error with its name. A failed load leaves the current cartridge, RAM, and CPU bus intact. A successful load resets the machine and its frame counters.
+The loader distinguishes cartridge processors using the mapping mode, cartridge device family, extended subtype, and identifying title. Both slow and fast ROM flags retain the same device family. A dedicated SA-1, S-DD1, or SPC7110 mapping mode also selects that controller when the type byte omits it. An unsupported device produces an error with its name. A failed load leaves the current cartridge, RAM, and CPU bus intact. A successful load resets the machine and its frame counters.
+
+DSP firmware identity follows the title: `PILOTWINGS` selects DSP-1, `DUNGEON MASTER` selects DSP-2, `SDガンダムGX` selects DSP-3, and `TOP GEAR 3000` or `PLANETS CHAMP TG3000` selects DSP-4. Other titles in that device family select DSP-1B. Extended subtype $01 selects ST010, except `2DAN MORITA SHOUGI`, which selects ST011. Subtypes $02 and $10 select ST018 and Cx4. These subtype rules apply independently of the maker byte.
+
+Header titles skip zero and $FF padding, trim outer spaces, and decode halfwidth Japanese kana and voiced marks to UTF-8. The same decoded title controls firmware selection and displayed metadata. Unknown title bytes appear as `?`. `YUYU NO QUIZ DE GO!GO` retains LoROM layout despite its title overwriting the mode byte.
 
 [Cartridge memory initialization](cartridge-memory.md) describes erased external RAM, processor work RAM, save loading, and reset retention.
 

@@ -20,6 +20,7 @@ std::vector<uint8_t> Image() {
   image[0x7fc0] = 'T';
   image[0x7fd5] = 0x30;
   image[0x7fd6] = 0xf5;
+  image[0x7fbf] = 2;
   image[0x7fd7] = 9;
   image[0x7fd8] = 3;
   image[0x7fd9] = 1;

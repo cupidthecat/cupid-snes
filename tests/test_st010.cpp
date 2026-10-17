@@ -128,7 +128,11 @@ std::vector<uint8_t> Rom(uint8_t size = 10) {
   std::fill_n(rom.begin() + 0x7fc0, 64, 0);
   std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
   rom[0] = 0xdb;
-  rom[0x7fc0] = 'T';
+  rom[0x7fbf] = 1;
+  if (size == 9)
+    std::copy_n("2DAN MORITA SHOUGI", 18, rom.begin() + 0x7fc0);
+  else
+    rom[0x7fc0] = 'T';
   rom[0x7fd5] = 0x30;
   rom[0x7fd6] = 0xf6;
   rom[0x7fd7] = size;

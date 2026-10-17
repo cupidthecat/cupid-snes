@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 using namespace snes::core;
@@ -87,7 +88,9 @@ std::vector<uint8_t> Image(uint8_t type) {
   std::vector<uint8_t> rom(0x80000, 0xea);
   std::fill_n(rom.begin() + 0x7fc0, 64, 0);
   std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
-  rom[0x7fc0] = 'T';
+  const std::string_view title = type == 0xf6 ? "2DAN MORITA SHOUGI" : "T";
+  std::copy(title.begin(), title.end(), rom.begin() + 0x7fc0);
+  rom[0x7fbf] = type == 0xf6 ? 1 : 2;
   rom[0x7fd5] = 0x30;
   rom[0x7fd6] = type;
   rom[0x7fd7] = 9;
