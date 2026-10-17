@@ -205,6 +205,9 @@ int main(int argc, char *argv[]) {
   auto packPath = std::filesystem::path(broadcast && arguments[2] != "-" ? arguments[2] : romPath);
   packPath += ".flash";
   snes::frontend::SaveRamFile savePack(packPath);
+  auto packMetadataPath = packPath;
+  packMetadataPath += ".meta";
+  snes::frontend::SaveRamFile savePackMetadata(packMetadataPath);
   std::array<std::unique_ptr<snes::frontend::SaveRamFile>, 2> slotSaves;
   try {
     if (sufami) {
@@ -232,6 +235,9 @@ int main(int argc, char *argv[]) {
       const auto pack = savePack.Load(cart->MemoryPackData().size());
       if (!pack.empty() && !emulator->LoadMemoryPack(pack))
         throw std::runtime_error("Invalid memory pack save: " + packPath.string());
+      const auto metadata = savePackMetadata.Load(cart->MemoryPackMetadata().size());
+      if (!metadata.empty() && !emulator->LoadMemoryPackMetadata(metadata))
+        throw std::runtime_error("Invalid memory pack metadata: " + packMetadataPath.string());
     }
   } catch (const std::exception &e) {
     std::cerr << "Failed to load save RAM: " << e.what() << '\n';
@@ -251,6 +257,7 @@ int main(int argc, char *argv[]) {
       saveRam.Flush(cart->SramData());
       saveRtc.Flush(emulator->SaveRtc());
       savePack.Flush(cart->MemoryPackData());
+      savePackMetadata.Flush(cart->MemoryPackMetadata());
     }
   };
 

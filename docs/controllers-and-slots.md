@@ -41,7 +41,7 @@ Flash supports byte programming ($10 or $40 followed by data), 64 KiB block eras
 
 The frontend saves flash contents to the supplied pack filename with `.flash` appended, such as `pack.bs.flash`. A blank pack uses the base filename with the same suffix. Saves load before execution and flush every 300 frames and on normal exit. They use the existing temporary-file replacement mechanism. A save of the wrong size stops loading. Base cartridge SRAM remains in its `.srm` file.
 
-The BS-X BIOS has a separate controller with 512 KiB PSRAM, 32 KiB battery RAM, latched MMC mapping, flash-ready IRQ, clock registers, and two packet receivers. Core callers attach recorded payloads through `LoadBroadcastStream` and can inject a clock through `SetBroadcastTimeSource`. [Original hardware support](original-hardware.md) describes this interface and its limits. Flash operations complete synchronously; live reception, SoundLink audio, block-lock recovery, and physical program/erase timing are not implemented.
+The BS-X BIOS has a separate controller with 512 KiB PSRAM, 32 KiB battery RAM, latched mapping, a serial clock, and a clocked memory pack. The BIOS controller and ordinary LoROM/HiROM slot boards share flash command, protection, and persistence behavior. Core callers can attach recorded payloads through `LoadBroadcastStream` and inject a clock through `SetBroadcastTimeSource`. See [broadcast controllers and memory packs](broadcast-memory.md) for register behavior, supported capacities, save files, and limits.
 
 ## Combined Sufami Turbo images
 

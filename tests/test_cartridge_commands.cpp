@@ -135,6 +135,29 @@ void CommandBuses() {
         "Cx4's command windows preserve WRAM and ordinary cartridge ROM");
 }
 
+void BroadcastControllerCpu() {
+  auto bios = Rom(0x20, 0);
+  std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
+  auto machine = std::make_unique<Emulator>();
+  Program program;
+  program.Read(0x025000, 0);
+  program.Read(0x015fff, 1);
+  program.Write(0x025000, 0);
+  program.Write(0x0e5000, 0);
+  program.Read(0x025000, 2);
+  program.Write(0x0e5000, 0x80);
+  program.Read(0x025000, 3);
+  program.Write(0x025000, 0x80);
+  program.Write(0x0e5000, 0x80);
+  program.Write(0x216123, 0x9c);
+  program.Read(0x742123, 4);
+  program.Run(*machine, std::move(bios));
+  constexpr std::array<uint8_t, 5> expected{0x80, 0, 0x80, 0, 0x9c};
+  for (unsigned i = 0; i < expected.size(); ++i)
+    Check(machine->GetBus().Read(i) == expected[i],
+          "CPU loads observe controller bits, commit gating and packed PSRAM aliases");
+}
+
 void BroadcastBus() {
   auto bios = Rom(0x20, 0);
   std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
@@ -147,7 +170,7 @@ void BroadcastBus() {
             machine->LoadedCartridge()->MemoryPackData().size() == 0x100000,
         "BIOS-only loading supplies battery RAM and a blank one-MiB flash pack");
   auto &bus = machine->GetBus();
-  Check(bus.Read(0x802196) == 0x10 && bus.Read(0x002197) == 0x80,
+  Check(bus.Read(0x802196) == 0 && bus.Read(0x002197) == 0,
         "Broadcast registers are installed in CPU system banks");
   bus.Write(0x2181, 0x34);
   bus.Write(0x2182, 0x12);
@@ -161,7 +184,7 @@ void BroadcastBus() {
   auto mmc = [&](unsigned reg, uint8_t value) { bus.Write((reg << 16) | 0x5000, value); };
   auto bare = [&]() {
     for (unsigned reg = 1; reg <= 13; ++reg)
-      mmc(reg, reg == 2 || reg == 12 ? 0x80 : 0);
+      mmc(reg, reg == 2 || reg == 12 || reg == 13 ? 0x80 : 0);
     mmc(14, 0x80);
   };
   bare();
@@ -169,8 +192,8 @@ void BroadcastBus() {
   bus.Write(0xc05555, 0x40);
   bus.Write(0xc11234, 0xa6);
   Check(machine->LoadedCartridge()->MemoryPackData()[0x11234] == 0xa6 &&
-            machine->LoadedCartridge()->CpuIrqPending(),
-        "Flash programming updates the persistent pack and asserts the console IRQ");
+            !machine->LoadedCartridge()->CpuIrqPending(),
+        "Flash programming stores data and leaves the console IRQ clear");
   // Run a console NOP from WRAM while the memory controller hides the BIOS.
   bus.Write(0x7e0000, 0xea);
   bus.Write(0x7e0001, 0xea);
@@ -180,25 +203,22 @@ void BroadcastBus() {
   cpu.Step();
   const auto stack = cpu.regs().s;
   cpu.Step();
-  Check(cpu.regs().s == uint16_t(stack - 3),
-        "Flash-ready IRQ enters the CPU through the normal interrupt sampler");
+  Check(cpu.regs().s == stack && cpu.regs().pc == 2,
+        "The CPU continues without an interrupt after flash programming");
   mmc(0, 0x80);
   Check(!machine->LoadedCartridge()->CpuIrqPending(),
-        "MMC ready acknowledgement clears the cartridge interrupt request");
+        "Reserved controller writes leave the cartridge interrupt request clear");
 
   Check(machine->SetBroadcastTimeSource([] { return BroadcastTime{2026, 9, 14, 2, 12, 34, 56}; }),
         "Host can supply a deterministic broadcast clock");
-  bus.Write(0x2188, 0);
-  bus.Write(0x2189, 0);
-  bus.Write(0x218b, 1);
-  bus.Write(0x218c, 1);
-  Check(bus.Read(0x218a) == 1 && bus.Read(0x218b) == 0x90,
-        "Clock channel offers a complete packet through the bus");
-  std::array<uint8_t, 23> clock{};
+  bus.Write(0x2191, 1);
+  std::array<uint8_t, 18> clock{};
   for (auto &byte : clock)
-    byte = bus.Read(0x80218c);
-  Check(clock[10] == 56 && clock[11] == 34 && clock[12] == 12 && clock[14] == 14,
-        "CPU reads the stable clock record provided by the host");
+    byte = bus.Read(0x802192);
+  const std::array<uint8_t, 18> expectedClock{0, 0,  0,  0,  0, 1, 1, 0, 0,
+                                              0, 56, 34, 12, 0, 0, 0, 0, 0};
+  Check(clock == expectedClock,
+        "CPU reads the eighteen-byte serial time record through mirrored radio ports");
   const std::array<uint8_t, 3> payload{0x32, 0x87, 0x64};
   Check(machine->LoadBroadcastStream(0x123, 0, payload),
         "Host can attach a broadcast payload to the loaded BIOS");
@@ -214,13 +234,14 @@ void BroadcastBus() {
         "Final stream packet pads absent bytes without reading outside its payload");
 
   std::vector<uint8_t> pack(0x200000, 0xff);
-  pack[0x112345] = 0x5a;
+  pack[0x12345] = 0x5a;
+  pack[0x112345] = 0x49;
   Check(machine->LoadBroadcastCartridge(bios, pack), "BIOS loader accepts a two-MiB memory pack");
   bare();
   Check(bus.Read(0xd12345) == 0x5a &&
             machine->LoadedCartridge()->MemoryPackData().size() == pack.size(),
-        "Upper flash banks and persistent save length follow the attached pack capacity");
-  pack[0x112345] = 0x49;
+        "Larger flash allocations retain the device block identity and complete save length");
+  pack[0x12345] = 0x49;
   Check(machine->LoadMemoryPack(pack), "A flash save loads without invalidating device spans");
   bare();
   Check(bus.Read(0xd12345) == 0x49, "Flash reload reaches the same controller allocation");
@@ -249,12 +270,13 @@ void BroadcastBus() {
 
 int main() {
   try {
+    BroadcastControllerCpu();
     Dsp1StatusBytes();
     CommandBuses();
     BroadcastBus();
   } catch (const std::exception &) {
     return 1;
   }
-  std::puts("Native cartridge command, broadcast mapping, flash, IRQ, clock, stream and "
+  std::puts("Native cartridge command, broadcast mapping, flash, clock, stream and "
             "persistence checks passed");
 }

@@ -97,6 +97,9 @@ public:
   bool LoadMemoryPack(std::span<const uint8_t> data) {
     return cartridge_ && cartridge_->LoadMemoryPack(data);
   }
+  bool LoadMemoryPackMetadata(std::span<const uint8_t> bytes) {
+    return cartridge_ && cartridge_->LoadMemoryPackMetadata(bytes);
+  }
   bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data) {
     return cartridge_ && cartridge_->LoadBroadcastStream(channel, sequence, data);
   }

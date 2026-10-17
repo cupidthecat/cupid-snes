@@ -1,7 +1,9 @@
 // Regression coverage for battery RAM and clock persistence.
 
 #include "SaveRamFile.hpp"
+#include "snes/core/BsMemory.hpp"
 #include "snes/core/Srtc.hpp"
+#include "snes/core/Timing.hpp"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <cstdio>
@@ -71,6 +73,33 @@ int main() {
     check(SaveRamFile(directory / "slot-a.srm").Load(0x4000) == slotA &&
               SaveRamFile(directory / "slot-b.srm").Load(0x4000) == slotB,
           "Slot save files remain independent");
+    const auto flashPath = directory / "game.flash";
+    const auto metadataPath = directory / "game.flash.meta";
+    std::vector<uint8_t> flashImage(0x100000, 0x00);
+    snes::core::BsMemory flash(flashImage, false);
+    flash.SetWritable(true);
+    flash.Write(0, 0x20);
+    flash.Write(0x1234, 0xd0);
+    flash.Advance(snes::core::Timing::kMasterClockHz * 3 / 10 + 1);
+    flash.Write(0, 0x40);
+    flash.Write(0x1234, 0x5a);
+    const auto metadata = flash.Metadata();
+    check(metadata[16] == 2 && metadata[20] == 0 && flashImage[0x1234] == 0x5a,
+          "Erase and program change flash data and physical metadata");
+    SaveRamFile(flashPath).Flush(flashImage);
+    SaveRamFile(metadataPath).Flush(metadata);
+    auto restoredImage = SaveRamFile(flashPath).Load(flashImage.size());
+    snes::core::BsMemory restoredFlash(restoredImage, false);
+    check(restoredImage == flashImage &&
+              restoredFlash.LoadMetadata(SaveRamFile(metadataPath).Load(metadata.size())) &&
+              restoredFlash.Metadata() == metadata,
+          "Flash array and metadata survive independent sidecar reloads");
+    restoredFlash.Write(0, 0x97);
+    restoredFlash.Write(0, 0xd0);
+    restoredFlash.Write(0, 0x40);
+    restoredFlash.Write(0x1234, 0x0f);
+    check(restoredImage[0x1234] == 0x0a && restoredFlash.Metadata() == metadata,
+          "Restored physical locks control later writes without the external write pin");
     const auto blocked = directory / "directory.srm";
     fs::create_directory(blocked);
     std::ofstream(blocked / "keep.txt") << "preserve";
