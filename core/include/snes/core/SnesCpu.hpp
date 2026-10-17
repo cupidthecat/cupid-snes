@@ -102,44 +102,46 @@ public:
     void write(uint32_t address, uint8_t data) override;
     void lastCycle() override;
     bool interruptPending() const override;
+    void instructionWait() override;
 
-private:
-  friend class Emulator;
-  // A debugger step finishes the live instruction retained at a display event.
-  bool stepSuspended_ = false;
-  std::function<uint32_t()> resumeStep_;
-  std::function<void()> discardStep_;
+  private:
+    friend class Emulator;
+    // A debugger step finishes the live instruction retained at a display event.
+    bool stepSuspended_ = false;
+    std::function<uint32_t()> resumeStep_;
+    std::function<void()> discardStep_;
 
-  // Clock accounting - adds master clocks
-  void addClocks(uint32_t clocks);
+    // Clock accounting - adds master clocks
+    void addClocks(uint32_t clocks);
 
-  // NMI / IRQ state
-  void pollInterrupts();
+    // NMI / IRQ state
+    void pollInterrupts();
+    void waitCycle();
 
-  ICpuBus &bus_;
-  uint64_t cycles_ = 0;
-  uint32_t instructionClocks_ = 0; // Clocks for current instruction
+    ICpuBus &bus_;
+    uint64_t cycles_ = 0;
+    uint32_t instructionClocks_ = 0; // Clocks for current instruction
 
-  // NMI edge detection
-  bool nmiLine_ = false;    // Current NMI pin state
-  bool nmiEdge_ = false;    // Pending NMI edge (set on low→high transition)
-  bool nmiPending_ = false; // NMI will be serviced after current instruction
+    // NMI edge detection
+    bool nmiLine_ = false;    // Current NMI pin state
+    bool nmiEdge_ = false;    // Pending NMI edge (set on low→high transition)
+    bool nmiPending_ = false; // NMI will be serviced after current instruction
 
-  // IRQ level detection
-  bool irqLine_ = false;    // Current IRQ pin state (active = true)
-  bool irqPending_ = false; // IRQ will be serviced after current instruction
-  bool resetPending_ = false;
+    // IRQ level detection
+    bool irqLine_ = false;    // Current IRQ pin state (active = true)
+    bool irqPending_ = false; // IRQ will be serviced after current instruction
+    bool resetPending_ = false;
 
-  // DRAM refresh state: 0=idle, 1=bus-halt (6 clocks), 2=interleave (2 clocks)
-  uint8_t dramRefreshState_ = 0;
+    // DRAM refresh state: 0=idle, 1=bus-halt (6 clocks), 2=interleave (2 clocks)
+    uint8_t dramRefreshState_ = 0;
 
-  // ALU step callback for CPU cycles and the five refresh sub-steps.
-  AluStepCallback onAluStep_;
-  std::function<void(uint32_t)> onClock_;
-  std::function<void(uint32_t)> beforeCycle_;
-  std::function<void()> onCoprocessorSync_;
-  std::function<void()> onBusPhase_;
-  std::function<bool()> onInterruptPoll_;
+    // ALU step callback for CPU cycles and the five refresh sub-steps.
+    AluStepCallback onAluStep_;
+    std::function<void(uint32_t)> onClock_;
+    std::function<void(uint32_t)> beforeCycle_;
+    std::function<void()> onCoprocessorSync_;
+    std::function<void()> onBusPhase_;
+    std::function<bool()> onInterruptPoll_;
 };
 
 } // namespace snes::core

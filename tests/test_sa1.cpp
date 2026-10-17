@@ -49,6 +49,72 @@ struct Fixture {
     }
 };
 
+void ResetControlFlow() {
+  for (bool native : {false, true}) {
+    for (uint8_t opcode : {uint8_t{0}, uint8_t{2}}) {
+      const unsigned prefix = native ? 8 : 0;
+      const unsigned highRead = native ? 15 : 13;
+      for (unsigned resetAt : {highRead, highRead + 1}) {
+        Fixture f;
+        if (native)
+          f.Code(0x8000, {0x18, 0xfb, opcode, 0xea});
+        else
+          f.Code(0x8000, {opcode, 0xea});
+        const unsigned vector = native ? (opcode ? 0x7fe4 : 0x7fe6) : (opcode ? 0x7ff4 : 0x7ffe);
+        f.rom[vector] = 0x34;
+        f.rom[vector + 1] = 0x12;
+        f.Start();
+        f.chip.Advance(prefix + resetAt);
+        SetCpu(f.chip, 0x2203, 0x9000);
+        f.chip.WriteCpu(0x2200, 0x20);
+        f.chip.WriteCpu(0x2200, 0);
+        f.chip.Advance(highRead + 2 - resetAt);
+        Check(f.chip.CpuRegisters().pc == 0x1201 && f.chip.CpuRegisters().mar == 0x1200,
+              "A pending vector high read preserves the low PC byte written by reset release");
+      }
+    }
+    for (unsigned resetAt : {7u, 8u}) {
+      for (uint8_t opcode : {uint8_t{0x82}, uint8_t{0x62}}) {
+        Fixture f;
+        const unsigned prefix = native ? 8 : 0;
+        if (native)
+          f.Code(0x8000, {0x18, 0xfb, opcode, 0, 0});
+        else
+          f.Code(0x8000, {opcode, 0, 0});
+        f.Start();
+        f.chip.Advance(prefix + resetAt);
+        SetCpu(f.chip, 0x2203, 0x9000);
+        f.chip.WriteCpu(0x2200, 0x20);
+        f.chip.WriteCpu(0x2200, 0);
+        if (opcode == 0x82) {
+          f.chip.Advance(11 - resetAt);
+          Check(f.chip.CpuRegisters().pc == (native ? 0x8006 : 0x8004),
+                "A long branch retains its relative target across the final idle cycle");
+        } else {
+          f.chip.Advance(11 - resetAt);
+          Check(f.chip.CpuRegisters().mdr == 0,
+                "A relative stack push samples the live program counter after the idle cycle");
+        }
+      }
+    }
+  }
+  for (uint8_t opcode : {uint8_t{0x20}, uint8_t{0x22}, uint8_t{0xfc}}) {
+    const unsigned highPush = opcode == 0x20 ? 9 : opcode == 0x22 ? 13 : 5;
+    for (unsigned resetAt : {highPush, highPush + 1}) {
+      Fixture f;
+      f.Code(0x8000, {opcode, 0x10, 0x80, 0});
+      f.Start();
+      f.chip.Advance(resetAt);
+      SetCpu(f.chip, 0x2203, 0x9000);
+      f.chip.WriteCpu(0x2200, 0x20);
+      f.chip.WriteCpu(0x2200, 0);
+      f.chip.Advance(highPush + 2 - resetAt);
+      Check(f.chip.CpuRegisters().mdr == 0,
+            "A call samples the live return-address low byte after the high-byte push");
+    }
+  }
+}
+
 void BusPhases() {
   for (bool pal : {false, true})
     for (unsigned mode = 0; mode < 4; ++mode) {
@@ -1365,6 +1431,7 @@ void ExecutableDmaAndTimer() {
 
 int main() {
     try {
+      ResetControlFlow();
       BusPhases();
       ExecutionLifecycle();
       ResetControl();

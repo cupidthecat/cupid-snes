@@ -1166,9 +1166,10 @@ void Processor65816::instructionBranch(bool take) {
 void Processor65816::instructionBranchLong() {
     uint8_t ol = fetch();
     uint8_t oh = fetch();
+    const auto target = static_cast<uint16_t>(r.pc + static_cast<int16_t>(makeWord(ol, oh)));
     lastCycle();
     idle();
-    r.pc = static_cast<uint16_t>(r.pc + static_cast<int16_t>(makeWord(ol, oh)));
+    r.pc = target;
     idleBranch();
 }
 
@@ -1237,10 +1238,10 @@ void Processor65816::instructionCallShort() {
     uint8_t al = fetch();
     uint8_t ah = fetch();
     idle();
-    uint16_t returnAddr = --r.pc;
-    push(hi(returnAddr));
+    --r.pc;
+    push(hi(r.pc));
     lastCycle();
-    push(lo(returnAddr));
+    push(lo(r.pc));
     r.pc = makeWord(al, ah);
     idleJump();
 }
@@ -1252,10 +1253,10 @@ void Processor65816::instructionCallLong() {
     pushN(r.pb);
     idle();
     uint8_t ab = fetch();
-    uint16_t returnAddr = --r.pc;
-    pushN(hi(returnAddr));
+    --r.pc;
+    pushN(hi(r.pc));
     lastCycle();
-    pushN(lo(returnAddr));
+    pushN(lo(r.pc));
     r.pb = ab;
     r.pc = makeWord(al, ah);
     if (r.e) r.s = static_cast<uint16_t>(0x0100 | lo(r.s));
@@ -1265,9 +1266,8 @@ void Processor65816::instructionCallLong() {
 // JSR (Absolute,X) - Call Indexed Indirect
 void Processor65816::instructionCallIndexedIndirect() {
     uint8_t al = fetch();
-    uint16_t returnAddr = static_cast<uint16_t>(r.pc);
-    pushN(hi(returnAddr));
-    pushN(lo(returnAddr));
+    pushN(hi(r.pc));
+    pushN(lo(r.pc));
     uint8_t ah = fetch();
     idle();
     uint16_t addr = static_cast<uint16_t>(makeWord(al, ah) + r.x);
@@ -1410,7 +1410,7 @@ void Processor65816::instructionInterrupt(uint16_t vector) {
   r.pc = static_cast<uint16_t>((r.pc & 0xff00) | pcl);
   lastCycle();
   uint8_t pch = read(vector + 1);
-  r.pc = makeWord(pcl, pch);
+  r.pc = static_cast<uint16_t>((r.pc & 0xff) | (uint16_t(pch) << 8));
   r.pb = 0x00;
 }
 
@@ -1668,7 +1668,7 @@ void Processor65816::enterInterrupt(Interrupt type) {
     r.pc = static_cast<uint16_t>((r.pc & 0xff00) | pcl);
     lastCycle();
     uint8_t pch = read(r.vector + 1);
-    r.pc = makeWord(pcl, pch);
+    r.pc = static_cast<uint16_t>((r.pc & 0xff) | (uint16_t(pch) << 8));
     r.pb = 0x00;
 }
 
