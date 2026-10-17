@@ -1,5 +1,7 @@
 #include "snes/core/Cartridge.hpp"
 
+#include "RomHeaderParser.hpp"
+
 #include <algorithm>
 #include <utility>
 
@@ -27,8 +29,7 @@ Cartridge::FromCompetitionCartridge(CompetitionBoard::Settings settings,
       return std::nullopt;
     }
   }
-  bool deinterleaved = false;
-  auto header = NormalizeRomLayout(normalized[0], deinterleaved);
+  auto header = detail::ParseRomHeader(normalized[0]);
   if (!header) {
     if (error)
       *error = "Unable to parse the competition boot ROM header";

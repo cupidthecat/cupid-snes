@@ -13,13 +13,13 @@ The frontend displays the selected mapping by name. Frame execution no longer re
 | Layout | Address behavior | Detection |
 | --- | --- | --- |
 | ExLoROM | Banks $80-$FF select the first 4 MiB; lower banks select the remaining ROM. Each populated section mirrors independently. | Header at file offset $407FC0. |
-| NoMAD-1 LoROM | SRAM occupies both halves of banks $70-$7D and $F0-$FF. | `WANDERERS FROM YS` header title. |
-| 24 Mbit board | Banks $00-$1F select the first MiB, $20-$3F and $A0-$BF the second, and $80-$9F the third. | `SOUND NOVEL-TCOOL` or `DERBY STALLION 96`. |
-| Large SRAM board | Banks $70-$73 expose overlapping 64 KiB windows at 32 KiB SRAM offsets. | `THOROUGHBRED BREEDER3` or `RPG-TCOOL 2`. |
+| NoMAD-1 LoROM | SRAM occupies both halves of banks $70-$7D and $F0-$FF. | Explicit database mapping override. |
+| 24 Mbit board | Banks $00-$1F select the first MiB, $20-$3F and $A0-$BF the second, and $80-$9F the third. | Explicit database mapping override. |
+| Large SRAM board | Banks $70-$73 expose overlapping 64 KiB windows at 32 KiB SRAM offsets. | Explicit database mapping override. |
 
-WRAM retains priority in banks $7E-$7F. Synthetic tests cover the added layouts, ROM mirrors, independent SRAM banks, and upper-half SRAM access. ExLoROM fixtures cover 5, 7, and 8 MiB images. These are address-decoding tests, not game compatibility tests for those boards.
+WRAM retains priority in banks $7E-$7F. Synthetic tests cover ordinary and extended ROM mirrors, independent SRAM banks, and upper-half SRAM access. ExLoROM fixtures cover 5, 7, and 8 MiB images. These are address-decoding tests, not game compatibility tests for those boards.
 
-The [loader behavior](cartridge-devices.md#region-timing-and-loader-behavior) includes type-1 LoROM/HiROM interleaving, independent ExHiROM chip interleaving, and either physical chip order for 5–8 MiB extended images. These formats normalize into the existing board mappings before reset and CRC calculation.
+The [loader](cartridge-devices.md#region-timing-and-loader-behavior) preserves supplied bank order and removes a 512-byte copier prefix only before complete 32 KiB banks. Reset instructions and physical header positions determine candidate priority. A title alone does not select the special mapping profiles above.
 
 ## Battery saves
 

@@ -186,15 +186,20 @@ void RegistersAndMapping() {
   Check(f.chip.ReadCpu(0x3f6123) == 0x97 && f.chip.ReadCpu(0xbf6123) == 0x97 &&
             f.chip.ReadCpu(0x700123) == 0x97,
         "CPU small RAM windows share the physical first page");
-  for (unsigned bank = 0; bank < 4; ++bank) {
+  for (unsigned bank = 0; bank < 2; ++bank) {
     f.chip.WriteCpu(((bank + 0x70) << 16) | 0x2222, uint8_t(0x40 + bank));
-    Check(f.ram[(bank << 16) | 0x2222] == 0x40 + bank, "Full RAM banks keep independent storage");
-    if (bank < 2)
-      Check(f.chip.ReadCpu(((bank + 0xf0) << 16) | 0x2222) == 0x40 + bank,
-            "First two RAM banks have upper aliases");
-    else
-      Check(f.chip.ReadCpu(((bank + 0xf0) << 16) | 0x2222, 0xa5) == 0xa5,
-            "Additional RAM banks have no upper alias");
+    Check(f.ram[(bank << 16) | 0x2222] == 0x40 + bank,
+          "Connected RAM banks keep independent storage");
+    Check(f.chip.ReadCpu(((bank + 0xf0) << 16) | 0x2222) == 0x40 + bank,
+          "Connected RAM banks have upper aliases");
+  }
+  for (unsigned bank = 2; bank < 4; ++bank) {
+    const auto before = f.ram[(bank << 16) | 0x2222];
+    f.chip.WriteCpu(((bank + 0x70) << 16) | 0x2222, 0x99);
+    Check(f.ram[(bank << 16) | 0x2222] == before &&
+              f.chip.ReadCpu(((bank + 0x70) << 16) | 0x2222, 0xa5) == 0xa5 &&
+              f.chip.ReadCpu(((bank + 0xf0) << 16) | 0x2222, 0xa5) == 0xa5,
+          "Unconnected CPU banks cannot access additional RAM storage");
   }
   for (unsigned n = 0; n < 15; ++n) {
     f.Reg(n, uint16_t(0x1234 + n));
@@ -230,10 +235,10 @@ void RegistersAndMapping() {
   Fixture large(0x400000, 0x40000);
   for (size_t i = 0; i < large.rom.size(); ++i)
     large.rom[i] = uint8_t(i / 0x8000);
-  for (unsigned bank = 0xc0; bank <= 0xff; ++bank) {
+  for (unsigned bank = 0xc0; bank <= 0xdf; ++bank) {
     Check(large.chip.ReadCpu((bank << 16) | 0x1234) == (bank - 0xc0) * 2 &&
               large.chip.ReadCpu((bank << 16) | 0x9234) == (bank - 0xc0) * 2 + 1,
-          "Four-megabyte ROM occupies the full CPU C0-FF linear window");
+          "A larger ROM retains the connected C0-DF linear window");
   }
   for (unsigned bank = 0; bank < 0x40; ++bank) {
     Check(large.chip.ReadCpu((bank << 16) | 0x9234) == bank &&
@@ -243,24 +248,25 @@ void RegistersAndMapping() {
   for (unsigned bank = 0x40; bank < 0x60; ++bank)
     Check(large.chip.ReadCpu((bank << 16) | 0x1234) == (bank - 0x40) * 2,
           "Lower linear ROM window remains restricted to the first two megabytes");
-  for (unsigned bank = 0; bank < 4; ++bank) {
+  for (unsigned bank = 0; bank < 2; ++bank) {
     large.chip.WriteCpu(((bank + 0x70) << 16) | 0x1234, uint8_t(0x90 + bank));
-    large.chip.WriteCpu(((bank + 0xf0) << 16) | 0x1234, 0);
-    Check(large.ram[(bank << 16) | 0x1234] == 0x90 + bank &&
-              large.chip.ReadCpu(((bank + 0xf0) << 16) | 0x1234) == 0x60 + bank * 2,
-          "Upper CPU ROM wins over RAM aliases and ignores CPU writes on large boards");
+    Check(large.chip.ReadCpu(((bank + 0xf0) << 16) | 0x1234) == 0x90 + bank,
+          "A larger ROM retains both CPU RAM aliases");
   }
+  for (uint32_t hole : {0x721234u, 0xe01234u, 0xf21234u})
+    Check(large.chip.ReadCpu(hole, 0xa5) == 0xa5,
+          "Additional ROM and RAM capacity leave unconnected CPU banks undriven");
   large.Program({0x3f, 0xdf, 0xde, 0xef, 0, 1});
   large.Reg(0, 0x40);
   large.Reg(14, 0x200);
   large.Run();
-  Check(large.Reg(0) == 0 && large.chip.ReadCpu(0xe00201) == 0x40,
+  Check(large.Reg(0) == 0 && large.chip.ReadCpu(0x400201) == 0,
         "CPU extension does not expand the GSU's two-megabyte ROM address bus");
 
   Check(SuperFx::Selects(0x803100) && SuperFx::Selects(0x406000) && SuperFx::Selects(0x706000) &&
             SuperFx::Selects(0xff1234) && !SuperFx::Selects(0x002100) &&
             !SuperFx::Selects(0x7e1000),
-        "Integration window decoder includes the optional upper ROM extension");
+        "Cartridge handlers preserve console WRAM and system I/O priority");
 }
 
 void ArithmeticMatrix() {
@@ -328,18 +334,18 @@ void ArithmeticMatrix() {
   Check(cases == 6240, "All ALU register/immediate encodings were exercised");
 }
 
-void ExpandedCpuWindows() {
+void LargeCpuWindows() {
   Fixture f(0xb00000, 0x100000);
   f.rom[0x7fd7] = 14;
   for (unsigned bank = 0; bank < 0xb0; ++bank)
     f.rom[bank * 0x10000 + 0x234] = uint8_t(bank);
-  Check(f.chip.ReadCpu(0x800234, 0x51) == 0x51 && f.chip.ReadCpu(0x808234) == 0x20 &&
-            f.chip.ReadCpu(0xc00234) == 0x40 && f.chip.ReadCpu(0x600234) == 0xa0,
-        "CPU expansion changes ROM windows without claiming low system memory");
+  Check(f.chip.ReadCpu(0x800234, 0x51) == 0x51 && f.chip.ReadCpu(0x808234) == 0x40 &&
+            f.chip.ReadCpu(0xc00234) == 0x80 && f.chip.ReadCpu(0x600234, 0x51) == 0x51,
+        "ROM size hints leave CPU apertures and connected address lines intact");
   f.chip.WriteCpu(0x700234, 0x19);
   f.chip.WriteCpu(0x740234, 0x29);
-  Check(f.chip.ReadCpu(0x700234) == 0x19 && f.chip.ReadCpu(0x740234) == 0x29,
-        "CPU RAM extension keeps address bit eighteen");
+  Check(f.chip.ReadCpu(0x700234) == 0x19 && f.chip.ReadCpu(0x740234, 0x51) == 0x51,
+        "Larger RAM storage does not create another CPU bank");
   f.Reg(0, 7);
   f.Reg(1, 0x0234);
   f.Program({0x3e, 0xdf, 0x41, 0, 1});
@@ -348,24 +354,26 @@ void ExpandedCpuWindows() {
   f.ram[0x70234] = 0x98;
   f.Run();
   Check(f.Reg(0) == 0x67 && f.chip.ReadCpu(0x303c) == 1,
-        "GSU RAMB retains its one-bit register when CPU-only expansion RAM is present");
+        "GSU RAMB retains its one-bit register with larger RAM storage");
   f.Reg(0, 0x40);
   f.Reg(14, 0x234);
   f.Program({0x3f, 0xdf, 0xde, 0xee, 0xef, 0, 1});
   f.Run();
-  Check(f.Reg(0) == 0 && f.chip.ReadCpu(0x400234) == 0x80,
+  Check(f.Reg(0) == 0 && f.chip.ReadCpu(0x400234) == 0x40,
         "GSU ROM reads still see the first two MiB through its own bank decoder");
 
   Fixture partial(0x900000);
   partial.rom[0x7fd7] = 14;
   partial.rom[0x800123] = 0x76;
-  Check(partial.chip.ReadCpu(0x400123) == 0x76 && partial.chip.ReadCpu(0x600123) == 0x76,
+  Check(partial.chip.ReadCpu(0xc00123) == 0x76 &&
+            partial.chip.ReadCpu(0x400123) == partial.rom[0x400123] &&
+            partial.chip.ReadCpu(0x600123, 0xa5) == 0xa5,
         "A partly populated final ROM region mirrors its connected address lines");
   Fixture shortImage(0x200000);
   shortImage.rom[0x7fd7] = 14;
   shortImage.chip.WriteCpu(0xf00123, 0x75);
-  Check(shortImage.chip.ReadCpu(0xf00123, 0x5a) == 0x5a && shortImage.ram[0x123] == 0,
-        "Unpopulated expanded ROM reads open bus and cannot alias small-board RAM");
+  Check(shortImage.chip.ReadCpu(0xf00123) == 0x75 && shortImage.ram[0x123] == 0x75,
+        "ROM size hints do not disconnect the existing CPU RAM aliases");
 }
 
 void TransfersAndSpecialOperations() {
@@ -1171,7 +1179,7 @@ int main() {
     CacheFillAndInternalRam();
     MasterClockSynchronization();
     RegistersAndMapping();
-    ExpandedCpuWindows();
+    LargeCpuWindows();
     ArithmeticMatrix();
     TransfersAndSpecialOperations();
     BranchesAndPipeline();

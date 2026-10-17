@@ -540,7 +540,8 @@ void Emulator::ResetHardware(bool warm) {
   timing_.Reset();
 
   const auto country = cartridge_->Header().country;
-  const bool pal = (country >= 2 && country <= 12) || country == 18;
+  const bool pal = country != 0 && country != 1 && country != 0x0b && country != 0x0d &&
+                   country != 0x0f && country != 0x10;
   timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
   cartridge_->SetPal(pal);
   if (srtc_)

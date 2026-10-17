@@ -920,10 +920,6 @@ struct SuperFx::Impl {
     }
   }
 
-  bool ExpandedRom() const {
-    return rom.size() > 0x7fd7 && rom[0x7fd7] >= 14;
-  }
-
   bool CpuRamAddress(uint32_t address, uint32_t &offset) const {
     const unsigned bank = (address >> 16) & 0xff;
     const unsigned low = address & 0xffff;
@@ -931,14 +927,8 @@ struct SuperFx::Impl {
       offset = low & 0x1fff;
       return true;
     }
-    // Four-megabyte boards connect the entire upper linear window to ROM.
-    // Smaller boards expose only F0/F1 as aliases of the first two RAM banks.
-    if (bank >= 0xf2 || ((rom.size() > 0x200000 || ExpandedRom()) && bank >= 0xc0))
-      return false;
-    const unsigned mirrored = bank & 0x7f;
-    if (mirrored >= 0x70 && mirrored <= 0x7d &&
-        (mirrored <= 0x71 || (size_t(mirrored - 0x70) << 16) < ram.size())) {
-      offset = ((mirrored - 0x70) << 16) | low;
+    if (bank == 0x70 || bank == 0x71 || bank == 0xf0 || bank == 0xf1) {
+      offset = ((bank & 1) << 16) | low;
       return true;
     }
     return false;
@@ -946,27 +936,16 @@ struct SuperFx::Impl {
 
   bool CpuRomAddress(uint32_t address, size_t &offset) const {
     const unsigned bank = address >> 16, low = address & 0xffff;
-    const bool expanded = ExpandedRom();
-    size_t base = 0, window = 0x200000, linear = 0;
+    size_t linear = 0;
     if (IoBank(address) && low >= 0x8000) {
-      if (expanded && (bank & 0x80))
-        base = 0x200000;
-      linear = (size_t(bank & 0x3f) << 15) | (low & 0x7fff);
-    } else if (expanded && bank >= 0x40 && bank <= 0x6f) {
-      base = 0x800000;
-      window = 0x300000;
-      linear = address - 0x400000;
-    } else if (bank >= 0xc0 && (expanded || rom.size() > 0x200000)) {
-      base = expanded ? 0x400000 : 0;
-      window = 0x400000;
-      linear = address & 0x3fffff;
+      linear = (size_t(bank) << 15) | (low & 0x7fff);
     } else if ((bank >= 0x40 && bank <= 0x5f) || (bank >= 0xc0 && bank <= 0xdf)) {
-      linear = address & 0x1fffff;
+      linear = address;
     } else
       return false;
-    if (base >= rom.size())
+    if (rom.empty())
       return false;
-    offset = base + Mirror(linear, std::min(window, rom.size() - base));
+    offset = Mirror(linear, rom.size());
     return true;
   }
 };

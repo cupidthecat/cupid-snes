@@ -27,7 +27,7 @@ std::vector<uint8_t> Image(uint8_t mode = 0x20, uint8_t type = 2, size_t size = 
   bytes[header + 0x16] = type;
   bytes[header - 1] = type == 0xf3 ? 0x10 : type == 0xf6 ? 1 : type == 0xf5 && mode == 0x30 ? 2 : 0;
   bytes[header + 0x17] = 10;
-  bytes[header + 0x18] = 3;
+  bytes[header + 0x18] = (type >> 4) == 1 ? 0 : 3;
   bytes[header + 0x19] = 1;
   bytes[header + 0x1c] = bytes[header + 0x1d] = 255;
   bytes[header + 0x3d] = 0x80;

@@ -60,19 +60,19 @@ The core also exposes `LoadSufamiTurbo`, `LoadSufamiTurboFromFiles`, `SlotSramDa
 
 ## Region timing and loader behavior
 
-Country codes 2 through 12 and 18 select PAL. Other country codes select NTSC. PAL uses 312 scanlines and a 21,281,370 Hz master clock; NTSC uses 262 scanlines and the existing 21,477,272 Hz clock. The PPU's region flag and SMP synchronization use the selected region. Audio output remains 32,040 Hz.
+Country codes $00, $01, $0B, $0D, $0F, and $10 select NTSC. Other values select PAL. PAL uses 312 scanlines and a 21,281,370 Hz master clock; NTSC uses 262 scanlines and a 21,477,272 Hz clock. Timing, the PPU region flag, and SMP synchronization use the same selection. Audio output remains 32,040 Hz.
 
-Small LoROM boards expose SRAM in both bank halves when the ROM-size header is at most 2 MiB and SRAM is at most 32 KiB. Larger layouts retain ROM in the upper half. An absent SRAM window returns open bus. Database overrides can explicitly disable SRAM with a size of zero. MEMSEL controls fast accesses independently of the speed advertised in the ROM header.
+RAM declarations use their low four bits and stop at 256 KiB. GSU cartridges use an ordinary RAM declaration when present, otherwise the expansion declaration or the older board's 32 KiB default. Fixed processor memory remains device-specific. Database overrides can explicitly disable ordinary SRAM with a size of zero.
 
-The loader rejects erased headers and headers without a cartridge-space reset vector. Reserved mode bytes cannot override the physical header layout. SA-1, Super FX, S-DD1 and SPC7110 retain their boot headers even when data in an extended ROM bank resembles another cartridge header.
+Ordinary LoROM drives only the upper half of each ROM bank. With RAM and at most 2 MiB of physical ROM, banks $70-$7D and $F0-$FF expose RAM in both halves, regardless of RAM capacity. Larger LoROM boards use only the lower half for RAM. A board without RAM keeps ROM in the upper half of bank $70. LoROM and HiROM retain connected address lines for larger images and mirror only unpopulated storage. MEMSEL controls fast accesses independently of the speed advertised in the header.
 
-Type-1 interleaved LoROM and HiROM images are normalized when their displaced headers identify that layout. ExHiROM also accepts independently interleaved boot and data chips in either physical order. A native HiROM header of equal or better quality prevents speculative deinterleaving. Each transformed chip must contain complete pairs of 32 KiB blocks.
+The loader considers headers at $7FC0, $FFC0, $407FC0, and $40FFC0. Each candidate is ranked by the instruction at its physical reset target, checksum complement, and agreement between mode and location. A positive extended-header score receives a size bias. Equal scores retain the earlier candidate in that order. If every score is zero, the first header remains the fallback, including blank or erased full-bank images. Images shorter than 32 KiB have no usable header.
 
-For 5â€“8 MiB ExLoROM and ExHiROM images, the loader accepts either physical chip order and places the boot chip after the four-MiB data region. Reset windows, ROM mirrors and the cartridge CRC then use the same canonical bytes. A HiROM header at $40FFC0 selects ExHiROM. GD24 and type-2 forced dump formats do not yet have a format-selection interface; their bank permutations cannot be inferred safely from a plausible header alone.
+The supplied bank order is retained. A 512-byte copier prefix is removed only when the remaining image consists of complete 32 KiB banks. Mapping hints do not trigger a bank permutation or chip rotation. A declared HiROM mode remains HiROM at $40FFC0; an unrecognized mode falls back to its physical header position. The header parser is shared by ordinary and competition cartridge loading.
 
 ## Validation and limits
 
-`snes_cartridge_device_tests` covers device detection, rejected loads, bank boundaries, save separation, DSP-2 command results, OBC1 attribute packing, clock persistence and calendar rollover, and PAL frame/audio timing. Loader regressions compare every normalized ROM byte and CRC, verify both reset windows, and preserve native images with competing headers. Tests use generated ROMs and an injected clock, so they need no game files.
+`snes_cartridge_device_tests` covers device detection, rejected loads, bank boundaries, save separation, DSP-2 command results, OBC1 attribute packing, clock persistence and calendar rollover, and PAL frame/audio timing. Loader regressions preserve supplied ROM bytes, verify reset paths and connected bank addresses, and check competing headers, RAM caps, and region timing. Tests use generated ROMs and an injected clock, so they need no game files.
 
 Local 1,800-frame checks produced visible output and non-silent audio for Super Mario World and the Contra prototype. The final Contra frame showed gameplay. These checks do not prove complete gameplay, correct sound, or compatibility with commercial games that use the new devices.
 
