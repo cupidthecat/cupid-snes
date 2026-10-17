@@ -146,6 +146,7 @@ std::optional<RomHeader> ReadCandidate(std::span<const uint8_t> rom, size_t base
   candidate.cartridgeType = rom[base + 0x16];
   candidate.romSizeShift = rom[base + 0x17];
   candidate.sramSizeShift = rom[base + 0x18];
+  candidate.expansionRamSizeShift = rom[base - 3];
   candidate.country = rom[base + 0x19];
   candidate.version = rom[base + 0x1B];
   candidate.checksumComplement = Read16(rom, base + 0x1C);

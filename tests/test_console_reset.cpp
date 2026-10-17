@@ -24,7 +24,7 @@ std::vector<uint8_t> Rom(uint8_t chip = 0, bool pal = false) {
   rom[0x7fd6] = chip;
   rom[0x7fbf] = chip == 0xf3 ? 0x10 : 0;
   rom[0x7fd7] = 10;
-  rom[0x7fd8] = 3;
+  rom[0x7fd8] = chip == 0xf3 ? 0 : 3;
   rom[0x7fd9] = pal ? 2 : 1;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;

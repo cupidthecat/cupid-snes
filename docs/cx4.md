@@ -22,6 +22,8 @@ Reset clears registers and restores control defaults. It retains work RAM, data 
 
 The standard board uses these CPU windows:
 
+Automatic header detection selects the LoROM profile without an ordinary save declaration. Declaring ordinary save RAM does not select a standard Cx4 board. A database entry with an explicit mapping can connect a custom board and its save allocation.
+
 | Window | Behavior |
 | --- | --- |
 | `$00-$3F/$80-$BF:$8000-$FFFF` | Cartridge ROM |

@@ -299,6 +299,8 @@ void MemoryBus::MapApu(Smp &smp) {
 // Cartridge mapping
 
 void MemoryBus::MapCartridge(Cartridge &cart) {
+  if (!cart.BoardConnected())
+    return;
   // Register a single ROM+SRAM handler.
   // The Cartridge class already has full address resolution logic
   // (LoROM/HiROM/ExHiROM), so we delegate to it.

@@ -3,6 +3,7 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
+#include <algorithm>
 #include <bit>
 #include <stdexcept>
 #include <utility>
@@ -12,9 +13,10 @@ Spc7110::Spc7110(std::span<const uint8_t> rom, bool rtc, Clock clock)
     : Spc7110(rom, {}, rtc, std::move(clock)) {}
 Spc7110::Spc7110(std::span<const uint8_t> rom, std::span<uint8_t> save, bool rtc, Clock clock)
     : rom_(rom), save_(save), decoder_([this](uint32_t address) { return Data(address); }) {
-  if (rom.size() <= 0x100000)
-    throw std::invalid_argument("SPC7110 image has no data ROM");
-  data_ = rom.subspan(0x100000, rom.size() == 0x700000 ? 0x500000 : rom.size() - 0x100000);
+  if (rom.empty())
+    throw std::invalid_argument("SPC7110 image has no program ROM");
+  const size_t dataStart = std::min<size_t>(rom.size(), 0x100000);
+  data_ = rom.subspan(dataStart, rom.size() == 0x700000 ? 0x500000 : rom.size() - dataStart);
   if (rtc)
     rtc_ = std::make_unique<EpsonRtc>(std::move(clock));
   Reset();
@@ -125,6 +127,8 @@ size_t Spc7110::Mirror(uint32_t address, size_t size) {
   return base + offset;
 }
 uint8_t Spc7110::Data(uint32_t address) const {
+  if (data_.empty())
+    return 0;
   const unsigned size = registers_[0x34] & 3;
   if (size != 3 && (address & 0x400000))
     return 0;
@@ -135,9 +139,9 @@ uint8_t Spc7110::Rom(uint32_t address, uint8_t openBus) const {
   const uint32_t linear = address & 0x3fffff;
   const unsigned bank = linear >> 20;
   if (bank == 0)
-    return rom_[linear];
+    return rom_[Mirror(linear, std::min<size_t>(rom_.size(), 0x100000))];
   if (bank == 1 && (registers_[0x34] & 4))
-    return rom_[linear & 0xfffff];
+    return rom_[Mirror(linear & 0xfffff, std::min<size_t>(rom_.size(), 0x100000))];
   if (bank < 4)
     return Data((uint32_t(registers_[0x30 + bank]) << 20) | (linear & 0xfffff));
   return openBus;

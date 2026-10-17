@@ -8,6 +8,8 @@ Header titles skip zero and $FF padding, trim outer spaces, and decode halfwidth
 
 [Cartridge memory initialization](cartridge-memory.md) describes erased external RAM, processor work RAM, save loading, and reset retention.
 
+The detected processor does not by itself connect a board. The loader also resolves the mapping family, declared RAM, and ROM geometry. OBC1 needs a LoROM board with save RAM; S-RTC needs ExHiROM with save RAM. Automatic Cx4 and ST010/ST011 profiles use LoROM without an ordinary save declaration. ST018 uses LoROM with save RAM. SPC7110 needs save RAM, and its seven-MiB expansion profile also needs the RTC. An unrecognized combination retains the loaded image and metadata but connects no cartridge ROM, RAM, or processor to the CPU bus. Reads preserve open bus and writes have no effect. An explicit database mapping can select custom wiring.
+
 ## DSP-2 command model
 
 With cartridge firmware, DSP-1 through DSP-4 and ST010/ST011 use [clocked signal processors](clocked-cartridge-processors.md). The following DSP-2 description applies to the fallback used without firmware.
@@ -24,7 +26,7 @@ DSP-1 maintains separate byte phases for status and data accesses. DSP-3 and DSP
 
 ## OBC1
 
-OBC1 has 8 KiB of RAM at $00-$3F/$80-$BF:$6000-$7FFF. Registers $7FF0-$7FF3 read and write the selected object's four bytes. Register $7FF4 reads its packed attribute byte and writes only the selected object's two bits. Registers $7FF5 and $7FF6 select the object table and object index. Selector writes update their physical RAM bytes. Indexed object and attribute writes update only the selected storage. Banks $70-$71/$F0-$F1 also expose mirrored OBC1 windows.
+OBC1 decodes an 8 KiB RAM window at $00-$3F/$80-$BF:$6000-$7FFF. The save allocation retains the full header-declared capacity, including bytes beyond that window. Registers $7FF0-$7FF3 read and write the selected object's four bytes. Register $7FF4 reads its packed attribute byte and writes only the selected object's two bits. Registers $7FF5 and $7FF6 select the object table and object index. Selector writes update their physical RAM bytes. Indexed object and attribute writes update only the selected storage. Banks $70-$71/$F0-$F1 also expose mirrored OBC1 windows.
 
 New cartridge RAM starts at $FF. Loading a save or resetting the console rebuilds selectors from retained RAM bytes $1FF5/$1FF6. [Super Scope input](light-guns-and-raster.md) is available separately. A Metal Combat boot capture exercised the object controller with a standard gamepad; Scope gameplay remains untested.
 
@@ -62,7 +64,7 @@ The core also exposes `LoadSufamiTurbo`, `LoadSufamiTurboFromFiles`, `SlotSramDa
 
 Country codes $00, $01, $0B, $0D, $0F, and $10 select NTSC. Other values select PAL. PAL uses 312 scanlines and a 21,281,370 Hz master clock; NTSC uses 262 scanlines and a 21,477,272 Hz clock. Timing, the PPU region flag, and SMP synchronization use the same selection. Audio output remains 32,040 Hz.
 
-RAM declarations use their low four bits and stop at 256 KiB. GSU cartridges use an ordinary RAM declaration when present, otherwise the expansion declaration or the older board's 32 KiB default. Fixed processor memory remains device-specific. Database overrides can explicitly disable ordinary SRAM with a size of zero.
+RAM declarations use their low four bits and stop at 256 KiB. A nonzero ordinary declaration takes priority over expansion RAM. Maker $33 enables the expansion field for every board family. Cartridge types $10-$1F default to 32 KiB when expansion RAM is absent, including maker $33 images with an empty expansion field. Fixed processor memory remains device-specific. Database overrides can explicitly disable ordinary SRAM with a size of zero.
 
 Ordinary LoROM drives only the upper half of each ROM bank. With RAM and at most 2 MiB of physical ROM, banks $70-$7D and $F0-$FF expose RAM in both halves, regardless of RAM capacity. Larger LoROM boards use only the lower half for RAM. A board without RAM keeps ROM in the upper half of bank $70. LoROM and HiROM retain connected address lines for larger images and mirror only unpopulated storage. MEMSEL controls fast accesses independently of the speed advertised in the header.
 
