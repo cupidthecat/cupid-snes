@@ -4,23 +4,22 @@ S-DD1 cartridges load with a decompressor, bank registers, and board-specific SR
 
 ## S-DD1 cartridge support
 
-Registers $4800 and $4801 enable decompression per DMA channel. A transfer must read from $C0-$FF with fixed A-bus addressing and both channel bits enabled. CPU reads continue to return compressed ROM bytes. Completion clears that channel's bit in $4801. Reverse transfers, incrementing transfers, and disabled channels use ordinary bus reads and writes.
+Registers $4800 and $4801 enable decompression per channel. The cartridge observes writes to each channel's source address and 16-bit count registers. A read in $C0-$FF that matches an enabled channel's stored source consumes one decoded byte. This applies to CPU reads as well as DMA and HDMA. The first matching channel has priority. A zero stored count wraps through 65,536 reads; the final read clears only that channel's bit in $4801.
 
-Registers $4804-$4807 select four independent 1 MiB ROM windows. The decoder reads through those windows, including when compressed input crosses a window boundary. Register aliases occupy banks $00-$3F and $80-$BF. Loading a cartridge resets the four bank selections to 0, 1, 2, and 3.
+Registers $4804-$4807 select four independent 1 MiB ROM windows with their low four bits. Only bits 7 and 0-3 retain written values. Bit 7 of $4805 mirrors the lower program MiB into banks $20-$3F; bit 7 of $4807 does the same for $A0-$BF. The decoder reads through the current window selections, including at input boundaries. Register aliases occupy $4800-$480F in banks $00-$3F and $80-$BF. Unused ports read the corresponding physical ROM byte at $4800-$480F and ignore writes. Reset selects banks 0, 1, 2, and 3 and clears both enable masks and the stored DMA addresses and counts.
 
 | Address | Mapping |
 | --- | --- |
 | $00-$3F/$80-$BF:$8000-$FFFF | Fixed LoROM pages |
-| $60-$6F:$0000-$FFFF | Fixed 64 KiB ROM pages |
-| $70-$7D:$8000-$FFFF | Upper halves of fixed ROM pages |
-| $70-$7D:$0000-$7FFF and $A0-$BF:$6000-$7FFF | SRAM, mirrored to its populated size |
+| $00-$3F/$80-$BF:$6000-$7FFF | SRAM, when populated |
+| $70-$73:$0000-$FFFF | SRAM, with the upper half mirroring the lower half |
 | $C0-$FF:$0000-$FFFF | Four switchable ROM windows |
 
 WRAM retains banks $7E-$7F. Unpopulated SRAM returns open bus. Battery RAM uses the existing `.srm` load and save path.
 
-The decompressor handles all four bitplane layouts and all four context models described in the [S-DD1 algorithm documentation](https://wiki.superfamicom.org/s-dd1). Each transfer has independent prediction and run state. A zero DMA count requests 65,536 output bytes; odd counts end at the requested byte.
+The decompressor handles all four bitplane layouts and all four context models described in the [S-DD1 algorithm documentation](https://wiki.superfamicom.org/s-dd1). Channels share one active decoder. Reprogramming a channel or changing an enable mask retains its progress. Completing the stored count invalidates the stream so the next matching read initializes a new one. Planar output retains the second byte of a decoded pair until its own read. An interrupted DMA leaves unread bytes and the remaining cartridge count intact; the CPU's DMA count remains separate.
 
-Expanded, pre-decompressed images of at least 8 MiB use a separate mapper. Detection uses the S-DD1 chip header or the supported game titles. The mapper exposes the expanded ROM pages directly, keeps missing banks open, and does not expose chip registers or SRAM. Synthetic tests cover 8 MiB and 12 MiB layouts.
+The chip header selects this board independently of ROM size. Images of 8, 12, or 16 MiB retain S-DD1 registers, bank switching, decompression, and populated SRAM. ROM size alone does not select a pre-decompressed layout.
 
 ## DMA and field timing
 
@@ -28,7 +27,7 @@ Writing $420B queues DMA. The controller allows one CPU bus cycle before taking 
 
 The scheduler returns DMA control at a CPU cycle boundary and samples interrupts through the CPU's normal instruction boundary logic. HDMA initializes on scanline zero at a divider-dependent position. DRAM refresh follows that divider, alternating positions 538 and 534 on ordinary scanlines and preserving its phase across a short line. Odd-sized clock batches retain their unfinished half tick. SETINI controls field timing, and `StepFrame` targets the next field boundary.
 
-CPU register accesses now see hardware events reached during earlier accesses of the same instruction. This does not make the whole machine cycle exact: the PPU still samples one scanline, coprocessor synchronization has device-specific limits, and the scheduler drains a refresh penalty at the end of the current clock interval. An instruction or DMA operation crossing a field boundary can make `StepFrame` return after that boundary.
+CPU register accesses see hardware events reached during earlier accesses of the same instruction. Memory fetches and cartridge processors have their own clock phases and validation limits. An instruction or DMA operation crossing a field boundary can make `StepFrame` return after that boundary.
 
 ## Video output
 
@@ -38,12 +37,12 @@ Interlace writes alternating row parities and retains the preceding field. Norma
 
 ## Validation and remaining gaps
 
-The decoder passed 3,072 local comparison cases spanning all 16 header modes, 32 deterministic input streams, and six output lengths from one byte through 64 KiB. Committed tests retain output digests for every header mode and check bank boundaries, register aliases, save round trips, all eight DMA channels and modes, enable masks, reverse DMA, and expanded images.
+Committed tests retain decoder digests for every header mode and check bank boundaries, register masks and fallthrough, SRAM aliases, save round trips, all eight DMA channels and modes, enable masks, reverse DMA, count wrapping, partial transfers, reset, and large ROM images. Generated board checks cover 54 ROM/RAM configurations. Stateful stream checks cover all 16 layouts, shared channels, mid-stream register changes, and resets, including 14,162,672 decoded or ordinary reads and 780,432 controller snapshots.
 
 Timing tests check divider alignment, separate source/destination timestamps, startup and CPU resumption, refresh stalls, HDMA interruption on the same and different channels, APU progress, bank wrapping, and NTSC/PAL interlaced field lengths. CPU bus tests place HBlank and NMI edges inside instructions. PPU tests check alternating main/sub dots, mixed resolutions, blanking, field retention, and returning to normal dimensions.
 
 The full test command and the current cartridge validation scope are listed in [original hardware support](original-hardware.md). Tests keep the transfer data-path checks separate from integration checks that advance the complete machine.
 
-Both supplied games completed 1,800-frame runs with visible video and non-silent audio. The final Contra prototype frame showed gameplay. These runs do not validate S-DD1 games, later levels, or sound accuracy. No game images are included in the tests.
+Three 6,000-field replays cover the supplied Star Ocean image and US and PAL Street Fighter Alpha 2 images. All tested video fields, shared audio samples, and saved bytes agree. Six ordinary-game controls retain their previous video, audio, and saves. These boot, title, and demo sequences do not establish complete gameplay coverage or measured physical chip timing. No game images are included in the tests.
 
 [Original hardware support](original-hardware.md) describes the cartridge processors, command engines, broadcast hardware, and their remaining gaps. [Light guns and raster memory](light-guns-and-raster.md) covers gun protocols and graphics-memory timing. CPU multiply/divide results advance through internal arithmetic cycles. Backgrounds and objects use clocked fetch state; [PPU memory ports](ppu-memory-ports.md) covers CPU access ownership and byte phases. Memory collisions within a clock still need separate validation. S-DD1 decoding does not model its internal input FIFO timing or hardware underflow behavior.

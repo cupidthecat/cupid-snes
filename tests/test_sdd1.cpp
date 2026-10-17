@@ -83,17 +83,18 @@ void MappingAndSaves() {
   for (unsigned window = 0; window < 4; ++window) {
     const unsigned address = 0xc01234 + (window << 20);
     Check(bus.Read(address) == window * 16, "Default MMC bank");
-    for (unsigned bank = 0; bank < 8; ++bank) {
-      bus.Write(0x804804 + window, uint8_t(0xf8 | bank));
-      Check(bus.Read(0x004804 + window) == (0xf8 | bank), "MMC register mirrors and readback");
-      Check(bus.Read(address) == (bank < 6 ? bank : bank - 2) * 16, "MMC ROM line mirrors");
+    for (unsigned bank = 0; bank < 16; ++bank) {
+      bus.Write(0x804804 + window, uint8_t(0x70 | bank));
+      Check(bus.Read(0x004804 + window) == bank, "MMC register mirrors and readback");
+      const unsigned physical = bank & 7;
+      Check(bus.Read(address) == (physical < 6 ? physical : physical - 2) * 16,
+            "MMC ROM line mirrors");
     }
   }
   Check(bus.Read(0x038123) == rom[0x18123], "Lower LoROM window");
   Check(bus.Read(0x838123) == rom[0x18123], "Upper LoROM window");
-  Check(bus.Read(0x601234) == rom[0x1234], "Fixed full bank window");
-  Check(bus.Read(0x718123) == rom[0x118123], "ROM above SRAM window");
-  for (unsigned address : {0x401234u, 0x408123u, 0x206123u}) {
+  Check(bus.Read(0x718123) == 0xff, "Full RAM banks retain their upper address mirror");
+  for (unsigned address : {0x401234u, 0x408123u, 0x601234u, 0x746123u}) {
     bus.SetOpenBus(0xa9);
     Check(bus.Read(address) == 0xa9, "Unmapped board addresses");
   }
@@ -113,6 +114,82 @@ void MappingAndSaves() {
   Check(emu->LoadCartridge(rom), "SRAM-less image loads");
   bus.SetOpenBus(0x64);
   Check(bus.Read(0x700123) == 0x64, "Unpopulated SRAM is open bus");
+}
+
+void ControllerRegistersAndStreams() {
+  auto rom = Image();
+  rom[0x4802] = 0x6d;
+  rom[0x4803] = 0xb4;
+  rom[0x4808] = 0x8e;
+  rom[0x480f] = 0xf1;
+  std::fill(rom.begin() + 0x100000, rom.begin() + 0x180000, 0);
+  rom[0x100000] = 0xc0;
+  auto emu = Load(rom);
+  auto &bus = emu->GetBus();
+  bus.Write(0x4804, 0xf9);
+  Check(bus.Read(0x4804) == 0x89, "MMC readback retains only connected register bits");
+  for (unsigned address : {0x4802u, 0x4803u, 0x4808u, 0x480fu}) {
+    Check(bus.Read(address) == rom[address], "Unused I/O locations read physical cartridge ROM");
+    bus.Write(address, 0);
+    Check(bus.Read(address | 0x800000) == rom[address], "Unused I/O writes leave ROM unchanged");
+  }
+  bus.Write(0x006123, 0x5a);
+  for (unsigned address : {0x806123u, 0x706123u, 0x70e123u, 0x736123u})
+    Check(bus.Read(address) == 0x5a, "All battery RAM windows share the same physical memory");
+  for (unsigned address : {0x601234u, 0x748123u, 0x7d8123u}) {
+    bus.SetOpenBus(0xa9);
+    Check(bus.Read(address) == 0xa9, "Unpopulated full banks are open bus");
+  }
+  bus.Write(0x4805, 0x80);
+  bus.Write(0x4807, 0x80);
+  Check(bus.Read(0x218123) == rom[0x8123] && bus.Read(0xa18123) == rom[0x8123],
+        "The two program-window mirror controls act independently of MMC data banks");
+  bus.Write(0x4805, 1);
+  bus.Write(0x4807, 3);
+  const auto program = [&](uint16_t count) {
+    bus.Write(0x4302, 0);
+    bus.Write(0x4303, 0);
+    bus.Write(0x4304, 0xd0);
+    bus.Write(0x4305, uint8_t(count));
+    bus.Write(0x4306, uint8_t(count >> 8));
+    bus.Write(0x4800, 1);
+    bus.Write(0x4801, 1);
+  };
+  program(3);
+  Check(bus.Read(0xd00000) == 0 && bus.Read(0xd00000) == 0 && bus.Read(0x4801) == 1,
+        "Matching CPU reads consume decoded bytes before a DMA request");
+  Check(bus.Read(0xd00000) == 0 && bus.Read(0x4801) == 0 && bus.Read(0xd00000) == 0xc0,
+        "The final decoded read disarms only the matching channel");
+  Check(bus.Read(0x4305) == 3, "The cartridge count is independent of the CPU DMA count");
+
+  auto &dma = emu->GetDma();
+  dma.SetClockCallback({});
+  dma.SetClockQuery({});
+  dma.SetCoprocessorSyncCallback({});
+  unsigned writes = 0;
+  bus.Map(
+      0, 0, 0x2100, 0x21ff, [](uint32_t, uint8_t) { return uint8_t(0); },
+      [&](uint32_t, uint8_t value) {
+        Check(value == 0, "Interrupted DMA still reads the cartridge decoder");
+        ++writes;
+      });
+  program(4);
+  bus.Write(0x4300, 8);
+  bus.Write(0x4301, 0x20);
+  dma.SetBoundaryCallback([&] {
+    if (writes == 2)
+      dma.Channel(0).dmaEnable = false;
+  });
+  dma.EnableDma(1);
+  dma.RunDma();
+  Check(writes == 2 && bus.Read(0x4801) == 1, "Cancelled DMA retains the armed partial stream");
+  Check(bus.Read(0xd00000) == 0 && bus.Read(0x4801) == 1 && bus.Read(0xd00000) == 0 &&
+            bus.Read(0x4801) == 0,
+        "Later reads finish the retained cartridge count");
+  emu->Reset();
+  Check(bus.Read(0x4800) == 0 && bus.Read(0x4801) == 0 && bus.Read(0x4805) == 1 &&
+            bus.Read(0x006123) == 0x5a,
+        "Reset clears stream controls while retaining battery RAM");
 }
 
 void DmaDecompression() {
@@ -139,9 +216,16 @@ void DmaDecompression() {
       ch.sourceBank = 0xd0;
       ch.sourceAddress = 0;
       ch.transferSize = 17;
+      const unsigned base = 0x4300 + channel * 16;
+      bus.Write(base + 2, 0);
+      bus.Write(base + 3, 0);
+      bus.Write(base + 4, 0xd0);
+      bus.Write(base + 5, 17);
+      bus.Write(base + 6, 0);
+      bus.Write(0x4800, 0);
+      Check(bus.Read(0xd00000) == 0xc0, "Disabled channels return compressed ROM");
       bus.Write(0x4800, uint8_t(1u << channel));
       bus.Write(0x4801, 0xff);
-      Check(bus.Read(0xd00000) == 0xc0, "Ordinary CPU reads stay compressed");
       writes.clear();
       dma.EnableDma(uint8_t(1u << channel));
       Check(dma.RunDma() == 16 + 17 * 8, "Decompression DMA clocks");
@@ -158,17 +242,27 @@ void DmaDecompression() {
     ch.writeControl(scenario == 2 ? 0 : 8);
     ch.sourceAddress = 0;
     ch.transferSize = 1;
+    bus.Write(0x4302, 0);
+    bus.Write(0x4303, 0);
+    bus.Write(0x4304, 0xd0);
+    bus.Write(0x4305, 1);
+    bus.Write(0x4306, 0);
     bus.Write(0x4800, scenario == 0 ? 2 : 1);
     bus.Write(0x4801, scenario == 1 ? 2 : 1);
     writes.clear();
     dma.EnableDma(1);
     dma.RunDma();
-    Check(writes.size() == 1 && writes[0].second == 0xc0,
-          "Both enables and fixed addressing are required");
+    Check(writes.size() == 1 && writes[0].second == (scenario == 2 ? 0 : 0xc0),
+          "Both channel masks select a stream independently of the DMA addressing mode");
   }
   ch.writeControl(8);
   ch.sourceAddress = 0;
   ch.transferSize = 0;
+  bus.Write(0x4302, 0);
+  bus.Write(0x4303, 0);
+  bus.Write(0x4304, 0xd0);
+  bus.Write(0x4305, 0);
+  bus.Write(0x4306, 0);
   bus.Write(0x4800, 1);
   bus.Write(0x4801, 1);
   writes.clear();
@@ -188,28 +282,26 @@ void DmaDecompression() {
   Check(bus.Read(0x700000) == 0x69 && bus.Read(0x4801) == 1, "Reverse DMA bypasses decoder");
 }
 
-void ExpandedImages() {
-  for (size_t size : {0x800000u, 0xc00000u}) {
+void LargeImages() {
+  for (size_t size : {0x800000u, 0xc00000u, 0x1000000u}) {
     auto rom = Image(size);
+    rom[0x7fd7] = size > 0x800000 ? 14 : 13;
     auto emu = Load(rom);
     auto &bus = emu->GetBus();
-    Check(emu->LoadedCartridge()->Header().mapping == MappingType::DecompressedSdd1,
-          "Expanded image detection");
-    const size_t half = size / 2;
-    Check(bus.Read(0x008123) == rom[0x123], "Expanded reset window");
-    Check(bus.Read(0x408123) == rom[0x200123], "Expanded upper half window");
-    Check(bus.Read(0x401123) == rom[half + 0x201123], "Expanded lower half window");
-    if (size > 0x800000) {
-      Check(bus.Read(0xc08123) == rom[half + 0x123], "Expanded high bank upper window");
-      Check(bus.Read(0xc01123) == rom[half + 0x401123], "Expanded high bank lower window");
-    } else {
-      bus.SetOpenBus(0x57);
-      Check(bus.Read(0xc08123) == 0x57 && bus.Read(0xc01123) == 0x57,
-            "Absent expanded bank is open bus");
+    Check(emu->LoadedCartridge()->Header().mapping == MappingType::Sdd1,
+          "Large S-DD1 images retain the controller selected by their header");
+    for (unsigned bank = 0; bank < 16; ++bank) {
+      unsigned physical = bank;
+      if (size == 0x800000)
+        physical &= 7;
+      if (size == 0xc00000 && bank >= 12)
+        physical -= 4;
+      bus.Write(0x4804, uint8_t(bank));
+      Check(bus.Read(0xc01234) == rom[(physical << 20) | 0x1234],
+            "All four MMC bank bits select the populated ROM blocks");
     }
-    Check(emu->LoadedCartridge()->SramData().empty(), "Expanded layout has no SRAM decode");
-    bus.Write(0x7e1123, 0x52);
-    Check(bus.Read(0x7e1123) == 0x52, "Expanded layout preserves WRAM");
+    bus.Write(0x006123, 0x52);
+    Check(bus.Read(0x706123) == 0x52, "Large ROM size does not remove battery RAM");
   }
 }
 
@@ -219,25 +311,31 @@ void CompressedBankBoundary() {
   std::fill(rom.begin() + 0x500000, rom.begin() + 0x501000, 0xff);
   rom[0x4ffffe] = 0xc0;
   rom[0x4fffff] = 0;
-  auto cart = Cartridge::FromRomImage(rom, nullptr, nullptr, nullptr);
-  Check(cart.has_value(), "Boundary fixture loads");
-  cart->Write(0x4804, 4);
-  cart->Write(0x4805, 2);
-  cart->Write(0x4800, 1);
-  cart->Write(0x4801, 1);
-  const auto output = cart->BeginDma(0, 0xcffffe, 257, true, false);
-  Check(output.size() == 257 &&
-            std::all_of(output.begin(), output.end(), [](uint8_t b) { return b == 0; }),
-        "Compressed input crosses the MMC boundary into the selected ROM bank");
+  auto emu = Load(rom);
+  auto &bus = emu->GetBus();
+  bus.Write(0x4804, 4);
+  bus.Write(0x4805, 2);
+  bus.Write(0x4302, 0xfe);
+  bus.Write(0x4303, 0xff);
+  bus.Write(0x4304, 0xcf);
+  bus.Write(0x4305, 1);
+  bus.Write(0x4306, 1);
+  bus.Write(0x4800, 1);
+  bus.Write(0x4801, 1);
+  for (unsigned i = 0; i < 257; ++i)
+    Check(bus.Read(0xcffffe) == 0,
+          "Compressed input crosses the MMC boundary into the selected ROM bank");
+  Check(bus.Read(0x4801) == 0, "Cross-window stream completes at its programmed count");
 }
 } // namespace
 
 int main() {
   try {
     DecoderVectors();
+    ControllerRegistersAndStreams();
     MappingAndSaves();
     DmaDecompression();
-    ExpandedImages();
+    LargeImages();
     CompressedBankBoundary();
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

@@ -268,8 +268,6 @@ const char *MappingName(MappingType mapping) noexcept {
     return "BS cartridge (HiROM)";
   case MappingType::Sdd1:
     return "S-DD1";
-  case MappingType::DecompressedSdd1:
-    return "S-DD1 (decompressed image)";
   default:
     return "Unknown";
   }
@@ -406,13 +404,6 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Bsx;
     cart.header_.chip = EnhancementChip::None;
   }
-  if (cart.rom_.size() >= 0x800000 &&
-      (cart.header_.chip == EnhancementChip::Sdd1 ||
-       cart.header_.title == "STREET FIGHTER ALPHA2" ||
-       cart.header_.title == "STREET FIGHTER ZERO2" || cart.header_.title == "Star Ocean")) {
-    cart.header_.mapping = MappingType::DecompressedSdd1;
-    cart.header_.chip = EnhancementChip::None;
-  }
 
   if (cart.rom_.size() == 0x40000 && HasSignature(cart.rom_, 0, "BANDAI SFC-ADX") &&
       HasSignature(cart.rom_, 0x10, "SFC-ADX BACKUP")) {
@@ -481,8 +472,8 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.sram_.assign(8192, 0xff);
     cart.obc1_ = std::make_unique<Obc1>(std::span<uint8_t, 8192>(cart.sram_));
   }
-  if (cart.header_.mapping == MappingType::DecompressedSdd1)
-    cart.sram_.clear();
+  if (cart.header_.mapping == MappingType::Sdd1)
+    cart.sdd1_ = std::make_unique<Sdd1>(cart.rom_, cart.sram_);
   if (cart.header_.chip == EnhancementChip::Cx4)
     cart.cx4_ = std::make_unique<Cx4>(cart.rom_);
   if (cart.header_.chip == EnhancementChip::Dsp3) {
@@ -619,7 +610,8 @@ void Cartridge::Reset() {
   memselFast_ = false;
   if (memoryPackDevice_)
     memoryPackDevice_->Reset();
-  sdd1Registers_ = {0, 0, 0, 0, 0, 1, 2, 3};
+  if (sdd1_)
+    sdd1_->Reset();
   st010_ = St010{};
   if (header_.mapping == MappingType::St010 && !necDsp_)
     std::fill(sram_.begin(), sram_.end(), 0);
@@ -662,6 +654,8 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
     return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
     return cx4Processor_->Read(cpuAddress, openBus);
+  if (sdd1_)
+    return sdd1_->Read(cpuAddress, openBus);
   if (signalBoard_) {
     if (signalBoard_->SelectsDevice(cpuAddress)) {
       if (necDsp_)
@@ -703,8 +697,6 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
     return spc7110_->Read(cpuAddress, openBus);
   if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress))
     return st010_.Read(cpuAddress, sram_);
-  if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800)
-    return sdd1Registers_[cpuAddress & 7];
   if (const auto offset = ResolveMemoryPackOffset(cpuAddress))
     return ReadMemoryPack(cpuAddress, *offset);
   if (const auto sramOffset = ResolveSramOffset(cpuAddress);
@@ -726,6 +718,10 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
   }
   if (cx4Processor_) {
     cx4Processor_->Write(cpuAddress, value);
+    return;
+  }
+  if (sdd1_) {
+    sdd1_->Write(cpuAddress, value);
     return;
   }
   if (signalBoard_) {
@@ -783,10 +779,6 @@ void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
   }
   if (header_.mapping == MappingType::St010 && St010::Selects(cpuAddress)) {
     st010_.Write(cpuAddress, value, sram_);
-    return;
-  }
-  if (header_.mapping == MappingType::Sdd1 && (cpuAddress & 0x40fff8) == 0x4800) {
-    sdd1Registers_[cpuAddress & 7] = value;
     return;
   }
   if (const auto offset = ResolveMemoryPackOffset(cpuAddress)) {
@@ -850,23 +842,9 @@ bool Cartridge::CpuIrqPending() const noexcept {
          (superFx_ && superFx_->CpuIrqPending()) || (bsx_ && bsx_->CpuIrqPending());
 }
 
-std::vector<uint8_t> Cartridge::BeginDma(unsigned channel, uint32_t address, uint16_t size,
-                                         bool fixed, bool fromBBus) {
-  if (header_.mapping != MappingType::Sdd1 || channel >= 8 || !fixed || fromBBus ||
-      address < 0xc00000 || address > 0xffffff ||
-      !(sdd1Registers_[0] & sdd1Registers_[1] & (1u << channel)))
-    return {};
-  return DecompressSdd1(
-      [this, address](uint32_t offset) {
-        // Fetch through the MMC so input can cross a bank window or ROM mirror.
-        return Read(0xc00000 | ((address + offset) & 0x3fffff));
-      },
-      size ? size : 0x10000);
-}
-
-void Cartridge::EndDma(unsigned channel) {
-  if (header_.mapping == MappingType::Sdd1 && channel < 8)
-    sdd1Registers_[1] &= uint8_t(~(1u << channel));
+void Cartridge::ObserveDmaWrite(uint32_t address, uint8_t value) {
+  if (sdd1_)
+    sdd1_->ObserveDmaWrite(address, value);
 }
 
 std::span<const uint8_t> Cartridge::RomData() const noexcept {
@@ -1145,31 +1123,7 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
       return MirrorOffset((size_t(bank & 0x7f) << 15) | (addr & 0x7fff), rom_.size());
     return std::nullopt;
   case MappingType::Sdd1:
-    if (bank >= 0xc0)
-      return MirrorOffset((size_t(sdd1Registers_[4 + ((bank - 0xc0) >> 4)] & 7) << 20) |
-                              (cpuAddress & 0xfffff),
-                          rom_.size());
-    if (bank >= 0x70 && bank <= 0x7d && addr < 0x8000)
-      return std::nullopt;
-    if (bank >= 0x60 && bank <= 0x7d)
-      return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
-    if (!(bank & 0x40) && addr >= 0x8000)
-      return MirrorOffset((size_t(bank & 0x3f) << 15) | (addr & 0x7fff), rom_.size());
     return std::nullopt;
-  case MappingType::DecompressedSdd1: {
-    if (bank == 0x7e || bank == 0x7f || (!(bank & 0x40) && addr < 0x8000))
-      return std::nullopt;
-    const size_t banks = rom_.size() >> 16;
-    if (bank >= 0xc0 ? size_t(0x80 + bank - 0xc0) >= banks : size_t(bank) >= banks)
-      return std::nullopt;
-    size_t page = bank;
-    if (bank >= 0xc0)
-      page = banks + (bank - 0xc0) + (addr < 0x8000 ? 0x80 : 0);
-    else if (addr < 0x8000)
-      page += banks;
-    const size_t offset = (page << 15) | (addr & 0x7fff);
-    return offset < rom_.size() ? std::optional<size_t>(offset) : std::nullopt;
-  }
   case MappingType::BroadcastLoRom: {
     if ((bank & 0x40) || addr < 0x8000)
       return std::nullopt;
@@ -1301,9 +1255,6 @@ std::optional<size_t> Cartridge::ResolveSramOffset(uint32_t cpuAddress) const {
       return MirrorOffset(addr & 0x1fff, sram_.size());
     return std::nullopt;
   case MappingType::Sdd1:
-    if ((bank >= 0x70 && bank <= 0x7d && addr < 0x8000) ||
-        (bank >= 0xa0 && bank <= 0xbf && addr >= 0x6000 && addr < 0x8000))
-      return MirrorOffset((size_t(bank & 0xf) << 15) | (addr & 0x7fff), sram_.size());
     return std::nullopt;
   case MappingType::SufamiTurbo: {
     const unsigned mirroredBank = bank & 0x7f;

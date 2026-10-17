@@ -137,6 +137,8 @@ uint8_t DmaController::Read(uint32_t addr, uint8_t openBus) {
 
 // Register write - $4300-$437F
 void DmaController::Write(uint32_t addr, uint8_t data) {
+  if (cartridge_)
+    cartridge_->ObserveDmaWrite(addr, data);
   const int ch = (addr >> 4) & 7;
   auto &c = channels_[ch];
 
@@ -357,8 +359,7 @@ void DmaController::WriteB(uint8_t address, uint8_t data, bool valid) {
 //   Mode 6: offset = 0               (same as 2)
 //   Mode 7: offset = (index >> 1)&1  (same as 3)
 //
-void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
-                             const uint8_t *source) {
+void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index) {
   if (cpuAddress_)
     *cpuAddress_ = addressA;
   uint8_t addressB = ch.targetAddress;
@@ -389,17 +390,7 @@ void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
 
   if (!ch.direction) {
     // Direction 0: A→B (CPU → PPU / register)
-    uint8_t data;
-    if (source) {
-      Clock(4, true);
-      data = *source;
-      bus_->SetOpenBus(data);
-      if (cpuData_)
-        *cpuData_ = data;
-      Clock(4, true);
-    } else {
-      data = ReadA(addressA);
-    }
+    const uint8_t data = ReadA(addressA);
     WriteB(addressB, data, valid);
   } else {
     // Direction 1: B→A (PPU / register → CPU)
@@ -416,7 +407,7 @@ void DmaController::Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index,
 //   - Clear dmaEnable when done
 //
 // Returns master clock cycles consumed by this channel.
-uint32_t DmaController::RunChannelDma(DmaChannel &ch, unsigned channel) {
+uint32_t DmaController::RunChannelDma(DmaChannel &ch) {
   if (!ch.dmaEnable)
     return 0;
 
@@ -425,16 +416,10 @@ uint32_t DmaController::RunChannelDma(DmaChannel &ch, unsigned channel) {
   if (onBoundary_)
     onBoundary_();
 
-  const auto decoded =
-      cartridge_ ? cartridge_->BeginDma(channel, (uint32_t(ch.sourceBank) << 16) | ch.sourceAddress,
-                                        ch.transferSize, ch.fixedTransfer, ch.direction)
-                 : std::vector<uint8_t>{};
-  size_t sourceIndex = 0;
-
   uint8_t index = 0;
   do {
     uint32_t aBusAddr = (static_cast<uint32_t>(ch.sourceBank) << 16) | ch.sourceAddress;
-    Transfer(ch, aBusAddr, index, decoded.empty() ? nullptr : &decoded[sourceIndex++]);
+    Transfer(ch, aBusAddr, index);
     cycles += 8; // 8 master cycles per byte transferred
 
     // Advance index within the transfer pattern
@@ -457,8 +442,6 @@ uint32_t DmaController::RunChannelDma(DmaChannel &ch, unsigned channel) {
   } while (--ch.transferSize);
 
   ch.dmaEnable = false;
-  if (!decoded.empty())
-    cartridge_->EndDma(channel);
   return cycles;
 }
 
@@ -481,7 +464,7 @@ uint32_t DmaController::RunDma() {
     if (onBoundary_)
       onBoundary_();
     for (int i = 0; i < 8; ++i) {
-      totalCycles += RunChannelDma(channels_[i], unsigned(i));
+      totalCycles += RunChannelDma(channels_[i]);
     }
     totalCycles += ResumeCpu();
   }

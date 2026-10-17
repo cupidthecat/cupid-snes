@@ -13,6 +13,7 @@
 #include "snes/core/NecDspBoard.hpp"
 #include "snes/core/Obc1.hpp"
 #include "snes/core/Sa1.hpp"
+#include "snes/core/Sdd1.hpp"
 #include "snes/core/SetaProtocol.hpp"
 #include "snes/core/Spc7110.hpp"
 #include "snes/core/St010.hpp"
@@ -44,7 +45,6 @@ enum class MappingType {
   BroadcastLoRom,
   BroadcastHiRom,
   Sdd1,
-  DecompressedSdd1,
   St010,
   Spc7110,
   Sa1,
@@ -156,9 +156,7 @@ public:
   uint8_t Read(uint32_t cpuAddress, uint8_t openBus = 0xff) const;
   void Write(uint32_t cpuAddress, uint8_t value);
 
-  std::vector<uint8_t> BeginDma(unsigned channel, uint32_t address, uint16_t size, bool fixed,
-                                bool fromBBus);
-  void EndDma(unsigned channel);
+  void ObserveDmaWrite(uint32_t address, uint8_t value);
 
   uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
   void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
@@ -228,7 +226,7 @@ private:
   std::vector<uint8_t> memoryPack_;
   bool memoryPackReadOnly_ = false;
   std::unique_ptr<BsMemory> memoryPackDevice_;
-  std::array<uint8_t, 8> sdd1Registers_{0, 0, 0, 0, 0, 1, 2, 3};
+  std::unique_ptr<Sdd1> sdd1_;
   St010 st010_;
   std::unique_ptr<Spc7110> spc7110_;
   std::unique_ptr<Sa1> sa1_;
