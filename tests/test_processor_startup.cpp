@@ -388,6 +388,11 @@ void DecodedDmaLatches() {
   channel.sourceAddress = 0;
   channel.transferSize = 2;
   channel.targetAddress = 0x10;
+  bus.Write(0x4302, 0);
+  bus.Write(0x4303, 0);
+  bus.Write(0x4304, 0xd0);
+  bus.Write(0x4305, 2);
+  bus.Write(0x4306, 0);
   dma.EnableDma(1);
   dma.RunDma();
   Check(writes == 2, "The decoded DMA latch check transfers its complete payload");

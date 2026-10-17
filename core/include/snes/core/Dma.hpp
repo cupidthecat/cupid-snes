@@ -292,10 +292,10 @@ private:
 
   /// Execute one transfer unit (A→B or B→A) for a channel.
   /// index selects the B-bus address offset based on transfer mode.
-  void Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index, const uint8_t *source = nullptr);
+  void Transfer(DmaChannel &ch, uint32_t addressA, uint8_t index);
 
   /// Execute GP-DMA for a single channel. Returns cycles consumed.
-  uint32_t RunChannelDma(DmaChannel &ch, unsigned channel);
+  uint32_t RunChannelDma(DmaChannel &ch);
 
   // HDMA internal helpers
 
