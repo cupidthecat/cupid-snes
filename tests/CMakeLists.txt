@@ -24,6 +24,18 @@ endif()
 
 add_test(NAME snes_core_tests COMMAND snes_core_tests)
 
+add_executable(snes_gameboy_cpu_tests test_gameboy_cpu.cpp)
+target_link_libraries(snes_gameboy_cpu_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_cpu_tests COMMAND snes_gameboy_cpu_tests)
+
+add_executable(snes_gameboy_host_tests test_gameboy_host.cpp)
+target_link_libraries(snes_gameboy_host_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_host_tests COMMAND snes_gameboy_host_tests)
+
+add_executable(snes_gameboy_clocked_io_tests test_gameboy_clocked_io.cpp)
+target_link_libraries(snes_gameboy_clocked_io_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_clocked_io_tests COMMAND snes_gameboy_clocked_io_tests)
+
 add_executable(snes_frame_execution_tests test_frame_execution.cpp)
 target_link_libraries(snes_frame_execution_tests PRIVATE snes_core)
 add_test(NAME snes_frame_execution_tests COMMAND snes_frame_execution_tests)

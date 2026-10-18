@@ -65,6 +65,17 @@ jobs:
           core/src/cartridge/SuperFx.cpp tests/test_superfx.cpp -o superfx-tests
       - name: Test Super FX pixel and bus timing
         run: ./superfx-tests
+      - name: Build and test handheld components
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Cpu.cpp tests/test_gameboy_cpu.cpp -o gameboy-cpu-tests
+          ./gameboy-cpu-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Host.cpp tests/test_gameboy_host.cpp -o gameboy-host-tests
+          ./gameboy-host-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/ClockedIo.cpp tests/test_gameboy_clocked_io.cpp -o gameboy-clock-tests
+          ./gameboy-clock-tests
   windows:
     runs-on: windows-2022
     timeout-minutes: 20
@@ -88,6 +99,7 @@ jobs:
         run: >-
           cmake --build out/build/ci --config Release --parallel 4 --target
           snes_frontend snes_rom_diagnostic snes_rom_smoke snes_trace_dump
+          snes_gameboy_cpu_tests snes_gameboy_host_tests snes_gameboy_clocked_io_tests
           snes_frame_execution_tests snes_competition_cartridge_tests
           snes_sdl_audio_tests snes_sdl_video_tests snes_bsx_tests snes_cartridge_command_tests
           snes_sdd1_tests snes_processor_startup_tests
@@ -96,4 +108,4 @@ jobs:
       - name: Test optimized console and SDL paths
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
