@@ -1,8 +1,10 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
+  src/cartridge/gameboy/Cartridge.cpp
   src/cartridge/gameboy/ClockedIo.cpp
   src/cartridge/gameboy/Cpu.cpp
   src/cartridge/gameboy/Host.cpp
+  src/cartridge/gameboy/MotionEeprom.cpp
   src/cartridge/RomHeaderParser.cpp
   src/cartridge/RomBoardProfile.cpp
   src/cartridge/CartridgeFirmware.cpp

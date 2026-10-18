@@ -36,6 +36,10 @@ add_executable(snes_gameboy_clocked_io_tests test_gameboy_clocked_io.cpp)
 target_link_libraries(snes_gameboy_clocked_io_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_clocked_io_tests COMMAND snes_gameboy_clocked_io_tests)
 
+add_executable(snes_gameboy_cartridge_tests test_gameboy_cartridge.cpp)
+target_link_libraries(snes_gameboy_cartridge_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_cartridge_tests COMMAND snes_gameboy_cartridge_tests)
+
 add_executable(snes_frame_execution_tests test_frame_execution.cpp)
 target_link_libraries(snes_frame_execution_tests PRIVATE snes_core)
 add_test(NAME snes_frame_execution_tests COMMAND snes_frame_execution_tests)
