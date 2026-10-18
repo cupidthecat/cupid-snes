@@ -126,7 +126,7 @@ The earlier cartridge and DSP audit exercised these paths:
 
 | Device | Comparison scope and result |
 | --- | --- |
-| SA-1 | 77,493 byte/result comparisons across arithmetic, bit reads, mapping, DMA, and character conversion at the time of that audit. Current bitmap, division, and bit-reader regressions cover the later corrections described above. Seven accumulator overflow-flag disagreements remain deliberate: the implementation detects signed 40-bit overflow. Hardware confirmation is still needed. Processor instruction execution was tested separately. |
+| SA-1 | Current arithmetic checks pass 177,096 byte comparisons across multiplication, division, 40-bit accumulator wrap, partial operand writes, and overflow flag retention across mode changes. Separate tests cover bitmap access, variable-length bit reads, memory mapping, DMA, character conversion, and processor execution. Fine timing and contention still need broader validation. |
 | Super FX | 8,660 programs; register, flag, bank, and RAM results matched at the time of that audit. The current RAMBR reserved-bit behavior follows the hardware specification above. Plotting, cache storage, and timing also have independent tests. |
 | DSP-3 | 935,231 byte/status/result comparisons matched, including coefficient ROM, geometry, planar data, 1,500 generated decode streams, and 250 terrain/path streams. |
 | DSP-4 | 1,620,513 comparisons matched, including fixed commands, OAM budgets, 500 road/lighting streams, 300 polygon streams, and 300 object streams. |
