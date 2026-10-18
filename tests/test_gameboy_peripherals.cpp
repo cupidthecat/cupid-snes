@@ -311,7 +311,7 @@ void ObjectMemoryExecution() {
   }
 }
 
-void SharedObjectBusLatches() {
+std::array<uint8_t, 8192> PatternedVideoRam() {
   std::array<uint8_t, 8192> ram{};
   for (unsigned tile = 0; tile < 384; ++tile)
     for (unsigned y = 0; y < 8; ++y)
@@ -324,6 +324,11 @@ void SharedObjectBusLatches() {
     ram[0x1800 + i] = uint8_t(i * 13 + (i / 32) * 7);
     ram[0x1c00 + i] = uint8_t(3 + (i % 4) * 7 + (i / 32) * 5);
   }
+  return ram;
+}
+
+void SharedObjectBusLatches() {
+  const auto ram = PatternedVideoRam();
   for (bool secondModel : {false, true}) {
     System system;
     system.Load(secondModel, {0});
@@ -356,6 +361,43 @@ void SharedObjectBusLatches() {
   }
 }
 
+void WindowWriteDuringObjectFetch() {
+  const auto ram = PatternedVideoRam();
+  constexpr std::array<unsigned, 10> positions{0, 1, 4, 8, 12, 14, 79, 80, 160, 167};
+  for (bool secondModel : {false, true})
+    for (bool tallObjects : {false, true})
+      for (unsigned clock : {554u, 559u}) {
+        System system;
+        system.Load(secondModel, {0});
+        for (unsigned i = 0; i < ram.size(); ++i)
+          system.devices.Write(uint16_t(0x8000 + i), ram[i], Machine::Access::Dma);
+        for (unsigned i = 0; i < positions.size(); ++i)
+          for (const auto [offset, value] :
+               std::array<std::pair<unsigned, uint8_t>, 4>{{{0, 17},
+                                                            {1, uint8_t(positions[i])},
+                                                            {2, uint8_t(i * 7 + 5)},
+                                                            {3, uint8_t((i & 3) * 0x20)}}})
+            system.devices.Write(uint16_t(0xfe00 + i * 4 + offset), value, Machine::Access::Dma);
+        for (const auto [address, value] :
+             std::array<Write, 5>{{{0xff43, 3},
+                                   {0xff47, 0xe4},
+                                   {0xff48, 0xe4},
+                                   {0xff49, 0x1b},
+                                   {0xff4b, uint8_t(tallObjects ? 80 : 7)}}})
+          system.machine.WriteMemory(address, value);
+        system.machine.WriteMemory(0xff40, tallObjects ? 0xf7 : 0xf3);
+        system.machine.AdvanceHardware(clock);
+        system.machine.WriteMemory(0xff4b, 0);
+        system.machine.AdvanceHardware(1600 - clock);
+        uint64_t hash = 14695981039346656037ull;
+        for (auto shade : system.pixels)
+          hash = (hash ^ shade) * 1099511628211ull;
+        const auto expected = tallObjects ? 0xa76f4fd6cbf4491aull : 0x30bf5bdf899cfd7cull;
+        Check(system.pixels.size() == 552 && hash == expected,
+              "A window write during object fetch waits for the next pixel trigger check");
+      }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -380,6 +422,7 @@ int main() {
     ClockCommandExecution();
     ObjectMemoryExecution();
     SharedObjectBusLatches();
+    WindowWriteDuringObjectFetch();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

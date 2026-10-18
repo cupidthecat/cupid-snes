@@ -447,15 +447,18 @@ void Video::Transfer() {
   ++transferClocks_;
   if (transferClocks_ <= 4)
     return;
-  if (objectPending_ || objectStall_) {
+  const bool resumingObject = objectPending_ || objectStall_;
+  if (resumingObject) {
     if (AdvanceObject())
       return;
   }
-  if (StartWindow())
-    return;
-  if (windowActive_ && !windowStarting_ && int(registers_[11]) == position_ + 7 &&
-      fetchPhase_ == MapAddress && fifoSize_ == 8)
-    insertBackground_ = true;
+  if (!resumingObject) {
+    if (StartWindow())
+      return;
+    if (windowActive_ && !windowStarting_ && int(registers_[11]) == position_ + 7 &&
+        fetchPhase_ == MapAddress && fifoSize_ == 8)
+      insertBackground_ = true;
+  }
   if (StartObject()) {
     AdvanceObject();
     return;
