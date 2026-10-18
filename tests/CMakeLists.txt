@@ -44,6 +44,10 @@ add_executable(snes_gameboy_camera_tests test_gameboy_camera.cpp)
 target_link_libraries(snes_gameboy_camera_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_camera_tests COMMAND snes_gameboy_camera_tests)
 
+add_executable(snes_gameboy_tpp1_tests test_gameboy_tpp1.cpp)
+target_link_libraries(snes_gameboy_tpp1_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_tpp1_tests COMMAND snes_gameboy_tpp1_tests)
+
 add_executable(snes_gameboy_machine_tests test_gameboy_machine.cpp)
 target_link_libraries(snes_gameboy_machine_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_machine_tests COMMAND snes_gameboy_machine_tests)

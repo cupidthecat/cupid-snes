@@ -12,6 +12,7 @@ add_library(snes_core
   src/cartridge/gameboy/Peripherals.cpp
   src/cartridge/gameboy/MotionEeprom.cpp
   src/cartridge/gameboy/SoundChannels.cpp
+  src/cartridge/gameboy/Tpp1.cpp
   src/cartridge/gameboy/Video.cpp
   src/cartridge/RomHeaderParser.cpp
   src/cartridge/RomBoardProfile.cpp

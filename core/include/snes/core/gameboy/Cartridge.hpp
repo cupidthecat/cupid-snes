@@ -5,6 +5,7 @@
 #include "snes/core/gameboy/Huc3Clock.hpp"
 #include "snes/core/gameboy/Infrared.hpp"
 #include "snes/core/gameboy/MotionEeprom.hpp"
+#include "snes/core/gameboy/Tpp1.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -53,14 +54,17 @@ public:
     return ram_;
   }
   bool Rumble() const noexcept {
-    return rumble_;
+    return RumbleStrength() != 0;
+  }
+  uint8_t RumbleStrength() const noexcept {
+    return mapper_ == Mapper::Tpp1 ? tpp1_.RumbleStrength() : uint8_t(rumble_ ? 3 : 0);
   }
   void SetMotion(double x, double y) noexcept {
     motion_.SetMotion(x, y);
   }
 
 private:
-  enum class Mapper { None, Mbc1, Mbc2, Mbc3, Mbc5, Mbc7, Mmm01, Huc1, Huc3, Camera };
+  enum class Mapper { None, Mbc1, Mbc2, Mbc3, Mbc5, Mbc7, Mmm01, Huc1, Huc3, Camera, Tpp1 };
   struct Multicart {
     uint8_t romLow = 0, romMid = 0, romHigh = 0, romMask = 0;
     uint8_t ramLow = 0, ramHigh = 0, ramMask = 3;
@@ -70,6 +74,7 @@ private:
   Infrared infrared_;
   Camera camera_;
   Huc3Clock huc3Clock_;
+  Tpp1 tpp1_;
   std::vector<uint8_t> rom_, ram_;
   Mapper mapper_ = Mapper::None;
   TimeSource timeSource_;

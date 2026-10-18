@@ -126,15 +126,24 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *) {
     mapper = Mapper::Mbc3;
     ram = ramCode != 0;
   }
+  if (program[0x147] == 0xbc && program[0x149] == 0xc1 && program[0x14a] == 0x65) {
+    mapper = Mapper::Tpp1;
+    ram = clock = rumble = true;
+    battery = (program[0x153] & 8) != 0;
+  }
+  const unsigned tpp1RamCode = program[0x152];
   rom_ = std::move(program);
   mapper_ = mapper;
   battery_ = battery;
   clock_ = clock;
   hasRumble_ = rumble;
   constexpr size_t ramSizes[] = {0, 0x800, 0x2000, 0x8000, 0x20000, 0x10000};
+  const size_t tpp1RamSize =
+      tpp1RamCode >= 1 && tpp1RamCode <= 9 ? size_t(8192) << (tpp1RamCode - 1) : 0;
   const size_t ramSize = !ram                     ? 0
                          : mapper == Mapper::Mbc2 ? 512
                          : mapper == Mapper::Mbc7 ? 256
+                         : mapper == Mapper::Tpp1 ? tpp1RamSize
                          : ramCode < 6            ? ramSizes[ramCode]
                                                   : 0;
   if (ram_.size() != ramSize)
@@ -159,6 +168,7 @@ void Cartridge::Reset() {
   multicartRegisters_ = {};
   lastTime_ = Now();
   huc3Clock_.Reset(lastTime_);
+  tpp1_.Reset(lastTime_);
 }
 
 unsigned Cartridge::RomBank(bool upper) const noexcept {
@@ -180,6 +190,8 @@ unsigned Cartridge::RomBank(bool upper) const noexcept {
   case Mapper::Mbc7:
   case Mapper::Camera:
     return upper ? lowBank_ : 0;
+  case Mapper::Tpp1:
+    return upper ? tpp1_.RomBank() : 0;
   case Mapper::Huc1:
   case Mapper::Huc3:
     return upper ? (bankRegistersWritten_ ? lowBank_ : 1) : 0;
@@ -223,6 +235,8 @@ std::optional<uint8_t> Cartridge::Read(uint16_t address) {
     const size_t offset = size_t(RomBank(address >= 0x4000)) * 0x4000 + (address & 0x3fff);
     return rom_[offset & (rom_.size() - 1)];
   }
+  if (mapper_ == Mapper::Tpp1 && address >= 0xa000 && address < 0xc000)
+    return tpp1_.Read(address, ram_);
   if (mapper_ == Mapper::Mbc7 && address >= 0xa000 && address < 0xc000)
     return ramEnabled_ && motionEnabled_ && address < 0xb000 ? motion_.Read(address) : 0xff;
   if (mapper_ == Mapper::Camera && address >= 0xa000 && address < 0xc000 && cameraRegisters_)
@@ -317,6 +331,9 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
     case Mapper::Mmm01:
       WriteMulticart(address, value);
       break;
+    case Mapper::Tpp1:
+      tpp1_.Write(address, value, ram_);
+      break;
     case Mapper::Huc1:
       bankRegistersWritten_ = true;
       if (address < 0x2000)
@@ -358,6 +375,10 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
     default:
       break;
     }
+    return;
+  }
+  if (mapper_ == Mapper::Tpp1 && address >= 0xa000 && address < 0xc000) {
+    tpp1_.Write(address, value, ram_);
     return;
   }
   if (mapper_ == Mapper::Mbc7 && address >= 0xa000 && address < 0xc000) {
@@ -468,6 +489,11 @@ void Cartridge::AdvanceClock(unsigned clocks) {
 void Cartridge::AdvanceRtc(unsigned clocks) {
   if (!clock_)
     return;
+  if (mapper_ == Mapper::Tpp1) {
+    if (tpp1_.Advance(clocks, rtcClockRate_))
+      tpp1_.Synchronize(Now());
+    return;
+  }
   rtcClocks_ += uint64_t(clocks) * 2;
   const auto interval = rtcClockRate_ / 16;
   if (rtcClocks_ >= interval) {
@@ -484,6 +510,10 @@ void Cartridge::AdvanceDays(uint64_t days) noexcept {
 }
 
 void Cartridge::SynchronizeRtc(uint64_t timestamp) {
+  if (mapper_ == Mapper::Tpp1) {
+    tpp1_.Synchronize(timestamp);
+    return;
+  }
   if (mapper_ == Mapper::Huc3) {
     huc3Clock_.Synchronize(timestamp);
     return;
@@ -504,6 +534,11 @@ std::vector<uint8_t> Cartridge::SaveBattery() const {
   if (!battery_ || (ram_.empty() && !clock_))
     return {};
   std::vector<uint8_t> bytes = ram_;
+  if (mapper_ == Mapper::Tpp1) {
+    const auto clock = tpp1_.Save(Now());
+    bytes.insert(bytes.end(), clock.begin(), clock.end());
+    return bytes;
+  }
   if (mapper_ == Mapper::Huc3) {
     const auto clock = huc3Clock_.Save();
     bytes.insert(bytes.end(), clock.begin(), clock.end());
@@ -527,6 +562,10 @@ void Cartridge::LoadBattery(std::span<const uint8_t> bytes) {
   const auto ramSize = ram_.size();
   std::copy_n(bytes.begin(), std::min(bytes.size(), ramSize), ram_.begin());
   const auto now = Now();
+  if (mapper_ == Mapper::Tpp1) {
+    tpp1_.Load(bytes.subspan(std::min(bytes.size(), ramSize)), now);
+    return;
+  }
   if (mapper_ == Mapper::Huc3) {
     huc3Clock_.Load(bytes.subspan(std::min(bytes.size(), ramSize)), now);
     return;
