@@ -38,6 +38,10 @@ public:
   void Suspend(unsigned clocks) noexcept;
   // Wave fetches and sweep pipelines need service before the next sample.
   bool NeedsStep() const noexcept;
+  // Delayed triggers split a sound run at their hardware clock.
+  uint64_t PendingTriggerClock() const noexcept {
+    return noisePending_ ? noiseStart_ : 0;
+  }
   State GetState() const noexcept;
 
 private:
@@ -47,6 +51,7 @@ private:
     uint16_t frequency = 0;
     uint8_t position = 0, volume = 0, envelope = 0, amplitude = 0;
     bool enabled = false, envelopeRunning = false, high = false, squareStarted = false;
+    bool envelopeClock = false, envelopeLimit = false, squareReloaded = false;
   };
 
   Output &output_;
@@ -55,11 +60,11 @@ private:
   std::array<Channel, 4> channels_{};
   std::array<uint8_t, 4> emitted_{};
   uint64_t clocks_ = 0, audioClock_ = 0, noiseStart_ = 0, waveRead_ = 0, sweepStop_ = 0,
-           dividerEvent_ = 0, sweepTrigger_ = 0;
+           dividerEvent_ = 0, secondaryEvent_ = 0, sweepTrigger_ = 0;
   uint16_t noise_ = 0x7fff, noiseCounter_ = 0, sweepShadow_ = 0;
   int noiseCountdown_ = 0, noiseReloadDelta_ = 0;
   uint8_t phase_ = 0, waveShift_ = 0, waveLatch_ = 0, emittedDacs_ = 0, emittedChannels_ = 0,
-          sweepCounter_ = 0, noiseAlignment_ = 0;
+          sweepCounter_ = 0, noiseAlignment_ = 0, startupEdges_ = 0;
   bool powered_ = false, dividerHigh_ = false, sweepEnabled_ = false;
   bool sweepNegated_ = false, noisePending_ = false, waveAccess_ = false;
   bool secondModel_ = false;
@@ -73,7 +78,7 @@ private:
   void SetControl(unsigned channel, uint8_t previous, uint8_t value);
   void ClockFrame(int phaseOffset = 0);
   void Lengths();
-  void Envelopes();
+  void Envelopes(bool rising);
   void Sweep();
   int SweepResult();
   void Emit(uint64_t clock, int phaseOffset = 0);

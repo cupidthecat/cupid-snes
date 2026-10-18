@@ -216,8 +216,13 @@ void Audio::CommitSamples() {
       if (!due && !channels_.NeedsStep() && pending + renderedClocks_ < batchClocks_)
         break;
       const auto capacity = batchClocks_ > renderedClocks_ ? batchClocks_ - renderedClocks_ : 0;
-      if (capacity || !due)
-        FlushSound(phaseClock_ + std::min(pending, capacity ? uint64_t(capacity) : pending));
+      if (capacity || !due) {
+        auto end = phaseClock_ + std::min(pending, capacity ? uint64_t(capacity) : pending);
+        const auto trigger = channels_.PendingTriggerClock();
+        if (trigger > phaseClock_)
+          end = std::min(end, trigger);
+        FlushSound(end);
+      }
     }
     if (due) {
       sampleCycles_ -= clockRate_;
@@ -230,8 +235,10 @@ void Audio::DividerEdge(bool rising, uint64_t clock) {
   if (clock > renderClock_ + 4)
     AdvanceTo((clock - 1) & ~uint64_t(3));
   FlushSound(clock > renderClock_ ? renderClock_ : clock);
+  const bool deferred = channels_.PendingTriggerClock() && clock > phaseClock_;
   channels_.DividerEdge(rising, clock);
-  AdvancePhase(clock);
+  if (!deferred)
+    AdvancePhase(clock);
   AdvanceTo(clock);
 }
 

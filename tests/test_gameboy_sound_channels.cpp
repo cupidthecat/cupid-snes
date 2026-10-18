@@ -310,6 +310,102 @@ void BatchedOutput() {
   Check(individual.edges == batched.edges,
         "Batched advancement preserves every DAC event and timestamp");
 }
+
+void RetriggerBetweenEnvelopeEdges() {
+  for (bool secondModel : {false, true})
+    for (unsigned channel : {0u, 1u, 3u}) {
+      System system(secondModel);
+      system.divider.Write(0xff04, 0);
+      system.sound.Write(0xff26, 0x80);
+      const uint16_t envelope = uint16_t(0xff12 + channel * 5);
+      const uint16_t trigger = uint16_t(0xff14 + channel * 5);
+      system.sound.Write(envelope, 0x61);
+      system.sound.Write(trigger, 0x80);
+      system.Step(57344);
+      system.sound.Write(trigger, 0x80);
+      system.Step(8192);
+      Check(system.sound.GetState().volumes[channel] == 6,
+            "Retriggering between envelope edges postpones the next volume step");
+    }
+}
+
+void NoiseRetriggerOutputLatch() {
+  for (bool secondModel : {false, true}) {
+    System system(secondModel);
+    system.divider.Write(0xff04, 0);
+    system.sound.Write(0xff26, 0x80);
+    system.sound.Write(0xff21, 0x61);
+    system.sound.Write(0xff22, 0);
+    system.sound.Write(0xff23, 0x80);
+    system.Step(128);
+    Check(system.sound.GetState().amplitudes[3] == 6,
+          "The selected noise phase has a high output before retriggering");
+    system.sound.Write(0xff23, 0x80);
+    Check(system.sound.GetState().amplitudes[3] == 6,
+          "Retrigger updates the output using the previous noise latch");
+    system.sound.Write(0xff21, 0x51);
+    Check(system.sound.GetState().amplitudes[3] == 0,
+          "A later envelope write uses the cleared noise latch after retriggering");
+  }
+}
+
+void PowerOnDuringHighDivider() {
+  for (bool secondModel : {false, true})
+    for (unsigned channel : {0u, 1u, 3u}) {
+      System system(secondModel);
+      system.divider.Write(0xff04, 0);
+      system.Step(4096);
+      system.sound.Write(0xff26, 0x80);
+      system.sound.Write(uint16_t(0xff12 + channel * 5), 0x61);
+      system.sound.Write(uint16_t(0xff14 + channel * 5), 0x80);
+      system.Step(65536);
+      Check(system.sound.GetState().volumes[channel] == 6,
+            "Power-on while DIV is high delays the first envelope step");
+      system.Step(4096);
+      Check(system.sound.GetState().volumes[channel] == 5,
+            "The envelope advances after the skipped startup divider edge");
+    }
+}
+
+void DelayedNoiseTriggerAcrossDivider() {
+  for (bool secondModel : {false, true}) {
+    System system(secondModel);
+    system.divider.Write(0xff04, 0);
+    system.sound.Write(0xff26, 0x80);
+    system.sound.Write(0xff21, 0x61);
+    system.sound.Write(0xff23, 0x80);
+    system.Step(65532);
+    system.sound.Write(0xff23, 0x80);
+    system.Step(4);
+    Check(system.sound.GetState().volumes[3] == 6,
+          "A delayed noise trigger clears the pending envelope clock immediately");
+    system.Step(8);
+    Check(system.sound.GetState().volumes[3] == 6,
+          "The delayed trigger restarts noise without an intervening volume step");
+  }
+}
+
+void SquareFrequencyWriteOnReload() {
+  for (bool secondModel : {false, true})
+    for (unsigned channel : {0u, 1u})
+      for (bool highByte : {false, true}) {
+        System system(secondModel);
+        const uint16_t base = uint16_t(0xff10 + channel * 5);
+        system.sound.Write(0xff26, 0x80);
+        system.sound.Write(uint16_t(base + 1), 0xc0);
+        system.sound.Write(uint16_t(base + 2), 0xf0);
+        system.sound.Write(uint16_t(base + 3), 0xc6);
+        system.sound.Write(uint16_t(base + 4), 0x87);
+        system.Step(240);
+        system.sound.Write(uint16_t(base + (highByte ? 4 : 3)), highByte ? 0 : 0x57);
+        system.Step(highByte ? 44400 : 3700);
+        Check(system.sound.GetState().amplitudes[channel] == 15,
+              "A frequency write on the reload edge replaces the newly loaded square countdown");
+        system.Step(highByte ? 7400 : 356);
+        Check(system.sound.GetState().amplitudes[channel] == 0,
+              "The square duty phase advances after the updated countdown expires");
+      }
+}
 } // namespace
 
 int main() {
@@ -322,6 +418,11 @@ int main() {
     WaveAccessAndRetrigger();
     DutyChangesWaitForAnAmplitudeUpdate();
     BatchedOutput();
+    RetriggerBetweenEnvelopeEdges();
+    NoiseRetriggerOutputLatch();
+    PowerOnDuringHighDivider();
+    DelayedNoiseTriggerAcrossDivider();
+    SquareFrequencyWriteOnReload();
     std::puts("Handheld sound register, oscillator and divider checks passed");
     return 0;
   } catch (const std::exception &error) {

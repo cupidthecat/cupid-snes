@@ -268,6 +268,41 @@ void ProcessorResetKeepsOutput() {
             "Processor resets preserve filter history and the pending native sample phase");
     }
 }
+
+void DelayedNoiseSampleBoundaries() {
+  constexpr std::array<std::array<uint64_t, 16>, 2> expected{
+      {{0xc7c78768e6c12325ull, 0xcfbd06f3a00b2ee9ull, 0xa58e454cbb4f2759ull, 0x09bdb21e61f56a21ull,
+        0x3f87a4ab58a88191ull, 0x513be52d4585341dull, 0x96af13ded2c8dce9ull, 0xb3f638095e5640c1ull,
+        0x5be19c3f3ba1d6e5ull, 0x6cf5323538d9d549ull, 0xf020d32de341e31dull, 0x76104600d9c4eeadull,
+        0x1ce713158fbde1edull, 0x4aeb184c600ef7fdull, 0x10563dc95282e779ull, 0x3abd7d591831ddc1ull},
+       {0x41f58baa118ed879ull, 0xdad1258444e06fd5ull, 0xada8bb4d70b04715ull, 0x8f83787aa120c5e9ull,
+        0x1c4faa7e9a721ebdull, 0xdac4b4c58ea1edf1ull, 0x572f418ddffc7319ull, 0x519ba0665fbc65e5ull,
+        0x9e55908023aa0279ull, 0x37312a5a56fb99d5ull, 0x0a08c02382cb7115ull, 0xebe37d50b33befe9ull,
+        0x78afaf54ac8d48bdull, 0x3724b99ba0bd17f1ull, 0xb38f4663f2179d19ull,
+        0xadfba53c71d78fe5ull}}};
+  for (unsigned model = 0; model < 2; ++model) {
+    unsigned fixture = 0;
+    for (unsigned before : {0u, 4096u})
+      for (unsigned trigger : {65520u, 65524u, 65528u, 65532u})
+        for (uint8_t polynomial : {uint8_t{0}, uint8_t{0x3f}}) {
+          System system(model != 0);
+          system.divider.Write(0xff04, 0);
+          system.Step(before);
+          system.audio.Write(0xff26, 0x80);
+          system.audio.Write(0xff24, 0x77);
+          system.audio.Write(0xff25, 0x88);
+          system.audio.Write(0xff21, 0x61);
+          system.audio.Write(0xff22, polynomial);
+          system.audio.Write(0xff23, 0x80);
+          system.Step(trigger);
+          system.audio.Write(0xff23, 0x80);
+          system.Step(32768);
+          Check(system.samples.size() == (before ? 799u : 767u) &&
+                    system.Digest() == expected[model][fixture++],
+                "Delayed noise triggers retain sample boundaries near divider edges");
+        }
+  }
+}
 } // namespace
 
 int main() {
@@ -281,6 +316,7 @@ int main() {
     BatchedAdvancement();
     MixerBeforeTrigger();
     ProcessorResetKeepsOutput();
+    DelayedNoiseSampleBoundaries();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {
