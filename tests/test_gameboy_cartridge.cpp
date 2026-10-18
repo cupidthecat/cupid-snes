@@ -264,6 +264,90 @@ void MotionAndEeprom() {
         "Erase-all restores every EEPROM byte and battery saves contain all 128 words");
 }
 
+void InfraredBankingAndBattery() {
+  Cartridge cartridge;
+  Check(cartridge.Load(Image(0xff, 128, 4)), "Load the generated infrared cartridge");
+  Check(cartridge.Read(0x4000) == 1 && cartridge.Read(0xa000) == 0xff,
+        "Infrared cartridges start on ROM bank one with RAM accessible");
+  cartridge.Write(0, 0);
+  Check(cartridge.Read(0x4000) == 0,
+        "The first bank-register write commits the reset zero-valued ROM selector");
+  cartridge.Write(0x2000, 0);
+  Check(cartridge.Read(0x4000) == 0, "The upper ROM window can select bank zero");
+  cartridge.Write(0x3000, 0xff);
+  Check(cartridge.Read(0x4000) == 63 && cartridge.Read(0) == 0,
+        "Six ROM bank bits select the upper window without banking the lower window");
+  for (unsigned bank = 0; bank < 8; ++bank) {
+    cartridge.Write(0x4000, uint8_t(bank));
+    cartridge.Write(0xa000, uint8_t(0x30 + bank));
+  }
+  cartridge.Write(0x4000, 0xf8);
+  Check(cartridge.Read(0xa000) == 0x30, "The RAM selector uses three bank bits");
+  cartridge.Write(0x6000, 1);
+  cartridge.Write(0, 0);
+  Check(cartridge.Read(0xa000) == 0x30 && cartridge.Read(0x4000) == 63,
+        "The unused mode register and ordinary RAM gate values leave banks connected");
+  cartridge.Write(0, 0x1e);
+  cartridge.Write(0xa000, 0x55);
+  Check(cartridge.Read(0xbfff) == 0xc0 && cartridge.InfraredOutput(),
+        "The infrared window mirrors status and sends the low written bit");
+  cartridge.Write(0, 0);
+  Check(cartridge.Read(0xa000) == 0x30 && cartridge.InfraredOutput(),
+        "Infrared writes preserve RAM and leaving sensor mode retains the transmitter latch");
+  const auto battery = cartridge.SaveBattery();
+  Check(battery.size() == 0x20000 && battery[0x10000] == 0xff,
+        "Battery storage retains the declared RAM size beyond the connected bank lines");
+  Cartridge restored;
+  Check(restored.Load(Image(0xff, 128, 4)), "Reload the generated infrared cartridge");
+  restored.LoadBattery(battery);
+  for (unsigned bank = 0; bank < 8; ++bank) {
+    restored.Write(0x4000, uint8_t(bank));
+    Check(restored.Read(0xa000) == 0x30 + bank,
+          "Battery reload preserves every connected RAM bank");
+  }
+  cartridge.Reset();
+  Check(!cartridge.InfraredOutput() && cartridge.Read(0x4000) == 1 &&
+            cartridge.Read(0xa000) == 0x30,
+        "Reset clears infrared and bank latches while preserving battery RAM");
+}
+
+void InfraredTiming() {
+  Cartridge cartridge;
+  Check(cartridge.Load(Image(0xff, 2, 0)), "Infrared operation does not require cartridge RAM");
+  cartridge.Write(0, 14);
+  cartridge.SetInfraredInput(true);
+  cartridge.Advance(10069);
+  Check(cartridge.Read(0xa000) == 0xc0, "A cold sensor waits through its warmup interval");
+  cartridge.Advance(1);
+  Check(cartridge.Read(0xa000) == 0xc1, "The cold sensor detects light at the threshold clock");
+  cartridge.SetInfraredInput(false);
+  cartridge.Advance(1);
+  Check(cartridge.Read(0xa000) == 0xc0, "Removing light clears detection on the next timing batch");
+  cartridge.Reset();
+  cartridge.Write(0, 0xfe);
+  cartridge.Advance(9950);
+  cartridge.Write(0xbfff, 3);
+  cartridge.Advance(119);
+  Check(cartridge.Read(0xa000) == 0xc0,
+        "A warmed sensor retains the shorter light detection delay");
+  cartridge.Advance(1);
+  Check(cartridge.Read(0xa000) == 0xc1 && cartridge.InfraredOutput(),
+        "The sensor detects its own transmitter after the warm detection interval");
+  cartridge.Advance(50000);
+  Check(cartridge.Read(0xa000) == 0xc1,
+        "Continuous light holds the sensor above its detection threshold");
+  cartridge.Write(0xa000, 2);
+  cartridge.Advance(1);
+  Check(!cartridge.InfraredOutput() && cartridge.Read(0xa000) == 0xc0,
+        "Clearing the output bit removes reflected light on the next timing batch");
+  cartridge.SetInfraredInput(true);
+  cartridge.Reset();
+  cartridge.Write(0, 14);
+  cartridge.Advance(10070);
+  Check(cartridge.Read(0xa000) == 0xc0 && !cartridge.InfraredOutput(),
+        "Reset clears incoming light, outgoing light, and the sensor charge");
+}
+
 void ClockPollingPhase() {
   unsigned polls = 0;
   Cartridge cartridge;
@@ -293,6 +377,8 @@ int main() {
     LockingMulticart();
     RtcAndBattery();
     MotionAndEeprom();
+    InfraredBankingAndBattery();
+    InfraredTiming();
     ClockPollingPhase();
     std::puts("Handheld cartridge banking, RAM, RTC and battery checks passed");
     return 0;

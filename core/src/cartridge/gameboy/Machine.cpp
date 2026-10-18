@@ -78,6 +78,7 @@ void Machine::Synchronize() {
 }
 
 void Machine::Flush(uint64_t target) {
+  const auto before = deviceClock_;
   while (deviceClock_ < target) {
     ++deviceClock_;
     if (decay_) {
@@ -88,9 +89,9 @@ void Machine::Flush(uint64_t target) {
     timer_.Advance(1);
     flags_ |= devices_.Advance(1);
     RunDma(1);
-    cartridge_.AdvanceRtc(1);
   }
   devices_.FinishAdvance();
+  cartridge_.Advance(unsigned(deviceClock_ - before));
 }
 
 void Machine::RequestInterrupt(uint8_t mask) {

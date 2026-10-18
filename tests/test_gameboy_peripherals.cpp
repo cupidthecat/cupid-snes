@@ -148,8 +148,9 @@ struct System final : Audio::Output {
         digest *= 1099511628211ull;
       }
   }
-  void Load(bool secondModel, const std::vector<uint8_t> &program) {
+  void Load(bool secondModel, const std::vector<uint8_t> &program, uint8_t cartridgeType = 0) {
     std::vector<uint8_t> rom(32768);
+    rom[0x147] = cartridgeType;
     std::copy(program.begin(), program.end(), rom.begin() + 0x200);
     std::array<uint8_t, 256> boot{};
     Check(machine.Load(rom, boot), "Generated cartridge and boot images load");
@@ -204,6 +205,25 @@ void StopAndWake() {
       }
 }
 
+void InfraredExecution() {
+  for (bool secondModel : {false, true}) {
+    System system;
+    system.Load(
+        secondModel,
+        {0x3e, 14, 0xea, 0, 0, 0x3e, 1, 0xea, 0, 0xa0, 0xfa, 0, 0xa0, 0xea, 0, 0xc1, 0xc3, 0x0a, 2},
+        0xff);
+    for (unsigned i = 0; i < 631; ++i) {
+      system.machine.RunInstruction();
+      Check(system.machine.CpuState().a != 0xc1,
+            "Instruction-driven infrared reads wait for the sensor charge threshold");
+    }
+    system.machine.RunInstruction();
+    Check(system.machine.CpuState().a == 0xc1 && system.machine.Clocks() == 10096 &&
+              system.machine.GameCartridge().InfraredOutput(),
+          "CPU bus batches clock the cartridge sensor while its own transmitter is active");
+  }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -224,6 +244,7 @@ void HostVideoAndReset() {
 int main() {
   try {
     StopAndWake();
+    InfraredExecution();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

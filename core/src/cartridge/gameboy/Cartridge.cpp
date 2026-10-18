@@ -107,9 +107,12 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *error) {
     mapper = Mapper::Mbc7;
     ram = battery = true;
     break;
+  case 0xff:
+    mapper = Mapper::Huc1;
+    ram = battery = true;
+    break;
   case 0xfc:
   case 0xfe:
-  case 0xff:
     if (error)
       *error = "Handheld cartridge controller is not supported";
     return false;
@@ -143,9 +146,11 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *error) {
 void Cartridge::Reset() {
   lowBank_ = mapper_ == Mapper::Mbc5 ? 1 : 0;
   highBank_ = ramBank_ = 0;
-  ramEnabled_ = mode_ = rtcMapped_ = rumble_ = false;
-  motionEnabled_ = false;
+  mode_ = rtcMapped_ = rumble_ = false;
+  ramEnabled_ = mapper_ == Mapper::Huc1;
+  motionEnabled_ = bankRegistersWritten_ = false;
   motion_.Reset();
+  infrared_.Reset();
   rtcClocks_ = 0;
   multicartRegisters_ = {};
   lastTime_ = Now();
@@ -169,6 +174,8 @@ unsigned Cartridge::RomBank(bool upper) const noexcept {
     return upper ? lowBank_ | (unsigned(highBank_) << 8) : 0;
   case Mapper::Mbc7:
     return upper ? lowBank_ : 0;
+  case Mapper::Huc1:
+    return upper ? (bankRegistersWritten_ ? lowBank_ : 1) : 0;
   case Mapper::Mmm01: {
     const auto &m = multicartRegisters_;
     if (!m.locked)
@@ -213,6 +220,8 @@ std::optional<uint8_t> Cartridge::Read(uint16_t address) {
     return ramEnabled_ && motionEnabled_ && address < 0xb000 ? motion_.Read(address) : 0xff;
   if (address < 0xa000 || address >= 0xc000 || !ramEnabled_)
     return std::nullopt;
+  if (mapper_ == Mapper::Huc1 && mode_)
+    return uint8_t(0xc0 | unsigned(infrared_.Detected()));
   if (clock_ && rtcMapped_) {
     if (ramBank_ >= rtc_.size())
       return std::nullopt;
@@ -280,6 +289,15 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
     case Mapper::Mmm01:
       WriteMulticart(address, value);
       break;
+    case Mapper::Huc1:
+      bankRegistersWritten_ = true;
+      if (address < 0x2000)
+        mode_ = (value & 15) == 14;
+      else if (address < 0x4000)
+        lowBank_ = value & 63;
+      else if (address < 0x6000)
+        ramBank_ = value & 7;
+      break;
     case Mapper::Mbc7:
       if (address < 0x2000)
         ramEnabled_ = value == 10;
@@ -300,6 +318,10 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
   }
   if (address < 0xa000 || address >= 0xc000 || !ramEnabled_)
     return;
+  if (mapper_ == Mapper::Huc1 && mode_) {
+    infrared_.SetOutput((value & 1) != 0);
+    return;
+  }
   if (clock_ && rtcMapped_) {
     if (ramBank_ < rtc_.size()) {
       rtc_[ramBank_] = value;
@@ -351,6 +373,16 @@ void Cartridge::WriteMulticart(uint16_t address, uint8_t value) noexcept {
 
 void Cartridge::SetClockRate(uint32_t clocksPerSecond) noexcept {
   rtcClockRate_ = std::max(clocksPerSecond, 32u);
+}
+
+void Cartridge::Advance(unsigned clocks) {
+  while (clocks) {
+    const auto batch = std::min(clocks, 64u);
+    if (mapper_ == Mapper::Huc1)
+      infrared_.Advance(batch, mode_);
+    AdvanceRtc(batch);
+    clocks -= batch;
+  }
 }
 
 void Cartridge::AdvanceRtc(unsigned clocks) {
