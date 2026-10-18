@@ -35,7 +35,7 @@ void Cartridge::SetTimeSource(TimeSource source) {
   timeSource_ = std::move(source);
 }
 
-bool Cartridge::Load(std::span<const uint8_t> image, std::string *error) {
+bool Cartridge::Load(std::span<const uint8_t> image, std::string *) {
   const size_t romSize = std::bit_ceil(std::max(image.size(), size_t(0x8000)));
   std::vector<uint8_t> program(romSize, 0xff);
   std::copy(image.begin(), image.end(), program.begin());
@@ -116,9 +116,9 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *error) {
     ram = battery = clock = true;
     break;
   case 0xfc:
-    if (error)
-      *error = "Handheld cartridge controller is not supported";
-    return false;
+    mapper = Mapper::Camera;
+    ram = battery = true;
+    break;
   default:
     break;
   }
@@ -147,13 +147,14 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *error) {
 }
 
 void Cartridge::Reset() {
-  lowBank_ = mapper_ == Mapper::Mbc5 ? 1 : 0;
+  lowBank_ = (mapper_ == Mapper::Mbc5 || mapper_ == Mapper::Camera) ? 1 : 0;
   highBank_ = ramBank_ = huc3Mode_ = 0;
   mode_ = rtcMapped_ = rumble_ = false;
   ramEnabled_ = mapper_ == Mapper::Huc1;
-  motionEnabled_ = bankRegistersWritten_ = false;
+  motionEnabled_ = bankRegistersWritten_ = cameraRegisters_ = false;
   motion_.Reset();
   infrared_.Reset();
+  camera_.Reset();
   rtcClocks_ = 0;
   multicartRegisters_ = {};
   lastTime_ = Now();
@@ -177,6 +178,7 @@ unsigned Cartridge::RomBank(bool upper) const noexcept {
   case Mapper::Mbc5:
     return upper ? lowBank_ | (unsigned(highBank_) << 8) : 0;
   case Mapper::Mbc7:
+  case Mapper::Camera:
     return upper ? lowBank_ : 0;
   case Mapper::Huc1:
   case Mapper::Huc3:
@@ -223,6 +225,8 @@ std::optional<uint8_t> Cartridge::Read(uint16_t address) {
   }
   if (mapper_ == Mapper::Mbc7 && address >= 0xa000 && address < 0xc000)
     return ramEnabled_ && motionEnabled_ && address < 0xb000 ? motion_.Read(address) : 0xff;
+  if (mapper_ == Mapper::Camera && address >= 0xa000 && address < 0xc000 && cameraRegisters_)
+    return camera_.Read(address);
   if (mapper_ == Mapper::Huc3 && address >= 0xa000 && address < 0xc000) {
     switch (huc3Mode_) {
     case 0xc:
@@ -235,7 +239,7 @@ std::optional<uint8_t> Cartridge::Read(uint16_t address) {
     default:
       return 1;
     }
-  } else if (address < 0xa000 || address >= 0xc000 || !ramEnabled_) {
+  } else if (address < 0xa000 || address >= 0xc000 || (!ramEnabled_ && mapper_ != Mapper::Camera)) {
     return std::nullopt;
   }
   if (mapper_ == Mapper::Huc1 && mode_)
@@ -251,6 +255,12 @@ std::optional<uint8_t> Cartridge::Read(uint16_t address) {
   }
   if (ram_.empty())
     return std::nullopt;
+  if (mapper_ == Mapper::Camera) {
+    if (camera_.Busy())
+      return 0;
+    if (ramBank_ == 0 && address >= 0xa100 && address < 0xaf00)
+      return camera_.ReadImage(uint16_t(address - 0xa100));
+  }
   const auto bank = RamBank();
   if (!bank)
     return 0xff;
@@ -327,6 +337,16 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
         ramBank_ = value & 15;
       }
       break;
+    case Mapper::Camera:
+      if (address < 0x2000)
+        ramEnabled_ = (value & 15) == 10;
+      else if (address < 0x4000)
+        lowBank_ = value;
+      else if (address < 0x6000) {
+        ramBank_ = value & 15;
+        cameraRegisters_ = (value & 16) != 0;
+      }
+      break;
     case Mapper::Mbc7:
       if (address < 0x2000)
         ramEnabled_ = value == 10;
@@ -344,6 +364,14 @@ void Cartridge::Write(uint16_t address, uint8_t value) {
     if (ramEnabled_ && motionEnabled_ && address < 0xb000)
       motion_.Write(address, value, ram_);
     return;
+  }
+  if (mapper_ == Mapper::Camera && address >= 0xa000 && address < 0xc000) {
+    if (cameraRegisters_) {
+      camera_.Write(address, value);
+      return;
+    }
+    if (camera_.Busy())
+      return;
   }
   if (mapper_ == Mapper::Huc3 && address >= 0xa000 && address < 0xc000) {
     if (huc3Mode_ == 0xb)
@@ -413,7 +441,21 @@ void Cartridge::SetClockRate(uint32_t clocksPerSecond) noexcept {
   rtcClockRate_ = std::max(clocksPerSecond, 32u);
 }
 
-void Cartridge::Advance(unsigned clocks) {
+void Cartridge::Advance(unsigned clocks, bool sleeping) {
+  while (clocks) {
+    const auto batch = std::min(clocks, 64u);
+    AdvanceCamera(batch, sleeping);
+    AdvanceClock(batch);
+    clocks -= batch;
+  }
+}
+
+void Cartridge::AdvanceCamera(unsigned clocks, bool sleeping) {
+  if (mapper_ == Mapper::Camera)
+    camera_.Advance(clocks, sleeping);
+}
+
+void Cartridge::AdvanceClock(unsigned clocks) {
   while (clocks) {
     const auto batch = std::min(clocks, 64u);
     if (mapper_ == Mapper::Huc1 || mapper_ == Mapper::Huc3)

@@ -1,6 +1,7 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Audio.cpp
+  src/cartridge/gameboy/Camera.cpp
   src/cartridge/gameboy/Cartridge.cpp
   src/cartridge/gameboy/ClockedIo.cpp
   src/cartridge/gameboy/Cpu.cpp

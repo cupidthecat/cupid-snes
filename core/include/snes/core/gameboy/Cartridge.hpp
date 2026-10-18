@@ -1,6 +1,7 @@
 // Handheld ROM banking, cartridge RAM, and battery-backed clock registers.
 #pragma once
 
+#include "snes/core/gameboy/Camera.hpp"
 #include "snes/core/gameboy/Huc3Clock.hpp"
 #include "snes/core/gameboy/Infrared.hpp"
 #include "snes/core/gameboy/MotionEeprom.hpp"
@@ -10,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace snes::core::gameboy {
@@ -24,7 +26,19 @@ public:
 
   void SetTimeSource(TimeSource source);
   void SetClockRate(uint32_t clocksPerSecond) noexcept;
-  void Advance(unsigned clocks);
+  void Advance(unsigned clocks, bool sleeping = false);
+  // Sensor clocks precede bus transfers; infrared and RTC clocks follow them.
+  void AdvanceCamera(unsigned clocks, bool sleeping);
+  void AdvanceClock(unsigned clocks);
+  bool SetCameraFrame(std::span<const uint8_t> pixels) {
+    return camera_.SetFrame(pixels);
+  }
+  void SetCameraEntropy(uint64_t seed, bool enabled) noexcept {
+    camera_.SetEntropy(seed, enabled);
+  }
+  void SetCameraNoiseSource(Camera::NoiseSource source) {
+    camera_.SetNoiseSource(std::move(source));
+  }
   void AdvanceRtc(unsigned clocks);
   void SetInfraredInput(bool on) noexcept {
     infrared_.SetInput(on);
@@ -46,7 +60,7 @@ public:
   }
 
 private:
-  enum class Mapper { None, Mbc1, Mbc2, Mbc3, Mbc5, Mbc7, Mmm01, Huc1, Huc3 };
+  enum class Mapper { None, Mbc1, Mbc2, Mbc3, Mbc5, Mbc7, Mmm01, Huc1, Huc3, Camera };
   struct Multicart {
     uint8_t romLow = 0, romMid = 0, romHigh = 0, romMask = 0;
     uint8_t ramLow = 0, ramHigh = 0, ramMask = 3;
@@ -54,6 +68,7 @@ private:
   } multicartRegisters_;
   MotionEeprom motion_;
   Infrared infrared_;
+  Camera camera_;
   Huc3Clock huc3Clock_;
   std::vector<uint8_t> rom_, ram_;
   Mapper mapper_ = Mapper::None;
@@ -65,7 +80,7 @@ private:
   bool ramEnabled_ = false, mode_ = false, rtcMapped_ = false;
   bool multicart_ = false, extendedMbc3_ = false;
   bool battery_ = false, clock_ = false, hasRumble_ = false, rumble_ = false;
-  bool motionEnabled_ = false, bankRegistersWritten_ = false;
+  bool motionEnabled_ = false, bankRegistersWritten_ = false, cameraRegisters_ = false;
 
   uint64_t Now() const;
   unsigned RomBank(bool upper) const noexcept;

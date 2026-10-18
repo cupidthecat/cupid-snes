@@ -78,20 +78,26 @@ void Machine::Synchronize() {
 }
 
 void Machine::Flush(uint64_t target) {
-  const auto before = deviceClock_;
-  while (deviceClock_ < target) {
-    ++deviceClock_;
-    if (decay_) {
-      decay_ = uint8_t(decay_ > 2 ? decay_ - 2 : 0);
-      if (decay_ == 0)
-        dataBus_ = 0xff;
+  do {
+    const unsigned clocks =
+        unsigned(std::min(target > deviceClock_ ? target - deviceClock_ : 0, uint64_t(64)));
+    const auto end = deviceClock_ + clocks;
+    cartridge_.AdvanceCamera(clocks, cpu_.GetState().halted || cpu_.GetState().stopped);
+    while (deviceClock_ < end) {
+      ++deviceClock_;
+      if (decay_) {
+        decay_ = uint8_t(decay_ > 2 ? decay_ - 2 : 0);
+        if (decay_ == 0)
+          dataBus_ = 0xff;
+      }
+      timer_.Advance(1);
+      flags_ |= devices_.Advance(1);
     }
-    timer_.Advance(1);
-    flags_ |= devices_.Advance(1);
-    RunDma(1);
-  }
-  devices_.FinishAdvance();
-  cartridge_.Advance(unsigned(deviceClock_ - before));
+    devices_.FinishAdvance();
+    if (clocks)
+      RunDma(clocks);
+    cartridge_.AdvanceClock(clocks);
+  } while (deviceClock_ < target);
 }
 
 void Machine::RequestInterrupt(uint8_t mask) {
@@ -242,6 +248,7 @@ void Machine::RunDma(unsigned clocks, bool force) {
     dmaClocks_ -= 4;
     if (dmaPosition_ == 0xff) {
       dmaPosition_ = 0;
+      break;
     } else if (dmaPosition_ == 0xa0) {
       dmaPosition_ = 0xa1;
     } else {

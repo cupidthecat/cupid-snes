@@ -188,6 +188,74 @@ void DmaAndContention() {
             system.devices.memory[0xfe9f] == uint8_t(0xb3 + 159 * 37),
         "DMA releases the bus after all 160 bytes and leaves source RAM intact");
 }
+
+void CameraSleepAndDma() {
+  for (bool stop : {false, true}) {
+    System system;
+    system.rom[0x147] = 0xfc;
+    system.rom[0x149] = 3;
+    system.Load({uint8_t(stop ? 0x10 : 0x76), 0, 0});
+    auto &machine = system.machine;
+    machine.WriteMemory(0xff00, 0x20);
+    machine.WriteMemory(0x4000, 0x10);
+    machine.WriteMemory(0xa001, 0x80);
+    machine.WriteMemory(0xa000, 1);
+    machine.AdvanceHardware(129792 - 32);
+    machine.RunInstruction();
+    Check(stop ? machine.CpuState().stopped : machine.CpuState().halted,
+          "The CPU enters sleep while capture is pending");
+    machine.AdvanceHardware(1000);
+    Check(machine.ReadMemory(0xa000) == 1, "HALT and STOP freeze the Camera capture clock");
+    if (stop) {
+      system.host.Write(0x6004, 0xfe);
+      machine.WriteMemory(0xff00, 0x20);
+    } else {
+      machine.WriteMemory(0xffff, 1);
+      machine.WriteMemory(0xff0f, 1);
+    }
+    machine.RunInstruction();
+    Check(!machine.CpuState().halted && !machine.CpuState().stopped,
+          "Controller input or an interrupt wakes the sleeping CPU");
+    machine.AdvanceHardware(64);
+    Check(machine.ReadMemory(0xa000) == 0, "Capture completes after the active clock resumes");
+  }
+
+  constexpr std::array<std::pair<unsigned, unsigned>, 12> boundaries = {{{1, 0},
+                                                                         {64, 0},
+                                                                         {65, 0},
+                                                                         {128, 0},
+                                                                         {129, 31},
+                                                                         {193, 47},
+                                                                         {257, 63},
+                                                                         {321, 79},
+                                                                         {385, 95},
+                                                                         {449, 111},
+                                                                         {577, 143},
+                                                                         {641, 159}}};
+  for (const auto [remaining, zeroBytes] : boundaries) {
+    System system;
+    system.rom[0x147] = 0xfc;
+    system.rom[0x149] = 3;
+    system.Load({0});
+    auto &machine = system.machine;
+    machine.WriteMemory(0x4000, 0x10);
+    machine.WriteMemory(0xa001, 0x80);
+    for (unsigned i = 6; i < 54; ++i)
+      machine.WriteMemory(uint16_t(0xa000 + i), 0xff);
+    machine.WriteMemory(0xa000, 1);
+    machine.AdvanceHardware(129792 - remaining);
+    machine.WriteMemory(0x4000, 0);
+    machine.WriteMemory(0xff46, 0xa1);
+    machine.AdvanceHardware(64);
+    Check(machine.ReadMemory(0xfe00) == 0,
+          "A memory read without new clocks preserves the DMA startup batch");
+    machine.AdvanceHardware(584);
+    for (unsigned i = 0; i < 160; ++i)
+      Check(system.devices.memory[0xfe00 + i] == (i < zeroBytes ? 0 : 0xff),
+            "DMA retains its startup batch and samples capture completion before each transfer "
+            "batch");
+  }
+}
 } // namespace
 
 int main() {
@@ -197,6 +265,7 @@ int main() {
     RegisterPhases();
     InterruptStackAndTimer();
     DmaAndContention();
+    CameraSleepAndDma();
     std::puts("Handheld CPU, memory, device timing and DMA checks passed");
     return 0;
   } catch (const std::exception &error) {
