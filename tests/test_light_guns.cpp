@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
 #include <array>
@@ -33,9 +34,9 @@ void ScopePackets() {
   input.trigger = true;
   input.offscreen = false;
   ports.SetLatch(true);
-  Check(ports.Read(1) == 1 && ports.Read(1) == 1, "Strobe holds first Scope bit");
+  Check(ports.Read(1) == 1 && ports.Read(1) == 0, "Scope shifts serial data while latch is high");
   ports.SetLatch(false);
-  Check(Packet(ports, 16) == 0x80ff, "Scope trigger packet");
+  Check(Packet(ports, 16) == 0x00ff, "A new packet keeps the held normal trigger locked");
   Latch(ports);
   Check(Packet(ports, 8) == 0, "Normal trigger is reported once per press");
   input.turbo = true;
@@ -45,29 +46,87 @@ void ScopePackets() {
   Check(Packet(ports, 8) == 0xa0, "Turbo repeats through strobes");
   input.turbo = false;
   Latch(ports);
-  Check(Packet(ports, 8) == 0x20, "Stopping turbo clears fire but retains reported turbo flag");
+  Check(Packet(ports, 8) == 0xa0, "Releasing the toggle button retains the turbo switch");
+  input.turbo = true;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0, "Stopping turbo clears its flag and keeps the held trigger locked");
+  input.turbo = false;
   input.trigger = false;
   Latch(ports);
+  Check(Packet(ports, 8) == 0, "Scope observes a released trigger at packet sampling");
   input.trigger = true;
-  input.offscreen = true;
   Latch(ports);
-  Check(Packet(ports, 8) == 0x82, "Next trigger refreshes turbo and offscreen flags");
+  Check(Packet(ports, 8) == 0x80, "A released normal trigger can fire again");
   input.trigger = false;
   input.offscreen = false;
   Latch(ports);
-  Check(Packet(ports, 8) == 2, "Offscreen flag persists without a shot");
+  Check(Packet(ports, 8) == 0, "Released buttons clear the next packet");
   input.cursor = true;
   input.pause = true;
   Latch(ports);
   Check(Packet(ports, 8) == 0x50, "Cursor and pause bits");
   Latch(ports);
-  Check(Packet(ports, 8) == 0, "Normal cursor and pause are one-shot");
+  Check(Packet(ports, 8) == 0x40, "Held cursor remains asserted while pause stays locked");
   for (unsigned i = 0; i < 1000; ++i)
     Check(ports.Read(1) == 1, "Scope reads saturate");
   ports.Reset();
   input = {};
   Latch(ports);
   Check(Packet(ports, 8) == 0, "Reset retains device but clears packet state");
+}
+
+void ScopeReadBoundaries() {
+  for (unsigned port : {0u, 1u}) {
+    ControllerPorts ports;
+    LightGunState input;
+    ports.Configure(port, ControllerDevice::SuperScope);
+    ports.SetGunCallback([&](int, int) { return input; });
+    ports.SetLatch(true);
+    input.trigger = input.cursor = input.pause = true;
+    Check(Packet(ports, 8, port) == 0xd0,
+          "Scope samples changed buttons on its first read after the latch edge");
+    input = {};
+    Check(ports.Read(port) == 1, "Scope retains its completed packet until a latch transition");
+    ports.SetLatch(true);
+    Check(ports.Read(port) == 1, "A repeated high latch does not restart Scope serial reads");
+    ports.SetLatch(false);
+    Check(ports.Read(port) == 0, "A falling latch restarts Scope serial reads");
+    input.cursor = true;
+    Check(Packet(ports, 7, port) == 0, "Scope retains buttons captured by the first bit");
+    ports.SetLatch(true);
+    Check(Packet(ports, 8, port) == 0x40, "A rising latch also starts a fresh Scope packet");
+  }
+}
+
+void ScopeTurboSampling() {
+  ControllerPorts ports;
+  LightGunState input;
+  ports.Configure(1, ControllerDevice::SuperScope);
+  ports.SetGunCallback([&](int, int) { return input; });
+  input.turbo = true;
+  Latch(ports);
+  input.turbo = false;
+  Check(Packet(ports, 8) == 0, "An unobserved turbo press cannot change the switch");
+  input.turbo = true;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x20, "The first serial read toggles the Scope switch");
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x20, "A held toggle button changes the switch only once");
+  input.turbo = false;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x20, "The switch retains its position after button release");
+  input.turbo = true;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0, "A second observed toggle press turns turbo off");
+  input.turbo = false;
+  Latch(ports);
+  input.turbo = true;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0, "Latch edges cannot observe a released toggle button");
+  ports.Reset();
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x20,
+        "Reset reconstructs the Scope switch before its first observed button press");
 }
 
 void JustifierPackets() {
@@ -146,13 +205,14 @@ struct Input : IInputProvider {
     return guns[gun];
   }
 };
-std::unique_ptr<Emulator> Machine(Input &input) {
+std::unique_ptr<Emulator> Machine(Input &input, bool pal = false) {
   std::vector<uint8_t> rom(0x8000, 0);
   std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
   rom[0] = 0xdb;
   rom[0x7fc0] = 'T';
   rom[0x7fd5] = 0x20;
   rom[0x7fd7] = 5;
+  rom[0x7fd9] = pal ? 2 : 1;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
   auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
@@ -165,9 +225,8 @@ unsigned Counter(MemoryBus &bus, unsigned address) {
   return lo | ((bus.Read(address) & 1) << 8);
 }
 
-void BeamLatches() {
-  for (auto device : {ControllerDevice::SuperScope, ControllerDevice::Justifier,
-                      ControllerDevice::Justifiers, ControllerDevice::MacsRifle}) {
+void RifleBeamLatches() {
+  for (auto device : {ControllerDevice::MacsRifle}) {
     Input input;
     input.guns[0].x = 32;
     input.guns[0].y = 10;
@@ -181,8 +240,8 @@ void BeamLatches() {
     auto &bus = emu->GetBus();
     ports.Configure(1, device);
     ports.PollLightGuns();
-    const unsigned h = device == ControllerDevice::MacsRifle ? 108 : 72;
-    const unsigned v = device == ControllerDevice::MacsRifle ? 52 : 11;
+    const unsigned h = 108;
+    const unsigned v = 52;
     emu->GetTiming().Tick(v * 1364 + (h - 1) * 4);
     Check((bus.Read(0x213f) & 0x40) == 0, "Counter does not latch before beam arrival");
     emu->GetTiming().Tick(6);
@@ -227,20 +286,20 @@ void GunSelectionAndPorts() {
   });
   ports.Configure(1, ControllerDevice::Justifiers);
   Latch(ports);
-  ports.BeamPosition(90, 6, 224);
-  Check(hits == 1 && h == 90, "Second gun selected after first strobe");
+  ports.LatchLightGuns();
+  Check(hits == 1 && h == 50, "Second gun selected after first strobe");
   ports.FrameBegin();
   Latch(ports);
-  ports.BeamPosition(50, 6, 224);
-  Check(hits == 2 && h == 50, "First gun selected after second strobe");
+  ports.LatchLightGuns();
+  Check(hits == 2 && h == 10, "First gun selected after second strobe");
   ports.Configure(1, ControllerDevice::Justifier);
   Latch(ports);
-  ports.BeamPosition(90, 6, 224);
+  ports.LatchLightGuns();
   Check(hits == 2, "Missing second gun does not latch");
   ports.Configure(1, ControllerDevice::None);
   ports.Configure(0, ControllerDevice::Justifier);
   Latch(ports);
-  ports.BeamPosition(90, 6, 224);
+  ports.LatchLightGuns();
   Check(hits == 2 && Packet(ports, 32, 0) == 0x000e5508,
         "Port 1 has serial data but no PPU latch wire");
 }
@@ -260,58 +319,122 @@ void AutomaticPolling() {
   Check((bus.Read(0x4017) & 1) == 1, "Manual reader continues after automatic clocks");
 }
 
-void ScopeBeamAfterRead() {
+void ScopeAimAndOffscreen() {
   ControllerPorts ports;
   LightGunState input;
   input.x = 50;
   input.y = 20;
   input.offscreen = false;
-  input.trigger = true;
   ports.Configure(1, ControllerDevice::SuperScope);
   ports.SetGunCallback([&](int, int) { return input; });
   unsigned hits = 0;
   ports.SetGunLatchCallback([&](uint16_t, uint16_t) { ++hits; });
+  ports.LatchLightGuns();
+  Check(hits == 1, "Scope latches aim without a button press");
+  ports.SetPio(0x7f);
+  ports.LatchLightGuns();
+  Check(hits == 2, "Scope frame latching is independent of WRIO input gating");
+  ports.BeamPosition(90, 21, 224);
+  Check(hits == 2 && ports.IoBits() == 0xff, "Scope does not emit an optical raster pulse");
+  input.trigger = input.cursor = true;
   Latch(ports);
-  Check(Packet(ports, 8) == 0x80, "Read shot before the beam arrives");
-  ports.BeamPosition(89, 21, 224);
-  Check(hits == 0, "Beam waits for the aimed dot");
-  ports.BeamPosition(90, 21, 224);
-  Check(hits == 1, "Consuming the shot packet retains its beam latch");
-  ports.BeamPosition(90, 21, 224);
-  Check(hits == 1, "One optical pulse per field");
-  ports.FrameBegin();
-  ports.PollLightGuns();
-  ports.BeamPosition(90, 21, 224);
-  Check(hits == 1, "Held normal trigger does not rearm next field");
+  Check(Packet(ports, 8) == 0xc0, "Scope button sampling is independent of frame aim sampling");
+  input.offscreen = true;
+  ports.LatchLightGuns();
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x42, "Offscreen Scope preserves cursor and suppresses trigger");
+  input.trigger = false;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x42, "Offscreen status refreshes without a shot");
+  input.trigger = true;
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x42, "An offscreen press still locks the normal trigger");
+  input.offscreen = false;
+  ports.LatchLightGuns();
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x40, "Moving onscreen does not retrigger a held normal shot");
   input.turbo = true;
-  ports.PollLightGuns();
-  ports.BeamPosition(91, 21, 224);
-  Check(hits == 1, "A shot armed after its dot cannot latch retroactively");
-  ports.FrameBegin();
-  ports.PollLightGuns();
-  ports.BeamPosition(90, 21, 224);
-  Check(hits == 2, "Turbo rearms on a following field");
+  Latch(ports);
+  Check(Packet(ports, 8) == 0xe0, "Turbo allows a held trigger to fire again");
   for (auto position :
-       {std::pair{-1, 20}, std::pair{256, 20}, std::pair{50, -1}, std::pair{50, 224}}) {
+       {std::pair{-1, 20}, std::pair{256, 20}, std::pair{50, -1}, std::pair{50, 225}}) {
     input.x = position.first;
     input.y = position.second;
-    ports.FrameBegin();
-    ports.PollLightGuns();
-    ports.BeamPosition(uint16_t(input.x + 40), uint16_t(input.y + 1), 224);
-    Check(hits == 2, "Out-of-range coordinates cannot latch");
+    const unsigned before = hits;
+    ports.LatchLightGuns();
+    Latch(ports);
+    Check(hits == before && Packet(ports, 8) == 0x62,
+          "Out-of-range Scope coordinates suppress even a turbo shot");
+  }
+  input.x = 255;
+  for (unsigned vdisp : {225u, 240u}) {
+    ports.SetVDisp(vdisp);
+    input.y = vdisp - 1;
+    const unsigned before = hits;
+    ports.LatchLightGuns();
+    Latch(ports);
+    Check(hits == before + 1 && Packet(ports, 8) == 0xe0,
+          "Scope accepts the last coordinate before VBlank in either display height");
+  }
+  ports.SetVDisp(225);
+  Latch(ports);
+  Check(Packet(ports, 8) == 0x62,
+        "A display-height change updates Scope offscreen status before the next frame latch");
+}
+
+void FrameEventLatches() {
+  for (bool pal : {false, true}) {
+    for (bool overscan : {false, true}) {
+      for (auto device : {ControllerDevice::SuperScope, ControllerDevice::Justifier,
+                          ControllerDevice::Justifiers}) {
+        for (bool pioHigh : {false, true}) {
+          Input input;
+          input.guns[0].x = 32;
+          input.guns[0].y = 10;
+          input.guns[0].offscreen = false;
+          auto machine = Machine(input, pal);
+          auto &bus = machine->GetBus();
+          machine->GetAutoJoypad().Ports().Configure(1, device);
+          for (bool warm : {false, true}) {
+            if (warm)
+              Check(machine->Reset(), "Light-gun console resets");
+            bus.Write(0x2133, overscan ? 4 : 0);
+            bus.Write(0x4201, pioHigh ? 0xff : 0x7f);
+            bus.Read(0x213f);
+            while (machine->GetTiming().VCounter() < 200)
+              machine->GetCpu()->Step();
+            Check(Counter(bus, 0x213c) == 0 && Counter(bus, 0x213d) == 0,
+                  "Scope and Justifier aim does not latch during the visible raster");
+            machine->StepFrame();
+            Check(machine->GetTiming().VCounter() == (overscan ? 240 : 225) &&
+                      machine->GetTiming().HCounter() == 0,
+                  "Light-gun test stops at the display event");
+            bus.Read(0x213f);
+            Check(
+                Counter(bus, 0x213c) == 32 && Counter(bus, 0x213d) == 10,
+                "The display event captures direct aim coordinates without firing or WRIO gating");
+            Check((bus.Read(0x4213) & 0x80) == (pioHigh ? 0x80 : 0),
+                  "Frame-event gun latching does not pulse the I/O pin");
+          }
+        }
+      }
+    }
   }
 }
 } // namespace
 int main() {
   try {
     ScopePackets();
+    ScopeReadBoundaries();
+    ScopeTurboSampling();
     JustifierPackets();
     JustifierReadBoundaries();
     RiflePackets();
-    BeamLatches();
+    RifleBeamLatches();
     GunSelectionAndPorts();
     AutomaticPolling();
-    ScopeBeamAfterRead();
+    ScopeAimAndOffscreen();
+    FrameEventLatches();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

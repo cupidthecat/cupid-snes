@@ -47,6 +47,11 @@ public:
     gunLatch_ = std::move(callback);
   }
   void PollLightGuns();
+  /// Capture port-two aim at the display-frame event.
+  void LatchLightGuns();
+  void SetVDisp(uint16_t vdisp) {
+    vdisp_ = vdisp;
+  }
   void FrameBegin();
   void BeamPosition(uint16_t h, uint16_t v, uint16_t visibleLines);
   uint8_t IoBits() const {
@@ -67,10 +72,11 @@ private:
     uint32_t mousePacket = 0x00010000;
     uint8_t sensitivity = 0;
     std::array<LightGunState, 2> guns{};
-    uint8_t scopePending = 0, scopePacket = 0;
+    uint8_t scopePacket = 0;
     uint8_t justifierPacket = 0;
     bool selectSecond = false;
-    bool scopeBeamArmed = false;
+    bool scopeTriggerLock = false, scopePauseLock = false;
+    bool scopeTurbo = false, scopeTurboPressed = false;
   };
   std::array<Port, 2> ports_{{Port{ControllerDevice::Gamepad, {0, -1, -1, -1}},
                               Port{ControllerDevice::Gamepad, {1, -1, -1, -1}}}};
@@ -81,6 +87,7 @@ private:
   bool beamFired_ = false, beamPulse_ = false;
   bool latch_ = false;
   uint8_t pio_ = 0xff;
+  uint16_t vdisp_ = 225;
 };
 
 } // namespace snes::core

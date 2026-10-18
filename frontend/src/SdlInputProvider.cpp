@@ -145,10 +145,6 @@ snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint
   };
   if (lastGunFrame_ != frameIndex) {
     lastGunFrame_ = frameIndex;
-    const bool turbo = pressed(SDL_SCANCODE_T);
-    if (turbo && !turboKeyDown_)
-      scopeTurbo_ = !scopeTurbo_;
-    turboKeyDown_ = turbo;
     secondGunX_ = std::clamp(
         secondGunX_ + 3 * (int(pressed(SDL_SCANCODE_L)) - int(pressed(SDL_SCANCODE_J))), 0, 255);
     secondGunY_ =
@@ -164,7 +160,7 @@ snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint
     state.cursor = (buttons & SDL_BUTTON_RMASK) != 0;
     state.start = pressed(SDL_SCANCODE_RETURN);
     state.pause = pressed(SDL_SCANCODE_P);
-    state.turbo = scopeTurbo_;
+    state.turbo = pressed(SDL_SCANCODE_T);
     state.offscreen |= pressed(SDL_SCANCODE_O);
   } else {
     state.x = secondGunX_;

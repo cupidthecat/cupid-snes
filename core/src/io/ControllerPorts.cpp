@@ -10,13 +10,13 @@ namespace snes::core {
 void ControllerPorts::Reset() {
   latch_ = false;
   pio_ = 0xff;
+  vdisp_ = 225;
   FrameBegin();
-  for (auto &port : ports_) {
+  for (unsigned index = 0; index < ports_.size(); ++index) {
+    const auto &port = ports_[index];
     const auto device = port.device;
     const auto players = port.players;
-    port = {};
-    port.device = device;
-    port.players = players;
+    Configure(index, device, players);
   }
 }
 
@@ -37,6 +37,15 @@ void ControllerPorts::Configure(unsigned port, ControllerDevice device,
   ports_[port] = {};
   ports_[port].device = device;
   ports_[port].players = players;
+  if (IsLightGun(device) && device != ControllerDevice::MacsRifle) {
+    auto &guns = ports_[port].guns;
+    guns[0].x = device == ControllerDevice::Justifiers ? 112 : 128;
+    guns[0].y = 120;
+    guns[0].offscreen = false;
+    guns[1].x = device == ControllerDevice::Justifiers ? 144 : -1;
+    guns[1].y = device == ControllerDevice::Justifiers ? 120 : -1;
+    guns[1].offscreen = device != ControllerDevice::Justifiers;
+  }
   if (port == 1)
     FrameBegin();
 }
@@ -44,57 +53,42 @@ void ControllerPorts::Configure(unsigned port, ControllerDevice device,
 void ControllerPorts::FrameBegin() {
   beamFired_ = false;
   beamPulse_ = false;
-  for (auto &port : ports_)
-    port.scopeBeamArmed = false;
 }
 
 void ControllerPorts::PollLightGuns() {
   for (unsigned index = 0; index < ports_.size(); ++index) {
     auto &port = ports_[index];
-    if (!IsLightGun(port.device))
+    if (port.device != ControllerDevice::MacsRifle)
       continue;
-    for (unsigned gun = 0; gun < (port.device == ControllerDevice::Justifiers ? 2u : 1u); ++gun) {
-      const auto previous = port.guns[gun];
-      const auto state = gunInput_ ? gunInput_(index, gun) : LightGunState{};
-      port.guns[gun] = state;
-      if (port.device != ControllerDevice::SuperScope)
-        continue;
-      if (!state.trigger || (previous.turbo && !state.turbo))
-        port.scopePending &= ~0x80;
-      if (!state.cursor || (previous.turbo && !state.turbo))
-        port.scopePending &= ~0x40;
-      if (!state.pause)
-        port.scopePending &= ~0x10;
-      if (state.trigger && (!previous.trigger || state.turbo))
-        port.scopePending |= 0x80;
-      if (state.cursor && (!previous.cursor || state.turbo))
-        port.scopePending |= 0x40;
-      if (state.pause && !previous.pause)
-        port.scopePending |= 0x10;
-      if (port.scopePending & 0xc0)
-        port.scopeBeamArmed = true;
-    }
+    port.guns[0] = gunInput_ ? gunInput_(index, 0) : LightGunState{};
   }
+}
+
+void ControllerPorts::LatchLightGuns() {
+  auto &port = ports_[1];
+  if (!IsLightGun(port.device) || port.device == ControllerDevice::MacsRifle)
+    return;
+  const unsigned gun = port.device == ControllerDevice::Justifiers && port.selectSecond ? 1 : 0;
+  if (port.device == ControllerDevice::Justifier && port.selectSecond)
+    return;
+  auto &state = port.guns[gun];
+  if (gunInput_)
+    state = gunInput_(1, gun);
+  if (!state.offscreen && state.x >= 0 && state.x < 256 && state.y >= 0 && state.y < vdisp_ &&
+      gunLatch_)
+    gunLatch_(uint16_t(state.x), uint16_t(state.y));
 }
 
 void ControllerPorts::BeamPosition(uint16_t h, uint16_t v, uint16_t visibleLines) {
   beamPulse_ = false;
   const auto &port = ports_[1];
-  if (!IsLightGun(port.device) || beamFired_)
+  if (port.device != ControllerDevice::MacsRifle || beamFired_)
     return;
-  unsigned gun = 0;
-  if (port.device == ControllerDevice::SuperScope && !port.scopeBeamArmed)
-    return;
-  if (port.device == ControllerDevice::Justifier && port.selectSecond)
-    return;
-  if (port.device == ControllerDevice::Justifiers)
-    gun = unsigned(port.selectSecond);
-  const auto &state = port.guns[gun];
+  const auto &state = port.guns[0];
   if (state.offscreen || state.x < 0 || state.x >= 256 || state.y < 0 || state.y >= visibleLines)
     return;
-  const bool rifle = port.device == ControllerDevice::MacsRifle;
-  const auto targetH = uint16_t(state.x + (rifle ? 76 : 40));
-  const auto targetV = uint16_t(state.y + (rifle ? 42 : 1));
+  const auto targetH = uint16_t(state.x + 76);
+  const auto targetV = uint16_t(state.y + 42);
   if (v != targetV || h != targetH)
     return;
   beamFired_ = true;
@@ -133,16 +127,6 @@ void ControllerPorts::SetLatch(bool high) {
                  port.device == ControllerDevice::Justifiers) {
         if (!high)
           port.selectSecond = !port.selectSecond;
-      } else if (!high) {
-        continue;
-      } else if (port.device == ControllerDevice::SuperScope) {
-        const auto &gun = port.guns[0];
-        if (port.scopePending & 0x80)
-          port.scopePending = uint8_t((port.scopePending & ~0x20) | (gun.turbo ? 0x20 : 0));
-        if (port.scopePending & 0xc0)
-          port.scopePending = uint8_t((port.scopePending & ~2) | (gun.offscreen ? 2 : 0));
-        port.scopePacket = port.scopePending;
-        port.scopePending &= uint8_t(~(gun.turbo ? 0x10 : 0xd0));
       }
     }
   }
@@ -162,8 +146,6 @@ uint8_t ControllerPorts::Read(unsigned index) {
     return port.guns[0].trigger ? 1 : 0;
   }
   if (latch_) {
-    if (port.device == ControllerDevice::SuperScope)
-      return port.scopePacket >> 7;
     if (port.device == ControllerDevice::Multitap)
       return 2;
     if (port.device == ControllerDevice::Mouse) {
@@ -183,6 +165,22 @@ uint8_t ControllerPorts::Read(unsigned index) {
   auto &position = port.positions[pair];
   uint8_t data = 0;
   if (port.device == ControllerDevice::SuperScope) {
+    if (position == 0) {
+      const auto buttons = gunInput_ ? gunInput_(index, 0) : port.guns[0];
+      const auto &aim = port.guns[0];
+      const bool offscreen =
+          aim.offscreen || aim.x < 0 || aim.x >= 256 || aim.y < 0 || aim.y >= vdisp_;
+      if (buttons.turbo && !port.scopeTurboPressed)
+        port.scopeTurbo = !port.scopeTurbo;
+      port.scopeTurboPressed = buttons.turbo;
+      const bool trigger = buttons.trigger && (port.scopeTurbo || !port.scopeTriggerLock);
+      const bool pause = buttons.pause && !port.scopePauseLock;
+      port.scopeTriggerLock = buttons.trigger;
+      port.scopePauseLock = buttons.pause;
+      port.scopePacket =
+          uint8_t((trigger && !offscreen ? 0x80 : 0) | (buttons.cursor ? 0x40 : 0) |
+                  (port.scopeTurbo ? 0x20 : 0) | (pause ? 0x10 : 0) | (offscreen ? 2 : 0));
+    }
     data = position < 8 ? (port.scopePacket >> (7 - position)) & 1 : 1;
   } else if (port.device == ControllerDevice::Justifier ||
              port.device == ControllerDevice::Justifiers) {

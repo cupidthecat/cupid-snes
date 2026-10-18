@@ -406,7 +406,10 @@ void Emulator::InitSubsystems() {
       [this]() { ppu_.LatchCounters(timing_.HDot(), timing_.VCounter()); });
 
   // SETINI changes the VBlank boundary used by rendering, DMA and CPU I/O.
-  ppu_.SetVDispCallback([this](uint16_t vdisp) { timing_.SetVDisp(vdisp); });
+  ppu_.SetVDispCallback([this](uint16_t vdisp) {
+    timing_.SetVDisp(vdisp);
+    autoJoypad_.Ports().SetVDisp(vdisp);
+  });
 
   // HVBJOY ($4212) timing query
   cpuIo_.SetTimingQueryCallback([this]() -> TimingQuery {
@@ -460,6 +463,7 @@ void Emulator::InitSubsystems() {
 
   // VBlank start (V = VDisp)
   timing_.onVBlankBegin = [this]() {
+    autoJoypad_.Ports().LatchLightGuns();
     ppu_.VBlankBegin();
     SynchronizeDevices();
     if (execution_ && execution_->Running() && !singleInstruction_)
