@@ -20,12 +20,14 @@ void Video::Reset(bool secondModel) {
   scrollDiscard_ = 0;
   scrollLatched_ = false;
   windowFine_ = 0;
-  leftWindowScan_ = leftWindowExtra_ = false;
+  leftWindowScan_ = leftWindowExtra_ = leftWindowPending_ = false;
   objectCount_ = objectStall_ = fetchingObject_ = windowLine_ = windowStall_ = 0;
+  backgroundResume_ = 0;
   lastObjectX_ = -1;
   warm_ = true;
   coincidence_ = irqLine_ = stopped_ = false;
   windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
+  windowWrite_ = windowChanged_ = false;
   secondModel_ = secondModel;
 }
 
@@ -67,8 +69,6 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
       dot_ = transferClocks_ = hblankDot_ = 0;
       line_ = ly_ = mode_ = blocked_ = 0;
       irqMode_ = 0xff;
-      comparisonLine_ = -1;
-      coincidence_ = irqLine_ = false;
       warm_ = true;
       fifoHead_ = fifoSize_ = objectCount_ = objectStall_ = 0;
       windowLine_ = 0;
@@ -79,6 +79,8 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
   }
   if (reg == 5)
     CompareLine(comparisonLine_);
+  if (reg == 11)
+    windowChanged_ = windowWrite_ && previous != value;
   return UpdateInterrupt();
 }
 
@@ -88,6 +90,8 @@ void Video::CompareLine(int line) {
 }
 
 uint8_t Video::UpdateInterrupt() {
+  if (!(registers_[0] & 0x80))
+    return 0;
   const auto enabled = registers_[1];
   bool active = comparisonLine_ >= 0 && comparisonLine_ == registers_[5] && (enabled & 0x40);
   if (irqMode_ == 0)
@@ -100,7 +104,6 @@ uint8_t Video::UpdateInterrupt() {
     active |= enabled & 0x28;
   if (irqMode_ == 5)
     active |= enabled & 0x30;
-  active &= (registers_[0] & 0x80) != 0;
   const bool rising = active && !irqLine_;
   irqLine_ = active;
   return rising ? 2 : 0;
@@ -229,8 +232,9 @@ void Video::BeginTransfer() {
   scrollFine_ = registers_[3] & 7;
   scrollLatched_ = false;
   windowFine_ = 0;
-  leftWindowScan_ = leftWindowExtra_ = false;
+  leftWindowScan_ = leftWindowExtra_ = leftWindowPending_ = false;
   x_ = objectStall_ = windowStall_ = 0;
+  backgroundResume_ = 0;
   lastObjectX_ = -1;
   windowReached_ |= line_ == registers_[10];
   windowActive_ = lateWindow_ && (registers_[0] & 0x21) == 0x21;
@@ -282,10 +286,12 @@ void Video::FetchBackground() {
 }
 
 bool Video::StartWindow(int fine) {
-  if (windowActive_ || !windowReached_ || (registers_[0] & 0x21) != 0x21 || registers_[11] >= 166 ||
-      x_ < std::max(0, int(registers_[11]) - 7))
+  if (windowChanged_ || windowActive_ || !windowReached_ || (registers_[0] & 0x21) != 0x21 ||
+      registers_[11] >= 166 || (registers_[11] == 0 && !leftWindowPending_) ||
+      x_ != std::max(0, int(registers_[11]) - 7))
     return false;
   windowActive_ = windowUsed_ = true;
+  backgroundResume_ = 0;
   const unsigned clip =
       fine >= 0 ? unsigned(8 + fine - (fine == 7)) : unsigned(std::max(0, 7 - int(registers_[11])));
   fifoHead_ = fifoSize_ = 0;
@@ -310,7 +316,7 @@ bool Video::StartObject() {
   unsigned choice = objectCount_;
   for (unsigned i = 0; i < objectCount_; ++i) {
     const auto &object = objects_[i];
-    if (object.fetched || object.x >= 168 || int(object.x) - 8 > x_)
+    if (object.fetched || object.x >= 168 || std::max(0, int(object.x) - 8) != x_)
       continue;
     if (choice == objectCount_ || object.x < objects_[choice].x ||
         (object.x == objects_[choice].x && object.index < objects_[choice].index))
@@ -322,8 +328,11 @@ bool Video::StartObject() {
   object.fetched = true;
   fetchingObject_ = uint8_t(choice);
   const unsigned phase =
-      (windowActive_ ? object.x + 7 - registers_[11] : object.x + registers_[3]) & 7;
-  const unsigned align = int(object.x) == lastObjectX_ ? 0 : phase < 5 ? 5 - phase : 0;
+      (windowActive_ ? object.x + 7 - registers_[11] : object.x + scrollFine_) & 7;
+  const unsigned align = int(object.x) == lastObjectX_ ? 0
+                         : object.x == 0               ? 5
+                         : phase < 5                   ? 5 - phase
+                                                       : 0;
   lastObjectX_ = object.x;
   objectStall_ = uint8_t(6 + align);
   FetchObject();
@@ -332,21 +341,22 @@ bool Video::StartObject() {
 
 void Video::FetchObject() {
   auto &object = objects_[fetchingObject_];
-  if (objectStall_ == 6) {
+  if (objectStall_ == 5) {
     object.flags = oam_[object.index * 4 + 3];
-    unsigned tile = oam_[object.index * 4 + 2];
+    object.address = uint16_t(oam_[object.index * 4 + 2] * 16);
+  }
+  if (objectStall_ == 3 || objectStall_ == 1) {
     const unsigned height = registers_[0] & 4 ? 16 : 8;
     unsigned row = uint8_t(line_ + 16 - object.y) & (height - 1);
     if (object.flags & 0x40)
       row = height - 1 - row;
-    if (height == 16)
-      tile &= 0xfe;
-    object.address = uint16_t(tile * 16 + row * 2);
+    const unsigned base = height == 16 ? object.address & ~16u : object.address;
+    const auto value = vram_[base + row * 2 + (objectStall_ == 1 ? 1 : 0)];
+    if (objectStall_ == 3)
+      object.low = value;
+    else
+      object.high = value;
   }
-  if (objectStall_ == 4)
-    object.low = vram_[object.address];
-  if (objectStall_ == 2)
-    object.high = vram_[object.address + 1];
   if (objectStall_ == 0) {
     for (unsigned x = 0; x < 8; ++x) {
       const auto bit = object.flags & 0x20 ? x : 7 - x;
@@ -381,13 +391,18 @@ uint8_t Video::Shade(uint8_t background) const {
 void Video::Transfer() {
   ++transferClocks_;
   if (objectStall_) {
+    if (objectStall_ > 6)
+      FetchBackground();
     --objectStall_;
     FetchObject();
     if (objectStall_)
       return;
+    backgroundResume_ = windowActive_ ? 0 : 3;
   }
   const bool leftWindow =
       !windowActive_ && windowReached_ && registers_[11] == 0 && (registers_[0] & 0x21) == 0x21;
+  if (transferClocks_ == 5)
+    leftWindowPending_ = leftWindow;
   if (transferClocks_ == 5 && leftWindow && (registers_[3] & 7)) {
     leftWindowScan_ = true;
     scrollLatched_ = true;
@@ -404,7 +419,9 @@ void Video::Transfer() {
     }
     scrollDiscard_ = fine_;
   }
-  if (transferClocks_ > 3)
+  if (backgroundResume_)
+    --backgroundResume_;
+  else if (transferClocks_ > 3)
     FetchBackground();
   if (windowStall_) {
     if (--windowStall_)

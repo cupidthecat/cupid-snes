@@ -185,6 +185,111 @@ void WindowEdges() {
         "The far-right window latch carries into later lines and the next frame");
 }
 
+void ObjectBackgroundAndWindowTiming() {
+  System hidden;
+  hidden.video.Write(0xfe00, 16);
+  hidden.video.Write(0xfe01, 0);
+  hidden.video.Write(0xfe02, 2);
+  hidden.video.Write(0xff43, 3);
+  hidden.video.Write(0xff40, 0x93);
+  hidden.Step(562);
+  Check(hidden.screen.pixels[160].clock == 561 && hidden.screen.pixels[160].shade == 1,
+        "An object hidden at X zero retains its full fetch delay with fine scrolling");
+
+  System background;
+  background.video.Write(0x8012, 0);
+  background.video.Write(0x8013, 0);
+  background.video.Write(0x8014, 0xff);
+  background.video.Write(0x8015, 0xff);
+  background.video.Write(0xfe00, 16);
+  background.video.Write(0xfe01, 8);
+  background.video.Write(0xfe02, 2);
+  background.video.Write(0xff43, 3);
+  background.video.Write(0xff40, 0x93);
+  background.Step(565);
+  background.video.Write(0xff42, 1);
+  background.Step(6);
+  Check(background.screen.pixels[173].shade == 2,
+        "Background bitplanes resume on their own clocks after an object fetch");
+
+  System window;
+  window.video.Write(0xfe00, 16);
+  window.video.Write(0xfe01, 8);
+  window.video.Write(0xfe02, 2);
+  window.video.Write(0xff43, 3);
+  window.video.Write(0xff4b, 80);
+  window.video.Write(0xff40, 0xf3);
+  window.Step(557);
+  window.video.WindowWrite(true);
+  window.video.Write(0xff4b, 7);
+  window.Step(1);
+  window.video.WindowWrite(false);
+  Check(window.screen.pixels.size() == 161 && window.screen.pixels[160].clock == 558,
+        "A CPU window-coordinate write spanning its trigger clock suppresses that trigger");
+  window.Step(10);
+  Check(window.screen.pixels.back().shade == 1,
+        "A suppressed window trigger remains missed once the output position advances");
+}
+
+void ObjectPlanePhases() {
+  for (unsigned change : {554u, 555u, 557u}) {
+    System system;
+    for (unsigned row = 0; row < 8; ++row)
+      system.video.Write(uint16_t(0x8031 + row * 2), 0);
+    system.video.Write(0xfe00, 16);
+    system.video.Write(0xfe01, 8);
+    system.video.Write(0xfe02, 3);
+    system.video.Write(0xff43, 3);
+    system.video.Write(0xff40, 0x93);
+    system.Step(change);
+    system.video.Write(0xff40, 0x97);
+    system.Step(558 - change);
+    const auto expected = change == 554 ? 2 : change == 555 ? 3 : 1;
+    Check(system.screen.pixels[160].clock == 558 && system.screen.pixels[160].shade == expected,
+          "Object bitplanes sample the selected height at separate fetch clocks");
+  }
+}
+
+void LateEnableAndShutdown() {
+  System window;
+  window.video.Write(0xff4b, 80);
+  window.video.Write(0xff40, 0xf1);
+  window.Step(100);
+  const auto before = window.screen.pixels.size();
+  window.video.Write(0xff4b, 7);
+  window.Step(8);
+  Check(window.screen.pixels.size() == before + 8 && window.screen.pixels.back().shade == 1,
+        "A window coordinate moved behind the output position misses that line's trigger");
+
+  System object;
+  object.video.Write(0xfe00, 16);
+  object.video.Write(0xfe01, 8);
+  object.video.Write(0xfe02, 2);
+  object.video.Write(0xff40, 0x91);
+  object.Step(548);
+  object.video.Write(0xff40, 0x93);
+  const auto count = object.screen.pixels.size();
+  object.Step(1);
+  Check(object.screen.pixels.size() == count + 1 && object.screen.pixels.back().shade == 1,
+        "Enabling objects after their horizontal trigger does not fetch them late");
+
+  System coincident;
+  coincident.video.Write(0xff41, 0x40);
+  coincident.video.Write(0xff40, 0x91);
+  coincident.Step(2);
+  coincident.video.Write(0xff40, 0);
+  Check(coincident.video.Read(0xff41) & 4,
+        "LCD shutdown also retains a coincidence flag that was already set");
+  coincident.Step(4);
+  Check(coincident.video.Write(0xff40, 0x91) == 0 && (coincident.video.Read(0xff41) & 4) &&
+            coincident.Step(2) == 0,
+        "A retained coincidence source does not retrigger when the LCD restarts");
+
+  object.video.Write(0xff40, 0);
+  Check(object.video.Read(0xff44) == 0 && !(object.video.Read(0xff41) & 4),
+        "LCD shutdown resets LY while retaining the previous coincidence flag");
+}
+
 void LiveScrollFetches() {
   System vertical;
   vertical.video.Write(0x8012, 0);
@@ -284,6 +389,9 @@ int main() {
     InterruptEdgesAndFrame();
     CoincidencePhases();
     WindowEdges();
+    ObjectBackgroundAndWindowTiming();
+    ObjectPlanePhases();
+    LateEnableAndShutdown();
     LiveScrollFetches();
     ClippedWindowDataAndFetchDelay();
     ObjectsAndPalettes();

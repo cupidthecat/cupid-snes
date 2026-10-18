@@ -23,6 +23,11 @@ public:
   void Stop(bool stopped) noexcept {
     stopped_ = stopped;
   }
+  void WindowWrite(bool active) noexcept {
+    windowWrite_ = active;
+    if (!active)
+      windowChanged_ = false;
+  }
   uint8_t Blocked() const noexcept {
     return blocked_;
   }
@@ -49,14 +54,15 @@ private:
   uint16_t fine_ = 0, scrollDiscard_ = 0;
   bool scrollLatched_ = false;
   uint16_t windowFine_ = 0;
-  bool leftWindowScan_ = false, leftWindowExtra_ = false;
+  bool leftWindowScan_ = false, leftWindowExtra_ = false, leftWindowPending_ = false;
   uint8_t scrollFine_ = 0;
-  uint8_t objectCount_ = 0, objectStall_ = 0, fetchingObject_ = 0;
+  uint8_t objectCount_ = 0, objectStall_ = 0, fetchingObject_ = 0, backgroundResume_ = 0;
   uint8_t windowLine_ = 0, windowStall_ = 0;
   int lastObjectX_ = -1;
   bool warm_ = true, coincidence_ = false, irqLine_ = false, stopped_ = false;
   bool secondModel_ = false, windowReached_ = false, windowActive_ = false;
   bool windowUsed_ = false, lateWindow_ = false;
+  bool windowWrite_ = false, windowChanged_ = false;
 
   uint8_t Tick();
   uint8_t UpdateInterrupt();
