@@ -394,6 +394,30 @@ void SweepOverflowAcrossBusBatches() {
             "Sweep overflow retains its filter phase across an eight-clock bus step");
     }
 }
+
+void ResetDividerSampleBoundaries() {
+  constexpr std::array<unsigned, 4> batches{4, 8, 32, 64};
+  constexpr std::array<std::array<uint64_t, 4>, 2> expected{
+      {{0x1c3e4d683fcc157dull, 0xdd2eea909f1fedb1ull, 0xdd2eea909f1fedb1ull, 0xdd2eea909f1fedb1ull},
+       {0x10d02bd2b696473dull, 0x10d02bd2b696473dull, 0x0a2465bef9f0c9f1ull,
+        0x0a2465bef9f0c9f1ull}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned batch = 0; batch < batches.size(); ++batch) {
+      System system(model != 0);
+      system.StepBatched(8, batches[batch]);
+      system.audio.Reset(model != 0, true);
+      system.divider.Reset();
+      system.clock = 0;
+      system.samples.clear();
+      system.audio.Write(0xff26, 0x80);
+      system.audio.Write(0xff25, 0x88);
+      system.audio.Write(0xff21, 0x71);
+      system.audio.Write(0xff23, 0x80);
+      system.StepBatched(8192, batches[batch]);
+      Check(system.samples.size() == 64 && system.Digest() == expected[model][batch],
+            "Processor reset retains sample timing across divider edges within a bus batch");
+    }
+}
 } // namespace
 
 int main() {
@@ -411,6 +435,7 @@ int main() {
     NoiseActivationAtSampleBoundary();
     DividerClocksRemainInBatchBudget();
     SweepOverflowAcrossBusBatches();
+    ResetDividerSampleBoundaries();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {

@@ -56,6 +56,7 @@ private:
   void Mixer(uint64_t clock, uint8_t volume, uint8_t routing) override;
   void Power(uint64_t clock, bool enabled) override;
   void Change(uint64_t clock, unsigned channel, unsigned level, int phaseOffset);
+  void AccumulateClocks(uint64_t clock);
   void AdvancePhase(uint64_t clock);
   void FlushSound(uint64_t clock, bool deferTrigger = false);
   void CommitSamples();

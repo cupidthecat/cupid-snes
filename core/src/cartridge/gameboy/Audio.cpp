@@ -187,6 +187,11 @@ void Audio::Advance(unsigned clocks) {
 }
 
 void Audio::AdvanceTo(uint64_t clock) {
+  AccumulateClocks(clock);
+  CommitSamples();
+}
+
+void Audio::AccumulateClocks(uint64_t clock) {
   clock_ = std::max(clock_, clock);
   while (renderClock_ + 4 <= clock_) {
     renderClock_ += 4;
@@ -202,7 +207,6 @@ void Audio::AdvanceTo(uint64_t clock) {
     }
     sampleCycles_ += sampleRate_ * 4;
   }
-  CommitSamples();
 }
 
 void Audio::CommitSamples() {
@@ -244,7 +248,8 @@ void Audio::DividerEdge(bool rising, uint64_t clock) {
       renderedClocks_ += unsigned(clock - phaseBefore);
     AdvancePhase(clock);
   }
-  AdvanceTo(clock);
+  // The enclosing bus batch commits samples after its remaining clocks.
+  AccumulateClocks(clock);
 }
 
 } // namespace snes::core::gameboy
