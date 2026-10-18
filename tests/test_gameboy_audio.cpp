@@ -1,6 +1,7 @@
 #include "snes/core/gameboy/Audio.hpp"
 #include "snes/core/gameboy/ClockedIo.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <stdexcept>
@@ -46,6 +47,17 @@ struct System final : Audio::Output, ClockedIo::Bus {
       ++clock;
       divider.Advance(1);
       audio.AdvanceTo(clock);
+    }
+  }
+  void StepBatched(unsigned clocks) {
+    while (clocks) {
+      const auto count = std::min(clocks, 64u);
+      for (unsigned i = 0; i < count; ++i) {
+        ++clock;
+        divider.Advance(1);
+      }
+      audio.AdvanceTo(clock);
+      clocks -= count;
     }
   }
   void Voices() {
@@ -201,6 +213,61 @@ void BatchedAdvancement() {
   Check(stepped.samples == batched.samples,
         "Batched sound advancement preserves sample values and clocks");
 }
+
+void MixerBeforeTrigger() {
+  System system(true);
+  system.Step(76);
+  system.audio.Write(0xff26, 0x80);
+  system.Step(8);
+  system.audio.Write(0xff11, 0x80);
+  system.Step(20);
+  system.audio.Write(0xff12, 0xf3);
+  system.Step(8);
+  system.audio.Write(0xff25, 0xf3);
+  system.Step(16);
+  system.audio.Write(0xff24, 0x77);
+  system.Step(4096);
+  Check(system.samples.size() == 33 && system.Digest() == 0x055095df870b4641ull,
+        "Mixer writes retain the initial DAC code before a channel is triggered");
+  system.Reset(true);
+  for (const auto [address, value] : std::array<std::array<uint8_t, 2>, 5>{
+           {{0x26, 0x80}, {0x24, 0x77}, {0x25, 0x11}, {0x12, 0xf0}, {0x24, 0x77}}})
+    system.audio.Write(uint16_t(0xff00 | address), value);
+  system.Step(4096);
+  Check(system.samples.size() == 32 && system.Digest() == 0x067ac992ed9c084dull,
+        "A disconnected mixer code stays latched until a DAC level update");
+}
+
+void ProcessorResetKeepsOutput() {
+  constexpr std::array<unsigned, 8> phases{0, 4, 8, 12, 16, 28, 60, 124};
+  constexpr std::array<uint64_t, 8> firstModel{
+      0x98ddb5c3f74aaa8dull, 0x041944d22a0f3fa1ull, 0x144d2c78bdd61065ull, 0x1eea756bdb5a7ea5ull,
+      0xcb1cfe2f0c6d4c59ull, 0xeb1166914925141dull, 0xafe33b23d70a6851ull, 0xafe33b23d70a6851ull};
+  for (bool secondModel : {false, true})
+    for (unsigned i = 0; i < phases.size(); ++i) {
+      System system(secondModel);
+      for (const auto [address, value] : std::array<std::array<uint8_t, 2>, 7>{{{0x26, 0x80},
+                                                                                {0x24, 0x77},
+                                                                                {0x25, 0xff},
+                                                                                {0x11, 0x40},
+                                                                                {0x12, 0xb2},
+                                                                                {0x13, 0x87},
+                                                                                {0x14, 0x85}}})
+        system.audio.Write(uint16_t(0xff00 | address), value);
+      system.StepBatched(2048 + phases[i]);
+      system.audio.Reset(secondModel, true);
+      system.divider.Reset();
+      system.clock = 0;
+      system.samples.clear();
+      for (const auto [address, value] : std::array<std::array<uint8_t, 2>, 5>{
+               {{0x26, 0x80}, {0x24, 0x77}, {0x25, 0x11}, {0x12, 0xf0}, {0x24, 0x77}}})
+        system.audio.Write(uint16_t(0xff00 | address), value);
+      system.StepBatched(4096);
+      Check(system.samples.size() == 32 &&
+                system.Digest() == (secondModel ? 0xbd2bf48fc917354dull : firstModel[i]),
+            "Processor resets preserve filter history and the pending native sample phase");
+    }
+}
 } // namespace
 
 int main() {
@@ -212,6 +279,8 @@ int main() {
     PowerCycleAndNoisePhase();
     WrappedPhaseAndReset();
     BatchedAdvancement();
+    MixerBeforeTrigger();
+    ProcessorResetKeepsOutput();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {

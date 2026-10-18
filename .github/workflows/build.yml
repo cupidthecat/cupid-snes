@@ -138,6 +138,7 @@ jobs:
           snes_gameboy_cpu_tests snes_gameboy_host_tests snes_gameboy_clocked_io_tests
           snes_gameboy_cartridge_tests snes_gameboy_camera_tests snes_gameboy_tpp1_tests snes_gameboy_oam_tests
           snes_gameboy_machine_tests snes_gameboy_video_tests snes_gameboy_sound_channels_tests snes_gameboy_audio_tests snes_gameboy_peripherals_tests
+          snes_super_game_boy_tests
           snes_frame_execution_tests snes_competition_cartridge_tests
           snes_sdl_audio_tests snes_sdl_video_tests snes_bsx_tests snes_cartridge_command_tests
           snes_sdd1_tests snes_processor_startup_tests
@@ -146,4 +147,4 @@ jobs:
       - name: Test optimized console and SDL paths
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|super_game_boy|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"

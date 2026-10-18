@@ -25,7 +25,7 @@ public:
   };
 
   explicit SoundChannels(Output &output) : output_(output) {}
-  void Reset(bool secondModel = false);
+  void Reset(bool secondModel = false, bool notifyOutput = true);
   uint8_t Read(uint16_t address) const;
   void Write(uint16_t address, uint8_t value);
   void Advance(unsigned clocks);
@@ -46,7 +46,7 @@ private:
     unsigned length = 0;
     uint16_t frequency = 0;
     uint8_t position = 0, volume = 0, envelope = 0, amplitude = 0;
-    bool enabled = false, envelopeRunning = false, high = false;
+    bool enabled = false, envelopeRunning = false, high = false, squareStarted = false;
   };
 
   Output &output_;

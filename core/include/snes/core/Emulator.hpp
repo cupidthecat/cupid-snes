@@ -84,6 +84,10 @@ public:
                        std::span<const uint8_t> slotB, std::string *error = nullptr);
   bool LoadSufamiTurboFromFiles(const std::string &bios, const std::string &slotA,
                                 const std::string &slotB, std::string *error = nullptr);
+  bool LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
+                        std::span<const uint8_t> boot, std::string *error = nullptr);
+  bool LoadSuperGameBoyFromFiles(const std::string &bios, const std::string &game,
+                                 const std::string &boot, std::string *error = nullptr);
   bool LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<const uint8_t> pack,
                               std::string *error = nullptr);
   bool LoadBroadcastCartridgeFromFiles(const std::string &base, const std::string &pack,
@@ -115,6 +119,12 @@ public:
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
     if (cartridge_)
       cartridge_->LoadSlotSram(slot, data);
+  }
+  std::vector<uint8_t> SaveSlotBattery(unsigned slot) const {
+    return cartridge_ ? cartridge_->SaveSlotBattery(slot) : std::vector<uint8_t>{};
+  }
+  bool LoadSlotBattery(unsigned slot, std::span<const uint8_t> data) {
+    return cartridge_ && cartridge_->LoadSlotBattery(slot, data);
   }
   std::vector<uint8_t> SaveRtc() {
     if (!srtc_)
@@ -227,6 +237,7 @@ private:
   uint64_t nextSmpMasterClock_ = 0;
   uint64_t coprocessorsSyncedClock_ = 0;
   uint64_t coprocessorClockTarget_ = 0;
+  uint64_t coprocessorCompletedClock_ = 0;
   AudioBuffer audioOutputBuffer_;
   VideoFrame videoOutputFrame_;
 

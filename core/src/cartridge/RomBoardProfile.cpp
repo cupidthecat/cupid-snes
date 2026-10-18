@@ -54,6 +54,8 @@ bool HasWiring(const RomHeader &header, size_t romBytes, bool hasRam) {
   case EnhancementChip::None:
     return low || high || header.mapping == MappingType::ExLoRom ||
            header.mapping == MappingType::ExHiRom;
+  case EnhancementChip::SuperGameBoy:
+    return low;
   }
   return false;
 }
@@ -64,6 +66,10 @@ void SelectRomBoard(RomHeader &header, std::span<const uint8_t> image) {
   if (header.maker != 0x33)
     return;
   const auto identifier = image.subspan(header.headerOffset - 14, 4);
+  if (std::equal(identifier.begin(), identifier.end(), "042J")) {
+    header.chip = EnhancementChip::SuperGameBoy;
+    return;
+  }
   const auto valid = [](uint8_t value) {
     return (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z');
   };

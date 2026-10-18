@@ -312,7 +312,8 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
   // We map the entire ROM-accessible regions; the Cartridge::Read/Write
   // internally resolves the actual offset and handles mirroring.
   if (cart.MapCompetitionCpu(*this, cartSlot) || cart.MapSignalProcessor(*this, cartSlot) ||
-      cart.MapCx4Processor(*this, cartSlot) || cart.MapSpc7110(*this, cartSlot))
+      cart.MapCx4Processor(*this, cartSlot) || cart.MapSpc7110(*this, cartSlot) ||
+      cart.MapGameBoy(*this, cartSlot))
     return;
   const auto mapping = cart.Header().mapping;
   if (cart.Header().chip == EnhancementChip::Obc1) {

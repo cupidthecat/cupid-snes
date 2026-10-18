@@ -11,6 +11,7 @@ class Peripherals final : public Machine::Devices {
 public:
   Peripherals(Video::Output &video, Audio::Output &audio) : video_(video), audio_(audio) {}
   void Reset(bool secondModel) override;
+  void Reset(bool secondModel, bool preserveAudio) override;
   uint8_t Read(uint16_t address, Machine::Access access) override;
   uint8_t Write(uint16_t address, uint8_t value, Machine::Access access) override;
   uint8_t Advance(unsigned clocks) override;

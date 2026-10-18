@@ -3,9 +3,13 @@
 namespace snes::core::gameboy {
 
 void Peripherals::Reset(bool secondModel) {
+  Reset(secondModel, false);
+}
+
+void Peripherals::Reset(bool secondModel, bool preserveAudio) {
   clocks_ = 0;
   video_.Reset(secondModel);
-  audio_.Reset(secondModel);
+  audio_.Reset(secondModel, preserveAudio);
 }
 
 uint8_t Peripherals::Read(uint16_t address, Machine::Access access) {

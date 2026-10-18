@@ -51,6 +51,7 @@ std::optional<const char *> UnsupportedChipName(EnhancementChip chip) {
   case EnhancementChip::Dsp3:
   case EnhancementChip::Dsp4:
   case EnhancementChip::Competition:
+  case EnhancementChip::SuperGameBoy:
     return std::nullopt;
   default:
     return ChipName(chip);
@@ -170,6 +171,29 @@ bool Emulator::LoadCartridgeFromFile(const std::string &path, std::string *error
     Logger::Instance().Write(LogLevel::Info, "MSU-1 data and PCM playback enabled");
   }
   return true;
+}
+
+bool Emulator::LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
+                                std::span<const uint8_t> boot, std::string *error) {
+  auto cartridge = Cartridge::FromSuperGameBoy(bios, game, boot, error);
+  if (!cartridge)
+    return false;
+  StopFrameExecution();
+  cartridge_ = std::move(*cartridge);
+  InitSubsystems();
+  return true;
+}
+
+bool Emulator::LoadSuperGameBoyFromFiles(const std::string &biosPath, const std::string &gamePath,
+                                         const std::string &bootPath, std::string *error) {
+  const auto bios = ReadImage(biosPath, error);
+  if (!bios)
+    return false;
+  const auto game = ReadImage(gamePath, error);
+  if (!game)
+    return false;
+  const auto boot = ReadImage(bootPath, error);
+  return boot && LoadSuperGameBoy(*bios, *game, *boot, error);
 }
 
 bool Emulator::LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<const uint8_t> pack,
@@ -560,6 +584,7 @@ void Emulator::ResetHardware(bool warm) {
   nextSmpMasterClock_ = 0;
   coprocessorsSyncedClock_ = 0;
   coprocessorClockTarget_ = 0;
+  coprocessorCompletedClock_ = 0;
 
   // Set up DSP audio output buffer
   dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
@@ -711,6 +736,7 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
   coprocessorClockTarget_ = timing_.MasterClocksElapsed() + clocks;
   timing_.SetInterlace(ppu_.Interlace());
   timing_.Tick(clocks);
+  coprocessorCompletedClock_ = timing_.MasterClocksElapsed();
   // A penalty can trigger another refresh or HDMA event. Drain all of them
   // before the CPU resumes, including events near the frame boundary.
   while (pendingExtraClocks_ != 0) {
@@ -718,13 +744,17 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
     pendingExtraClocks_ = 0;
     coprocessorClockTarget_ = timing_.MasterClocksElapsed() + extra;
     timing_.Tick(extra);
+    coprocessorCompletedClock_ = timing_.MasterClocksElapsed();
   }
   ppu_.SetCurrentHClock(timing_.HCounter());
   SynchronizeDevices();
 }
 
 void Emulator::SynchronizeCoprocessors() {
-  const auto elapsed = std::max(timing_.MasterClocksElapsed(), coprocessorClockTarget_);
+  // The handheld oscillator receives clocks after the CPU's bus interval completes.
+  const auto elapsed = cartridge_->Header().chip == EnhancementChip::SuperGameBoy
+                           ? coprocessorCompletedClock_
+                           : std::max(timing_.MasterClocksElapsed(), coprocessorClockTarget_);
   auto delta = elapsed > coprocessorsSyncedClock_ ? elapsed - coprocessorsSyncedClock_ : 0;
   coprocessorsSyncedClock_ = elapsed;
   while (delta > std::numeric_limits<uint32_t>::max()) {

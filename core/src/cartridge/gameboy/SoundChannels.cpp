@@ -10,7 +10,7 @@ constexpr std::array<uint8_t, 23> ReadMask = {0x80, 0x3f, 0,    0xff, 0xbf, 0xff
                                               0xff, 0,    0,    0xbf, 0,    0,    0x70};
 } // namespace
 
-void SoundChannels::Reset(bool secondModel) {
+void SoundChannels::Reset(bool secondModel, bool notifyOutput) {
   registers_.fill(0);
   wave_.fill(0);
   channels_.fill({});
@@ -29,9 +29,11 @@ void SoundChannels::Reset(bool secondModel) {
   noisePending_ = waveAccess_ = false;
   stopped_ = false;
   secondModel_ = secondModel;
-  for (unsigned i = 0; i < 4; ++i)
-    output_.Dac(0, i, {}, 0);
-  output_.Mixer(0, 0, 0);
+  if (notifyOutput) {
+    for (unsigned i = 0; i < 4; ++i)
+      output_.Dac(0, i, {}, 0);
+    output_.Mixer(0, 0, 0);
+  }
 }
 
 uint16_t SoundChannels::Frequency(unsigned channel) const noexcept {
@@ -166,7 +168,7 @@ bool SoundChannels::Duty(unsigned channel) const noexcept {
 void SoundChannels::UpdateAmplitude(unsigned channel) {
   auto &state = channels_[channel];
   if (channel < 2) {
-    state.amplitude = state.high ? state.volume : 0;
+    state.amplitude = state.squareStarted && Duty(channel) ? state.volume : 0;
   } else if (channel == 2) {
     const auto nibble = state.position & 1 ? waveLatch_ & 15 : waveLatch_ >> 4;
     state.amplitude = uint8_t(nibble >> waveShift_);
@@ -242,6 +244,8 @@ void SoundChannels::Trigger(unsigned channel) {
   if (channel != 2)
     state.volume = registers_[Base[channel] + 2] >> 4;
   if (channel < 2) {
+    if (!wasEnabled)
+      state.squareStarted = false;
     state.timer = int(4 * (2048 - Frequency(channel)) + (wasEnabled ? 4 : 8));
   } else if (channel == 2) {
     if (wasEnabled && state.timer == 2) {
@@ -513,7 +517,7 @@ void SoundChannels::Tick() {
         if (i < 2) {
           state.timer += int(4 * (2048 - Frequency(i)));
           state.position = uint8_t((state.position + 1) & 7);
-          state.high = Duty(i);
+          state.squareStarted = true;
         } else if (i == 2) {
           state.timer += int(2 * (2048 - Frequency(2)));
           state.position = uint8_t((state.position + 1) & 31);

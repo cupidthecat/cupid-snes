@@ -34,6 +34,8 @@ RomSpeed SpeedFromModeByte(uint8_t mapMode) {
 }
 
 EnhancementChip DetectChip(const RomHeader &header, uint8_t subtype) {
+  if (header.cartridgeType == 0xe3)
+    return EnhancementChip::SuperGameBoy;
   const auto type = header.cartridgeType;
   if ((type & 15) >= 3) {
     switch (type >> 4) {

@@ -24,6 +24,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,6 +32,9 @@
 #include <vector>
 
 namespace snes::core {
+namespace gameboy {
+class Adapter;
+}
 
 enum class MappingType {
   Unknown,
@@ -75,7 +79,8 @@ enum class EnhancementChip {
   St010,
   St011,
   St018,
-  Competition
+  Competition,
+  SuperGameBoy
 };
 
 const char *ChipName(EnhancementChip chip) noexcept;
@@ -127,6 +132,11 @@ private:
 
 class Cartridge {
 public:
+  using GameBoyAudioSink = std::function<void(int16_t left, int16_t right, uint32_t sampleRate)>;
+  Cartridge();
+  ~Cartridge();
+  Cartridge(Cartridge &&) noexcept;
+  Cartridge &operator=(Cartridge &&) noexcept;
   static std::optional<Cartridge> FromRomImage(std::span<const uint8_t> romImage,
                                                RomNormalizationInfo *normalization,
                                                const CartridgeDatabase *database,
@@ -137,6 +147,10 @@ public:
                                                   std::span<const uint8_t> slotA,
                                                   std::span<const uint8_t> slotB,
                                                   std::string *error = nullptr);
+  static std::optional<Cartridge> FromSuperGameBoy(std::span<const uint8_t> bios,
+                                                   std::span<const uint8_t> game,
+                                                   std::span<const uint8_t> boot,
+                                                   std::string *error = nullptr);
   static std::optional<Cartridge> FromBroadcastCartridge(std::span<const uint8_t> base,
                                                          std::span<const uint8_t> pack,
                                                          std::string *error = nullptr);
@@ -179,6 +193,8 @@ public:
   bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
   bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
   bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
+  bool MapGameBoy(MemoryBus &bus, uint8_t slot) const;
+  void SetGameBoyAudioOutput(GameBoyAudioSink output);
 
   bool BoardConnected() const noexcept {
     return boardConnected_;
@@ -188,6 +204,8 @@ public:
   void LoadSram(std::span<const uint8_t> data);
   std::span<const uint8_t> SlotSramData(unsigned slot) const noexcept;
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);
+  std::vector<uint8_t> SaveSlotBattery(unsigned slot) const;
+  bool LoadSlotBattery(unsigned slot, std::span<const uint8_t> data);
   std::span<const uint8_t> MemoryPackData() const noexcept;
   bool LoadMemoryPack(std::span<const uint8_t> data);
   std::vector<uint8_t> MemoryPackMetadata() const;
@@ -242,6 +260,7 @@ private:
   std::optional<NecDspBoard> signalBoard_;
   std::unique_ptr<NecDsp> necDsp_;
   std::unique_ptr<CompetitionBoard> competition_;
+  std::unique_ptr<gameboy::Adapter> gameBoy_;
 };
 
 } // namespace snes::core

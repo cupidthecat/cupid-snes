@@ -156,11 +156,12 @@ void Cpu::Push(uint16_t value) {
   WriteByte(--state_.sp, uint8_t(value));
 }
 
-void Cpu::JumpRelative() {
+void Cpu::JumpRelative(bool targetOnBus) {
   const unsigned bits = Fetch();
   const int displacement = bits < 128 ? int(bits) : int(bits) - 256;
-  Idle();
-  state_.pc = static_cast<uint16_t>(int(state_.pc) + displacement);
+  const auto target = static_cast<uint16_t>(int(state_.pc) + displacement);
+  IdleAt(targetOnBus ? target : state_.pc);
+  state_.pc = target;
 }
 
 void Cpu::AddHl(uint16_t value) {
@@ -391,7 +392,7 @@ void Cpu::Execute(uint8_t opcode) {
       } else if (y == 3) {
         JumpRelative();
       } else if (Condition(y - 4)) {
-        JumpRelative();
+        JumpRelative(true);
       } else {
         Fetch();
       }

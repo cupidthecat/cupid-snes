@@ -17,6 +17,9 @@ public:
   struct Devices {
     virtual ~Devices() = default;
     virtual void Reset(bool secondModel) = 0;
+    virtual void Reset(bool secondModel, bool) {
+      Reset(secondModel);
+    }
     virtual uint8_t Read(uint16_t address, Access access) = 0;
     // Writes and elapsed clocks return newly requested interrupt bits.
     virtual uint8_t Write(uint16_t address, uint8_t value, Access access) = 0;
@@ -38,7 +41,7 @@ public:
   Machine(Host &host, Devices &devices);
   bool Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
             std::string *error = nullptr);
-  void Reset(bool secondModel = false);
+  void Reset(bool secondModel = false, bool preserveAudio = false);
   unsigned RunInstruction();
   void AdvanceHardware(unsigned clocks);
   uint8_t ReadMemory(uint16_t address);
@@ -48,6 +51,9 @@ public:
   }
   void SetCpuState(const Cpu::State &state);
   Cartridge &GameCartridge() noexcept {
+    return cartridge_;
+  }
+  const Cartridge &GameCartridge() const noexcept {
     return cartridge_;
   }
   uint64_t Clocks() const noexcept {

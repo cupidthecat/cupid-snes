@@ -7,6 +7,7 @@
 
 #include "snes/core/Logging.hpp"
 #include "snes/core/Sdd1.hpp"
+#include "snes/core/gameboy/Adapter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -113,6 +114,11 @@ bool HasSignature(std::span<const uint8_t> bytes, size_t offset, std::string_vie
 
 } // namespace
 
+Cartridge::Cartridge() = default;
+Cartridge::~Cartridge() = default;
+Cartridge::Cartridge(Cartridge &&) noexcept = default;
+Cartridge &Cartridge::operator=(Cartridge &&) noexcept = default;
+
 const char *MappingName(MappingType mapping) noexcept {
   switch (mapping) {
   case MappingType::LoRom:
@@ -196,6 +202,8 @@ const char *ChipName(EnhancementChip chip) noexcept {
     return "ST018";
   case EnhancementChip::Competition:
     return "Competition timer + DSP-1";
+  case EnhancementChip::SuperGameBoy:
+    return "Super Game Boy";
   }
   return "Unknown";
 }
@@ -391,6 +399,10 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   }
   if (cart.header_.mapping == MappingType::Bsx)
     cart.InitializeBroadcast();
+  if (cart.header_.chip == EnhancementChip::SuperGameBoy) {
+    cart.sram_.clear();
+    cart.gameBoy_ = std::make_unique<gameboy::Adapter>(cart.header_.title == "Super GAMEBOY2");
+  }
 
   const auto firmwareKind = SignalFirmware(cart.header_);
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
@@ -433,6 +445,23 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   }
 
   return cart;
+}
+
+std::optional<Cartridge> Cartridge::FromSuperGameBoy(std::span<const uint8_t> bios,
+                                                     std::span<const uint8_t> game,
+                                                     std::span<const uint8_t> boot,
+                                                     std::string *error) {
+  auto cartridge = FromRomImage(bios, nullptr, nullptr, error);
+  if (!cartridge)
+    return std::nullopt;
+  if (!cartridge->gameBoy_) {
+    if (error)
+      *error = "The base image is not a Super Game Boy BIOS";
+    return std::nullopt;
+  }
+  if (!cartridge->gameBoy_->Load(game, boot, error))
+    return std::nullopt;
+  return cartridge;
 }
 
 std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bios,
@@ -483,6 +512,8 @@ uint32_t Cartridge::RomCrc32() const noexcept {
 }
 
 void Cartridge::Reset() {
+  if (gameBoy_)
+    gameBoy_->Reset();
   if (competition_)
     competition_->Reset();
   if (necDsp_)
@@ -532,6 +563,8 @@ bool Cartridge::MemselFast() const noexcept {
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
   if (!boardConnected_)
     return openBus;
+  if (gameBoy_ && gameboy::Adapter::Selects(cpuAddress))
+    return gameBoy_->Read(cpuAddress);
   if (competition_)
     return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
@@ -596,6 +629,10 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
   if (!boardConnected_)
     return;
+  if (gameBoy_ && gameboy::Adapter::Selects(cpuAddress)) {
+    gameBoy_->Write(cpuAddress, value);
+    return;
+  }
   if (competition_) {
     competition_->Write(cpuAddress, value);
     return;
@@ -680,6 +717,8 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+  if (gameBoy_)
+    gameBoy_->Advance(masterClocks);
   if (bsx_)
     bsx_->Advance(masterClocks);
   if (memoryPackDevice_)
@@ -701,6 +740,8 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (gameBoy_)
+    gameBoy_->SetPal(pal);
   if (bsx_)
     bsx_->SetPal(pal);
   if (memoryPackDevice_)
@@ -771,6 +812,18 @@ bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
   return true;
 }
 
+bool Cartridge::MapGameBoy(MemoryBus &bus, uint8_t slot) const {
+  if (!gameBoy_)
+    return false;
+  gameboy::Adapter::MapCpu(bus, slot);
+  return true;
+}
+
+void Cartridge::SetGameBoyAudioOutput(GameBoyAudioSink output) {
+  if (gameBoy_)
+    gameBoy_->SetAudioOutput(std::move(output));
+}
+
 bool Cartridge::MapSpc7110(MemoryBus &bus, uint8_t slot) const {
   if (!spc7110_)
     return false;
@@ -795,6 +848,24 @@ void Cartridge::LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
   const auto size = SlotSramData(slot).size();
   if (size)
     std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slot * 0x4000);
+}
+
+std::vector<uint8_t> Cartridge::SaveSlotBattery(unsigned slot) const {
+  if (gameBoy_ && slot == 0)
+    return gameBoy_->SaveBattery();
+  const auto bytes = SlotSramData(slot);
+  return {bytes.begin(), bytes.end()};
+}
+
+bool Cartridge::LoadSlotBattery(unsigned slot, std::span<const uint8_t> data) {
+  if (gameBoy_ && slot == 0) {
+    gameBoy_->LoadBattery(data);
+    return true;
+  }
+  if (SlotSramData(slot).empty())
+    return false;
+  LoadSlotSram(slot, data);
+  return true;
 }
 
 std::vector<uint8_t> Cartridge::RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed) {
@@ -878,7 +949,8 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
   case MappingType::LoRom: {
     const bool lowerArmRom = header_.chip == EnhancementChip::St018 &&
                              ((bank >= 0x40 && bank <= 0x6f) || (bank >= 0xc0 && bank <= 0xef));
-    if ((addr >= 0x8000 || lowerArmRom) && bank != 0x7e && bank != 0x7f)
+    const bool lowerGameBoyRom = gameBoy_ && (bank & 0x40);
+    if ((addr >= 0x8000 || lowerArmRom || lowerGameBoyRom) && bank != 0x7e && bank != 0x7f)
       return MirrorOffset((size_t(bank) << 15) | (addr & 0x7fff), rom_.size());
     return std::nullopt;
   }

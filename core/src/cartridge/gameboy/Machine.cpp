@@ -27,7 +27,7 @@ bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot
   return true;
 }
 
-void Machine::Reset(bool secondModel) {
+void Machine::Reset(bool secondModel, bool preserveAudio) {
   cpuClock_ = deviceClock_ = dmaClock_ = 0;
   cpu_.Reset();
   timer_.Reset();
@@ -42,7 +42,7 @@ void Machine::Reset(bool secondModel) {
   dmaRestarting_ = bootDisabled_ = false;
   flags_ = enable_ = dataBus_ = decay_ = 0;
   joypad_ = 0xcf;
-  devices_.Reset(secondModel);
+  devices_.Reset(secondModel, preserveAudio);
 }
 
 unsigned Machine::RunInstruction() {

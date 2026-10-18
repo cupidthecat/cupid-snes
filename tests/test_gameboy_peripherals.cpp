@@ -685,6 +685,31 @@ void VideoDmaBusContention() {
   }
 }
 
+void ResetAfterProcessorIdleCycles() {
+  for (bool secondModel : {false, true})
+    for (unsigned instructions = 60; instructions < 76; ++instructions) {
+      System system;
+      std::vector<uint8_t> rom(32768);
+      std::array<uint8_t, 256> boot{0x18, 0xfe};
+      Check(system.machine.Load(rom, boot), "A generated boot loop loads without register setup");
+      system.machine.Reset(secondModel);
+      for (unsigned i = 0; i < instructions; ++i)
+        Check(system.machine.RunInstruction() == 12,
+              "The boot loop includes an idle machine cycle");
+      system.machine.Reset(secondModel, true);
+      system.samples = 0;
+      system.digest = 14695981039346656037ull;
+      system.lastSample = 0;
+      for (const auto &[address, value] : std::array<Write, 5>{
+               {{0xff26, 0x80}, {0xff24, 0x77}, {0xff25, 0x11}, {0xff12, 0xf0}, {0xff24, 0x77}}})
+        system.machine.WriteMemory(address, value);
+      system.machine.AdvanceHardware(4096);
+      Check(system.samples == 32 &&
+                system.digest == (secondModel ? 0x067ac992ed9c084dull : 0xdf97ca08fa7412e1ull),
+            "A processor reset discards uncommitted idle clocks from the retained audio phase");
+    }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -717,6 +742,7 @@ int main() {
     RepeatedWindowStarts();
     WindowObjectCancellation();
     HostVideoAndReset();
+    ResetAfterProcessorIdleCycles();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;
   } catch (const std::exception &error) {

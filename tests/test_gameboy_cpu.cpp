@@ -127,14 +127,27 @@ void RelativeAndStackArithmetic() {
   branch.Program({0x20, 0xfd});
   branch.cpu.RunInstruction();
   Check(branch.cpu.GetState().pc == 0xff && branch.clocks == 12, "Taken JR uses a signed offset");
+  Check(branch.events.back().kind == 'i' && branch.events.back().address == 0xff &&
+            branch.events.back().clock == 8,
+        "A taken conditional relative jump drives its target during the idle cycle");
   auto state = branch.cpu.GetState();
   state.pc = 0x100;
   state.f = 0x80;
   branch.cpu.SetState(state);
   branch.clocks = 0;
+  branch.events.clear();
   branch.cpu.RunInstruction();
   Check(branch.cpu.GetState().pc == 0x102 && branch.clocks == 8,
         "Untaken JR still fetches its operand");
+  Check(branch.events.size() == 2, "An untaken relative jump has no idle address cycle");
+
+  Machine unconditional;
+  unconditional.Program({0x18, 0xfd});
+  unconditional.cpu.RunInstruction();
+  Check(unconditional.cpu.GetState().pc == 0xff && unconditional.clocks == 12 &&
+            unconditional.events.back().kind == 'i' &&
+            unconditional.events.back().address == 0x102 && unconditional.events.back().clock == 8,
+        "An unconditional relative jump drives the sequential address before applying its offset");
 
   Machine stack;
   stack.Program({0xe8, 0xff});

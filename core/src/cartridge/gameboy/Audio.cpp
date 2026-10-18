@@ -43,20 +43,28 @@ const Impulses &Coefficients() {
 }
 } // namespace
 
-void Audio::Reset(bool secondModel) {
-  filters_.fill({});
-  capacitor_.fill(0);
-  clock_ = renderClock_ = samples_ = phaseClock_ = 0;
-  phase_ = resumeClocks_ = renderedClocks_ = 0;
+void Audio::Reset(bool secondModel, bool preserveOutput) {
+  if (preserveOutput) {
+    // Restart digital circuitry without writing new levels into the output filter.
+    for (auto &filter : filters_) {
+      filter.signal = {};
+      filter.code = 0;
+    }
+  } else {
+    filters_.fill({});
+    capacitor_.fill(0);
+    samples_ = phase_ = renderedClocks_ = sampleCycles_ = 0;
+  }
+  clock_ = renderClock_ = phaseClock_ = 0;
+  resumeClocks_ = 0;
   stopped_ = false;
-  sampleCycles_ = 0;
   sampleRate_ = secondModel ? 32768 : 33558;
   clockRate_ = secondModel ? 4194304 : 4295454;
   batchClocks_ = 2 * ((clockRate_ + 2 * sampleRate_ - 1) / (2 * sampleRate_));
   phaseStep_ = uint32_t(std::llround(double(sampleRate_) * 2 * SampleUnit / clockRate_));
   highpass_ = std::pow(0.999958, double(clockRate_) / sampleRate_);
   volume_ = routing_ = 0;
-  channels_.Reset(secondModel);
+  channels_.Reset(secondModel, !preserveOutput);
 }
 
 uint8_t Audio::Read(uint16_t address) {
@@ -72,19 +80,27 @@ void Audio::Write(uint16_t address, uint8_t value) {
 void Audio::Dac(uint64_t clock, unsigned channel, SoundChannels::Signal signal, int phaseOffset) {
   const auto previous = filters_[channel].signal;
   filters_[channel].signal = signal;
-  if (previous.level != signal.level || previous.channelEnabled != signal.channelEnabled)
+  if (signal.dacEnabled &&
+      (previous.level != signal.level || previous.channelEnabled != signal.channelEnabled)) {
+    filters_[channel].code = signal.level;
     Change(clock, channel, signal.level, phaseOffset);
+  }
 }
 
 void Audio::Mixer(uint64_t clock, uint8_t volume, uint8_t routing) {
   volume_ = volume;
   routing_ = routing;
-  for (unsigned channel = 0; channel < filters_.size(); ++channel)
-    Change(clock, channel,
-           filters_[channel].signal.channelEnabled ? filters_[channel].signal.level : 16, 0);
+  for (unsigned channel = 0; channel < filters_.size(); ++channel) {
+    auto &filter = filters_[channel];
+    if (!filter.signal.dacEnabled)
+      filter.code = 16;
+    Change(clock, channel, filter.code, 0);
+  }
 }
 
 void Audio::Power(uint64_t clock, bool enabled) {
+  for (auto &filter : filters_)
+    filter.code = 0;
   if (!enabled)
     for (unsigned channel = 0; channel < filters_.size(); ++channel)
       Change(clock, channel, 0, 0);
@@ -172,7 +188,6 @@ void Audio::Advance(unsigned clocks) {
 
 void Audio::AdvanceTo(uint64_t clock) {
   clock_ = std::max(clock_, clock);
-  uint64_t batchEnd = std::min(clock_ & ~uint64_t(3), renderClock_ + 16);
   while (renderClock_ + 4 <= clock_) {
     renderClock_ += 4;
     if (stopped_ || resumeClocks_) {
@@ -186,13 +201,25 @@ void Audio::AdvanceTo(uint64_t clock) {
       continue;
     }
     sampleCycles_ += sampleRate_ * 4;
-    if (renderClock_ < batchEnd)
-      continue;
-    batchEnd = std::min(clock_ & ~uint64_t(3), renderClock_ + 16);
-    if (channels_.NeedsStep() || renderedClocks_ + renderClock_ - phaseClock_ >= batchClocks_ ||
-        sampleCycles_ >= clockRate_)
-      FlushSound(renderClock_);
-    while (sampleCycles_ >= clockRate_) {
+  }
+  CommitSamples();
+}
+
+void Audio::CommitSamples() {
+  for (;;) {
+    const auto pending = renderClock_ > phaseClock_ ? renderClock_ - phaseClock_ : 0;
+    const bool due = sampleCycles_ >= clockRate_;
+    if (!pending) {
+      if (!due)
+        break;
+    } else {
+      if (!due && !channels_.NeedsStep() && pending + renderedClocks_ < batchClocks_)
+        break;
+      const auto capacity = batchClocks_ > renderedClocks_ ? batchClocks_ - renderedClocks_ : 0;
+      if (capacity || !due)
+        FlushSound(phaseClock_ + std::min(pending, capacity ? uint64_t(capacity) : pending));
+    }
+    if (due) {
       sampleCycles_ -= clockRate_;
       Render();
     }

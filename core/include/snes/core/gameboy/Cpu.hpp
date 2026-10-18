@@ -68,7 +68,7 @@ private:
   bool Condition(unsigned condition) const;
   uint16_t Pop();
   void Push(uint16_t value);
-  void JumpRelative();
+  void JumpRelative(bool targetOnBus = false);
   void AddHl(uint16_t value);
   void AddStackOffset(bool toHl);
   uint8_t Increment(uint8_t value);

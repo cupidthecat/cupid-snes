@@ -266,6 +266,36 @@ void WaveAccessAndRetrigger() {
   }
 }
 
+void DutyChangesWaitForAnAmplitudeUpdate() {
+  for (bool secondModel : {false, true}) {
+    for (unsigned channel : {0u, 1u}) {
+      const auto base = uint16_t(0xff10 + channel * 5);
+      for (bool becomesHigh : {false, true}) {
+        for (bool retrigger : {false, true}) {
+          System system(secondModel);
+          system.sound.Write(0xff26, 0x80);
+          system.sound.Write(uint16_t(base + 1), becomesHigh ? 0x80 : 0xc0);
+          system.sound.Write(uint16_t(base + 2), 0xc8);
+          system.sound.Write(uint16_t(base + 3), 0xff);
+          system.sound.Write(uint16_t(base + 4), 0x87);
+          system.Step(12);
+          const auto before = uint8_t(becomesHigh ? 0 : 12);
+          Check(system.sound.GetState().amplitudes[channel] == before,
+                "The first oscillator edge selects the original duty level");
+          system.sound.Write(uint16_t(base + 1), becomesHigh ? 0xc0 : 0x80);
+          Check(system.sound.GetState().amplitudes[channel] == before,
+                "A duty write retains the previous output until an amplitude update");
+          system.sound.Write(uint16_t(base + (retrigger ? 4 : 2)), retrigger ? 0x87 : 0xc8);
+          const auto volume = uint8_t(retrigger ? 12 : 13);
+          Check(system.sound.GetState().volumes[channel] == volume &&
+                    system.sound.GetState().amplitudes[channel] == (becomesHigh ? volume : 0),
+                "Envelope writes and retriggers apply the current duty at the retained phase");
+        }
+      }
+    }
+  }
+}
+
 void BatchedOutput() {
   System individual, batched;
   individual.Noise(0x19);
@@ -290,6 +320,7 @@ int main() {
     SweepOverflowAndLiveWrites();
     NoiseClocksAndRetriggers();
     WaveAccessAndRetrigger();
+    DutyChangesWaitForAnAmplitudeUpdate();
     BatchedOutput();
     std::puts("Handheld sound register, oscillator and divider checks passed");
     return 0;

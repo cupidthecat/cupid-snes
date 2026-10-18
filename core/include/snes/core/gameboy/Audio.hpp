@@ -16,7 +16,8 @@ public:
   };
 
   explicit Audio(Output &output) : output_(output) {}
-  void Reset(bool secondModel = false);
+  // Processor resets can retain the sample clock and analog output history.
+  void Reset(bool secondModel = false, bool preserveOutput = false);
   uint8_t Read(uint16_t address);
   void Write(uint16_t address, uint8_t value);
   void Advance(unsigned clocks);
@@ -34,6 +35,7 @@ private:
     std::array<int64_t, 2> value{};
     std::array<int, 2> input{};
     SoundChannels::Signal signal{};
+    uint8_t code = 0;
     double charge = 0;
   };
 
@@ -56,6 +58,7 @@ private:
   void Change(uint64_t clock, unsigned channel, unsigned level, int phaseOffset);
   void AdvancePhase(uint64_t clock);
   void FlushSound(uint64_t clock);
+  void CommitSamples();
   void Render();
 };
 
