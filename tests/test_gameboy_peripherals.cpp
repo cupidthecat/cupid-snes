@@ -132,12 +132,23 @@ std::vector<Write> Fixture(unsigned which) {
   return writes;
 }
 
-struct System final : Audio::Output {
+struct System final : Audio::Output, Video::Output {
   Host host;
-  Peripherals devices{host, *this};
+  Peripherals devices{*this, *this};
   Machine machine{host, devices};
+  std::vector<uint8_t> pixels;
   unsigned samples = 0;
   uint64_t digest = 14695981039346656037ull, lastSample = 0;
+  void BeginFrame() override {
+    host.BeginFrame();
+  }
+  void BeginLine() override {
+    host.BeginLine();
+  }
+  void Pixel(uint8_t shade) override {
+    host.Pixel(shade);
+    pixels.push_back(shade);
+  }
   void Sample(uint64_t clock, int16_t left, int16_t right) override {
     Check(clock > lastSample, "Audio callbacks keep increasing device clocks");
     lastSample = clock;
@@ -166,6 +177,7 @@ struct System final : Audio::Output {
     samples = 0;
     digest = 14695981039346656037ull;
     lastSample = 0;
+    pixels.clear();
   }
 };
 
@@ -299,6 +311,51 @@ void ObjectMemoryExecution() {
   }
 }
 
+void SharedObjectBusLatches() {
+  std::array<uint8_t, 8192> ram{};
+  for (unsigned tile = 0; tile < 384; ++tile)
+    for (unsigned y = 0; y < 8; ++y)
+      for (unsigned x = 0; x < 8; ++x) {
+        const unsigned color = (tile + (tile >> 8) * 2 + x + y * 3) & 3;
+        ram[tile * 16 + y * 2] |= uint8_t((color & 1) << (7 - x));
+        ram[tile * 16 + y * 2 + 1] |= uint8_t((color >> 1) << (7 - x));
+      }
+  for (unsigned i = 0; i < 1024; ++i) {
+    ram[0x1800 + i] = uint8_t(i * 13 + (i / 32) * 7);
+    ram[0x1c00 + i] = uint8_t(3 + (i % 4) * 7 + (i / 32) * 5);
+  }
+  for (bool secondModel : {false, true}) {
+    System system;
+    system.Load(secondModel, {0});
+    for (unsigned i = 0; i < ram.size(); ++i)
+      system.devices.Write(uint16_t(0x8000 + i), ram[i], Machine::Access::Dma);
+    for (unsigned i = 0; i < 40; ++i)
+      for (const auto [offset, value] :
+           std::array<std::pair<unsigned, uint8_t>, 4>{{{0, 17},
+                                                        {1, uint8_t(i * 13 + 8)},
+                                                        {2, uint8_t(i * 7 + 5)},
+                                                        {3, uint8_t((i & 3) * 0x20)}}})
+        system.devices.Write(uint16_t(0xfe00 + i * 4 + offset), value, Machine::Access::Dma);
+    for (const auto [address, value] : std::array<Write, 5>{
+             {{0xff43, 3}, {0xff47, 0xe4}, {0xff48, 0xe4}, {0xff49, 0x1b}, {0xff4b, 80}}})
+      system.machine.WriteMemory(address, value);
+    system.machine.WriteMemory(0xff40, 0x93);
+    for (unsigned i = 0; i < 160; ++i)
+      system.machine.WriteMemory(uint16_t(0xd000 + i), uint8_t(i * 41 + 17));
+    system.machine.AdvanceHardware(468);
+    system.machine.WriteMemory(0xff46, 0xd0);
+    system.machine.AdvanceHardware(12);
+    Check(system.machine.ReadMemory(0xfe20) == 0xff,
+          "DMA retains the CPU object-memory read restriction");
+    system.machine.AdvanceHardware(1600);
+    uint64_t hash = 14695981039346656037ull;
+    for (auto shade : system.pixels)
+      hash = (hash ^ shade) * 1099511628211ull;
+    Check(system.pixels.size() == 787 && hash == 0xc8a8b6f27e91b7d4ull,
+          "Sprite flags and scan coordinates retain their shared bus latches across DMA");
+  }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -322,6 +379,7 @@ int main() {
     InfraredExecution();
     ClockCommandExecution();
     ObjectMemoryExecution();
+    SharedObjectBusLatches();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

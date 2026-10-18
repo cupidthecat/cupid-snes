@@ -250,6 +250,43 @@ void ObjectPlanePhases() {
   }
 }
 
+void ObjectQueueTiming() {
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    const auto measure = [&](unsigned scroll, const std::vector<unsigned> &positions) {
+      System system;
+      system.video.Reset(secondModel);
+      for (unsigned i = 0; i < positions.size(); ++i) {
+        system.video.Write(uint16_t(0xfe00 + i * 4), 17);
+        system.video.Write(uint16_t(0xfe01 + i * 4), uint8_t(positions[i]));
+      }
+      system.video.Write(0xff43, uint8_t(scroll));
+      system.video.Write(0xff40, 0x93);
+      system.Step(534);
+      unsigned clocks = 0;
+      while ((system.video.Read(0xff41) & 3) == 3 && clocks < 400) {
+        system.Step(1);
+        ++clocks;
+      }
+      Check(clocks < 400, "Object fetches finish within the visible line");
+      for (unsigned shift : {0u, 8u})
+        digest = (digest ^ uint8_t(clocks >> shift)) * 1099511628211ull;
+    };
+    for (unsigned scroll = 0; scroll < 8; ++scroll)
+      for (unsigned x = 0; x <= 16; ++x)
+        measure(scroll, {x});
+    for (unsigned scroll = 0; scroll < 8; ++scroll)
+      for (unsigned x = 1; x <= 24; ++x)
+        for (unsigned gap = 0; gap < 10; ++gap)
+          measure(scroll, {x, x + gap});
+    for (unsigned scroll = 0; scroll < 8; ++scroll)
+      for (unsigned x = 40; x < 56; ++x)
+        measure(scroll, {x, x + 1, x + 1});
+    Check(digest == 0xd876c89001c053e5ull,
+          "Hidden and overlapping objects preserve every background queue timing fixture");
+  }
+}
+
 void LateEnableAndShutdown() {
   System window;
   window.video.Write(0xff4b, 80);
@@ -324,6 +361,21 @@ void LiveScrollFetches() {
 }
 
 void ClippedWindowDataAndFetchDelay() {
+  System fineWindow;
+  for (unsigned row = 0; row < 8; ++row) {
+    fineWindow.video.Write(uint16_t(0x8030 + row * 2), 0x55);
+    fineWindow.video.Write(uint16_t(0x8031 + row * 2), 0x33);
+  }
+  fineWindow.video.Write(0xff43, 7);
+  fineWindow.video.Write(0xff4b, 0);
+  fineWindow.video.Write(0xff40, 0xf1);
+  fineWindow.Step(114);
+  Check(fineWindow.screen.pixels.size() == 8 && fineWindow.screen.pixels[0].clock == 107,
+        "A left-edge window with maximum fine scroll retains its startup timing");
+  for (unsigned i = 0; i < 8; ++i)
+    Check(fineWindow.screen.pixels[i].shade == ((i + 2) & 3),
+          "The window trigger inserts its hidden pixel without consuming tile data");
+
   for (unsigned wx : {0u, 1u, 166u}) {
     System system;
     for (unsigned row = 0; row < 8; ++row) {
@@ -391,6 +443,7 @@ int main() {
     WindowEdges();
     ObjectBackgroundAndWindowTiming();
     ObjectPlanePhases();
+    ObjectQueueTiming();
     LateEnableAndShutdown();
     LiveScrollFetches();
     ClippedWindowDataAndFetchDelay();

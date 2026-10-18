@@ -15,15 +15,12 @@ void Video::Reset(bool secondModel) {
   line_ = ly_ = mode_ = blocked_ = 0;
   irqMode_ = 0xff;
   comparisonLine_ = -1;
-  fifoHead_ = fifoSize_ = fetchPhase_ = fetchX_ = tile_ = low_ = high_ = fine_ = x_ = 0;
+  fifoHead_ = fifoSize_ = fetchPhase_ = fetchX_ = tile_ = low_ = high_ = x_ = 0;
+  position_ = -16;
+  mapAddress_ = dataAddress_ = 0;
   scrollFine_ = 0;
-  scrollDiscard_ = 0;
-  scrollLatched_ = false;
-  windowFine_ = 0;
-  leftWindowScan_ = leftWindowExtra_ = leftWindowPending_ = false;
-  objectCount_ = objectStall_ = fetchingObject_ = windowLine_ = windowStall_ = 0;
-  backgroundResume_ = 0;
-  lastObjectX_ = -1;
+  objectCount_ = objectStall_ = fetchingObject_ = windowLine_ = 0;
+  objectPending_ = windowStarting_ = insertBackground_ = false;
   warm_ = true;
   coincidence_ = irqLine_ = stopped_ = false;
   windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
@@ -79,8 +76,10 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
       windowLine_ = 0;
       windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
     }
-    if ((previous & 2) && !(value & 2))
+    if ((previous & 2) && !(value & 2)) {
       objectStall_ = 0;
+      objectPending_ = false;
+    }
   }
   if (reg == 5)
     CompareLine(comparisonLine_);
@@ -269,14 +268,13 @@ void Video::BeginTransfer() {
   blocked_ = 15;
   transferClocks_ = 0;
   fifoHead_ = fifoSize_ = fetchPhase_ = fetchX_ = 0;
-  fine_ = scrollDiscard_ = 0;
+  // The initial queue covers hidden pixels before the first tile arrives.
+  fifo_.fill(0);
+  fifoSize_ = 8;
+  position_ = -16;
   scrollFine_ = registers_[3] & 7;
-  scrollLatched_ = false;
-  windowFine_ = 0;
-  leftWindowScan_ = leftWindowExtra_ = leftWindowPending_ = false;
-  x_ = objectStall_ = windowStall_ = 0;
-  backgroundResume_ = 0;
-  lastObjectX_ = -1;
+  x_ = objectStall_ = 0;
+  objectPending_ = windowStarting_ = insertBackground_ = false;
   windowReached_ |= line_ == registers_[10];
   windowActive_ = lateWindow_ && (registers_[0] & 0x21) == 0x21;
   windowUsed_ = windowActive_;
@@ -294,95 +292,102 @@ uint16_t Video::TileAddress() const {
 }
 
 void Video::FetchBackground() {
-  const auto push = [&] {
-    for (unsigned bit = 0; bit < 8; ++bit) {
-      const auto color = uint8_t(((low_ >> (7 - bit)) & 1) | (((high_ >> (7 - bit)) & 1) << 1));
-      fifo_[(fifoHead_ + fifoSize_) & 15] = color;
-      ++fifoSize_;
-    }
-    ++fetchX_;
-    fetchPhase_ = 0;
-  };
-  if (fetchPhase_ == 8) {
-    if (fifoSize_ <= 8)
-      push();
+  switch (fetchPhase_) {
+  case MapAddress: {
+    const unsigned y = windowActive_ ? windowLine_ : uint8_t(line_ + registers_[2]);
+    const unsigned column = windowActive_    ? fetchX_
+                            : position_ < -8 ? registers_[3] / 8
+                                             : unsigned(position_ + 8 + registers_[3]) / 8;
+    const unsigned map = registers_[0] & (windowActive_ ? 0x40 : 8) ? 0x1c00 : 0x1800;
+    mapAddress_ = uint16_t(map + (y / 8) * 32 + (column & 31));
+    break;
+  }
+  case MapRead:
+    SynchronizeDma();
+    tile_ = vram_[mapAddress_];
+    break;
+  case LowerAddress:
+    dataAddress_ = TileAddress();
+    break;
+  case LowerRead:
+    SynchronizeDma();
+    low_ = vram_[dataAddress_];
+    break;
+  case UpperAddress:
+    dataAddress_ = uint16_t(TileAddress() + 1);
+    break;
+  case UpperRead:
+    SynchronizeDma();
+    high_ = vram_[dataAddress_];
+    if (windowActive_)
+      ++fetchX_;
+    break;
+  }
+  if (fetchPhase_ < UpperRead) {
+    ++fetchPhase_;
     return;
   }
-  ++fetchPhase_;
-  if (fetchPhase_ == 2) {
-    SynchronizeDma();
-    const unsigned y = windowActive_ ? windowLine_ : uint8_t(line_ + registers_[2]);
-    const unsigned x = windowActive_ ? fetchX_
-                                     : unsigned((int(registers_[3]) + int(fetchX_) * 8 -
-                                                 (fetchX_ ? int(scrollDiscard_) : 0)) >>
-                                                3);
-    const unsigned map = registers_[0] & (windowActive_ ? 0x40 : 8) ? 0x1c00 : 0x1800;
-    tile_ = vram_[map + (y / 8) * 32 + (x & 31)];
-  }
-  if (fetchPhase_ == 4) {
-    SynchronizeDma();
-    low_ = vram_[TileAddress()];
-  }
-  if (fetchPhase_ == 6) {
-    SynchronizeDma();
-    high_ = vram_[TileAddress() + 1];
-  }
-  if (fetchPhase_ == 8 && fifoSize_ <= 8)
-    push();
+  fetchPhase_ = QueueWrite;
+  if (fifoSize_)
+    return;
+  for (unsigned bit = 0; bit < 8; ++bit)
+    fifo_[(fifoHead_ + bit) & 7] =
+        uint8_t(((low_ >> (7 - bit)) & 1) | (((high_ >> (7 - bit)) & 1) << 1));
+  fifoSize_ = 8;
+  fetchPhase_ = MapAddress;
 }
 
-bool Video::StartWindow(int fine) {
+bool Video::StartWindow() {
   if (windowChanged_ || windowActive_ || !windowReached_ || (registers_[0] & 0x21) != 0x21 ||
-      registers_[11] >= 166 || (registers_[11] == 0 && !leftWindowPending_) ||
-      x_ != std::max(0, int(registers_[11]) - 7))
+      registers_[11] >= 166)
     return false;
-  windowActive_ = windowUsed_ = true;
-  backgroundResume_ = 0;
-  const unsigned clip =
-      fine >= 0 ? unsigned(8 + fine - (fine == 7)) : unsigned(std::max(0, 7 - int(registers_[11])));
-  fifoHead_ = fifoSize_ = 0;
-  fetchX_ = uint8_t(clip / 8);
-  fetchPhase_ = 1;
-  FetchBackground();
-  if (clip & 7) {
-    // The hidden left edge is fetched before visible window output starts.
-    for (unsigned phase = 0; phase < 6; ++phase)
-      FetchBackground();
-    fifoHead_ = uint8_t(clip & 7);
-    fifoSize_ = uint8_t(fifoSize_ - (clip & 7));
-    fetchPhase_ = 1;
-  }
-  windowStall_ = uint8_t(fine >= 0 ? 8 : 6 + (registers_[11] == 0 && leftWindowExtra_ ? 1 : 0));
-  return true;
+  const bool left = registers_[11] == 0;
+  const bool match = left ? position_ == -7 || (position_ >= -16 && position_ <= -8 &&
+                                                (position_ != -16 || (registers_[3] & 7)))
+                          : position_ == int(registers_[11]) - 7;
+  if (!match)
+    return false;
+  windowActive_ = windowUsed_ = windowStarting_ = true;
+  fifoHead_ = fifoSize_ = fetchPhase_ = fetchX_ = 0;
+  return left && (registers_[3] & 7);
 }
 
 bool Video::StartObject() {
   if (!(registers_[0] & 2))
     return false;
+  const int trigger = std::max(0, int(position_) + 8);
   unsigned choice = objectCount_;
   for (unsigned i = 0; i < objectCount_; ++i) {
     const auto &object = objects_[i];
-    if (object.fetched || object.x >= 168 || std::max(0, int(object.x) - 8) != x_)
+    if (object.fetched || object.x >= 168 || object.x != trigger)
       continue;
-    if (choice == objectCount_ || object.x < objects_[choice].x ||
-        (object.x == objects_[choice].x && object.index < objects_[choice].index))
+    if (choice == objectCount_ || object.index < objects_[choice].index)
       choice = i;
   }
   if (choice == objectCount_)
     return false;
-  auto &object = objects_[choice];
-  object.fetched = true;
+  objects_[choice].fetched = true;
   fetchingObject_ = uint8_t(choice);
-  const unsigned phase =
-      (windowActive_ ? object.x + 7 - registers_[11] : object.x + scrollFine_) & 7;
-  const unsigned align = int(object.x) == lastObjectX_ ? 0
-                         : object.x == 0               ? 5
-                         : phase < 5                   ? 5 - phase
-                                                       : 0;
-  lastObjectX_ = object.x;
-  objectStall_ = uint8_t(6 + align);
-  FetchObject();
+  objectPending_ = true;
   return true;
+}
+
+bool Video::AdvanceObject() {
+  if (objectPending_) {
+    // The background completes its bitplanes before yielding the fetch bus.
+    const bool ready = fetchPhase_ >= UpperRead && fifoSize_ != 0;
+    FetchBackground();
+    if (ready) {
+      objectPending_ = false;
+      objectStall_ = 6;
+    }
+    return true;
+  }
+  if (objectStall_ == 6)
+    FetchBackground();
+  --objectStall_;
+  FetchObject();
+  return objectStall_ != 0;
 }
 
 void Video::FetchObject() {
@@ -390,7 +395,8 @@ void Video::FetchObject() {
   if (objectStall_ == 5) {
     SynchronizeDma();
     scanY_ = ReadObject(uint8_t(object.index * 4 + 2));
-    object.flags = ReadObject(uint8_t(object.index * 4 + 3));
+    scanX_ = ReadObject(uint8_t(object.index * 4 + 3));
+    object.flags = scanX_;
     object.address = uint16_t(scanY_ * 16);
   }
   if (objectStall_ == 3 || objectStall_ == 1) {
@@ -439,70 +445,56 @@ uint8_t Video::Shade(uint8_t background) const {
 
 void Video::Transfer() {
   ++transferClocks_;
-  if (objectStall_) {
-    if (objectStall_ > 6)
-      FetchBackground();
-    --objectStall_;
-    FetchObject();
-    if (objectStall_)
-      return;
-    backgroundResume_ = windowActive_ ? 0 : 3;
-  }
-  const bool leftWindow =
-      !windowActive_ && windowReached_ && registers_[11] == 0 && (registers_[0] & 0x21) == 0x21;
-  if (transferClocks_ == 5)
-    leftWindowPending_ = leftWindow;
-  if (transferClocks_ == 5 && leftWindow && (registers_[3] & 7)) {
-    leftWindowScan_ = true;
-    scrollLatched_ = true;
-    fine_ = scrollDiscard_ = 0;
-  }
-  if (transferClocks_ == 6 && leftWindow)
-    leftWindowExtra_ = leftWindowScan_ || (registers_[3] & 7);
-  if (!scrollLatched_ && transferClocks_ >= 5) {
-    if ((fine_ & 7) == (registers_[3] & 7)) {
-      scrollLatched_ = true;
-      scrollFine_ = registers_[3] & 7;
-    } else {
-      ++fine_;
-    }
-    scrollDiscard_ = fine_;
-  }
-  if (backgroundResume_)
-    --backgroundResume_;
-  else if (transferClocks_ > 3)
-    FetchBackground();
-  if (windowStall_) {
-    if (--windowStall_)
+  if (transferClocks_ <= 4)
+    return;
+  if (objectPending_ || objectStall_) {
+    if (AdvanceObject())
       return;
   }
-  if (leftWindowScan_ && !windowActive_) {
-    if (transferClocks_ >= 12) {
-      if ((windowFine_ & 7) == (registers_[3] & 7))
-        StartWindow(int(windowFine_));
-      else
-        ++windowFine_;
+  if (StartWindow())
+    return;
+  if (windowActive_ && !windowStarting_ && int(registers_[11]) == position_ + 7 &&
+      fetchPhase_ == MapAddress && fifoSize_ == 8)
+    insertBackground_ = true;
+  if (StartObject()) {
+    AdvanceObject();
+    return;
+  }
+  if (fifoSize_) {
+    auto color = insertBackground_ ? uint8_t(0) : fifo_[fifoHead_];
+    if (insertBackground_)
+      insertBackground_ = false;
+    else {
+      fifoHead_ = uint8_t((fifoHead_ + 1) & 7);
+      --fifoSize_;
     }
-    return;
+    bool advance = true;
+    if (position_ < -8) {
+      const auto fine = uint8_t(position_) & 7;
+      if (fine == (registers_[3] & 7) ||
+          (windowStarting_ && fine == 6 && (registers_[3] & 7) == 7)) {
+        position_ = -8;
+        scrollFine_ = registers_[3] & 7;
+      } else if (position_ == -9) {
+        position_ = -16;
+        advance = false;
+      }
+    }
+    if (position_ >= 0) {
+      const bool emptyWindowEdge =
+          windowActive_ && lateWindow_ && registers_[11] == 166 && scrollFine_ == 1 && x_ == 159;
+      if (!(registers_[0] & 1) || emptyWindowEdge)
+        color = 0;
+      output_.Pixel(Shade(color));
+      ++x_;
+    }
+    if (advance) {
+      ++position_;
+      windowStarting_ = false;
+    }
   }
-  if (!scrollLatched_ || transferClocks_ <= 12 + scrollDiscard_ || fifoSize_ == 0)
-    return;
-  while (fine_ && fifoSize_) {
-    --fine_;
-    fifoHead_ = uint8_t((fifoHead_ + 1) & 15);
-    --fifoSize_;
-  }
-  if (fifoSize_ == 0)
-    return;
-  if (StartWindow() || StartObject())
-    return;
-  const bool emptyWindowEdge =
-      windowActive_ && lateWindow_ && registers_[11] == 166 && scrollFine_ == 1 && x_ == 159;
-  const auto color = (registers_[0] & 1) && !emptyWindowEdge ? fifo_[fifoHead_] : 0;
-  output_.Pixel(Shade(color));
-  fifoHead_ = uint8_t((fifoHead_ + 1) & 15);
-  --fifoSize_;
-  if (++x_ == 160) {
+  FetchBackground();
+  if (x_ == 160) {
     lateWindow_ = windowReached_ && registers_[11] == 166 && (registers_[0] & 0x21) == 0x21;
     mode_ = 0;
     blocked_ = 0;

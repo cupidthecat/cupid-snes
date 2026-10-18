@@ -48,6 +48,15 @@ public:
   }
 
 private:
+  enum : uint8_t {
+    MapAddress,
+    MapRead,
+    LowerAddress,
+    LowerRead,
+    UpperAddress,
+    UpperRead,
+    QueueWrite
+  };
   struct Object {
     uint8_t index = 0, x = 0, y = 0, flags = 0;
     uint16_t address = 0;
@@ -60,21 +69,19 @@ private:
   Oam oam_;
   std::function<void()> dmaSynchronizer_;
   std::array<uint8_t, 12> registers_{};
-  std::array<uint8_t, 16> fifo_{};
+  std::array<uint8_t, 8> fifo_{};
   std::array<Object, 10> objects_{};
   uint16_t dot_ = 0, transferClocks_ = 0, hblankDot_ = 0;
   uint8_t line_ = 0, ly_ = 0, mode_ = 0, irqMode_ = 0xff, blocked_ = 0;
   int comparisonLine_ = -1;
   uint8_t fifoHead_ = 0, fifoSize_ = 0, fetchPhase_ = 0, fetchX_ = 0;
   uint8_t tile_ = 0, low_ = 0, high_ = 0, x_ = 0;
-  uint16_t fine_ = 0, scrollDiscard_ = 0;
-  bool scrollLatched_ = false;
-  uint16_t windowFine_ = 0;
-  bool leftWindowScan_ = false, leftWindowExtra_ = false, leftWindowPending_ = false;
+  int16_t position_ = -16;
+  uint16_t mapAddress_ = 0, dataAddress_ = 0;
   uint8_t scrollFine_ = 0;
-  uint8_t objectCount_ = 0, objectStall_ = 0, fetchingObject_ = 0, backgroundResume_ = 0;
-  uint8_t windowLine_ = 0, windowStall_ = 0;
-  int lastObjectX_ = -1;
+  uint8_t objectCount_ = 0, objectStall_ = 0, fetchingObject_ = 0;
+  uint8_t windowLine_ = 0;
+  bool objectPending_ = false, windowStarting_ = false, insertBackground_ = false;
   bool warm_ = true, coincidence_ = false, irqLine_ = false, stopped_ = false;
   bool secondModel_ = false, windowReached_ = false, windowActive_ = false;
   bool windowUsed_ = false, lateWindow_ = false;
@@ -93,8 +100,9 @@ private:
   void Transfer();
   void FetchBackground();
   uint16_t TileAddress() const;
-  bool StartWindow(int fine = -1);
+  bool StartWindow();
   bool StartObject();
+  bool AdvanceObject();
   void FetchObject();
   uint8_t Shade(uint8_t background) const;
 };
