@@ -233,6 +233,9 @@ void SignalFallbackRegressions() {
 void BroadcastControllerCpu() {
   auto bios = Rom(0x20, 0);
   std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
+  std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
+  bios[0x7fda] = 0x33;
+  bios[0x7fd8] = 5;
   auto machine = std::make_unique<Emulator>();
   Program program;
   program.Read(0x025000, 0);
@@ -256,14 +259,19 @@ void BroadcastControllerCpu() {
 void BroadcastBus() {
   auto bios = Rom(0x20, 0);
   std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
+  std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
+  bios[0x7fda] = 0x33;
+  bios[0x7fd8] = 5;
   auto machine = std::make_unique<Emulator>();
   Check(machine->LoadCartridge(bios) &&
             machine->LoadedCartridge()->Header().mapping == MappingType::Bsx,
         "An ordinary BIOS load selects the BS-X memory controller");
-  machine->GetCpu()->Step();
   Check(machine->LoadedCartridge()->SramData().size() == 0x8000 &&
-            machine->LoadedCartridge()->MemoryPackData().size() == 0x100000,
-        "BIOS-only loading supplies battery RAM and a blank one-MiB flash pack");
+            machine->LoadedCartridge()->MemoryPackData().empty(),
+        "BIOS-only loading supplies declared battery RAM and retains an empty slot");
+  const std::vector<uint8_t> blankPack(0x100000, 0xff);
+  Check(machine->LoadBroadcastCartridge(bios, blankPack), "A supplied blank flash pack loads");
+  machine->GetCpu()->Step();
   auto &bus = machine->GetBus();
   Check(bus.Read(0x802196) == 0 && bus.Read(0x002197) == 0,
         "Broadcast registers are installed in CPU system banks");

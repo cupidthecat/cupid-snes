@@ -75,6 +75,37 @@ std::optional<FirmwareKind> SignalFirmware(const RomHeader &header) {
   }
 }
 
+size_t AppendedFirmwareSize(const RomHeader &header, std::span<const uint8_t> image) {
+  // Trailer layout follows the raw header even when an identifier selects
+  // different board hardware.
+  const uint8_t family = header.cartridgeType >> 4;
+  const uint8_t device = header.cartridgeType & 15;
+  const uint8_t subtype = image[header.headerOffset - 1];
+  size_t bytes = 0;
+  size_t alignment = 0x8000;
+  if (device >= 3) {
+    if (family == 0)
+      bytes = 0x2000;
+    if (family == 15) {
+      if (subtype == 0x10)
+        bytes = 0xc00;
+      if (subtype == 1) {
+        bytes = 0xd000;
+        alignment = 0x10000;
+      }
+      if (subtype == 2) {
+        bytes = 0x28000;
+        alignment = 0x40000;
+      }
+    }
+  }
+  const auto identifier = image.subspan(header.headerOffset - 14, 4);
+  if ((family == 14 && device == 3) ||
+      (header.maker == 0x33 && std::equal(identifier.begin(), identifier.end(), "042J")))
+    bytes = 0x100;
+  return bytes && image.size() > bytes && image.size() % alignment == bytes ? bytes : 0;
+}
+
 bool HasSignature(std::span<const uint8_t> bytes, size_t offset, std::string_view signature) {
   return offset <= bytes.size() && signature.size() <= bytes.size() - offset &&
          std::equal(signature.begin(), signature.end(), bytes.begin() + offset);
@@ -236,13 +267,11 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   cart.header_ = std::move(*header);
   const auto parsedMapping = cart.header_.mapping;
   std::vector<uint8_t> embeddedFirmware;
-  if (const auto kind = SignalFirmware(cart.header_)) {
-    const size_t size = CartridgeFirmware::Size(*kind);
-    const size_t alignment = size == 0x2000 || kind == FirmwareKind::Cx4 ? 0x8000 : 0x10000;
-    if (cart.rom_.size() > size && cart.rom_.size() % alignment == size % alignment) {
-      embeddedFirmware.assign(cart.rom_.end() - size, cart.rom_.end());
-      cart.rom_.resize(cart.rom_.size() - size);
-    }
+  if (const size_t trailer = AppendedFirmwareSize(cart.header_, cart.rom_)) {
+    if (const auto kind = SignalFirmware(cart.header_);
+        kind && CartridgeFirmware::Size(*kind) == trailer)
+      embeddedFirmware.assign(cart.rom_.end() - trailer, cart.rom_.end());
+    cart.rom_.resize(cart.rom_.size() - trailer);
   }
   cart.romCrc32_ = ComputeCrc32(cart.rom_);
   cart.memselFast_ = false;
@@ -251,7 +280,8 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Sdd1;
   if (cart.header_.chip == EnhancementChip::St010)
     cart.header_.mapping = MappingType::St010;
-  if (cart.header_.chip == EnhancementChip::Sa1)
+  if (cart.header_.chip == EnhancementChip::Sa1 &&
+      cart.header_.mapping != MappingType::BroadcastSa1)
     cart.header_.mapping = MappingType::Sa1;
   if (cart.header_.chip == EnhancementChip::SuperFx)
     cart.header_.mapping = MappingType::SuperFx;
@@ -260,11 +290,6 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.header_.mapping = MappingType::Spc7110;
   if (cart.header_.chip == EnhancementChip::St011)
     cart.header_.mapping = MappingType::St011;
-  if (cart.rom_.size() == 0x100000 && HasSignature(cart.rom_, 0x7fc0, "Satellaview BS-X     ")) {
-    cart.header_.mapping = MappingType::Bsx;
-    cart.header_.chip = EnhancementChip::None;
-  }
-
   if (cart.rom_.size() == 0x40000 && HasSignature(cart.rom_, 0, "BANDAI SFC-ADX") &&
       HasSignature(cart.rom_, 0x10, "SFC-ADX BACKUP")) {
     cart.header_.mapping = MappingType::SufamiTurbo;
@@ -351,14 +376,9 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   }
   if (cart.header_.chip == EnhancementChip::Sa1 || cart.header_.mapping == MappingType::Sa1) {
     cart.header_.chip = EnhancementChip::Sa1;
-    cart.header_.mapping = MappingType::Sa1;
+    if (cart.header_.mapping != MappingType::BroadcastSa1)
+      cart.header_.mapping = MappingType::Sa1;
     cart.sa1_ = std::make_unique<Sa1>(cart.rom_, cart.sram_);
-    if (cart.header_.maker == 0x33 &&
-        (HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZX3J") ||
-         HasSignature(cart.rom_, cart.header_.headerOffset - 14, "ZBPJ"))) {
-      cart.header_.mapping = MappingType::BroadcastSa1;
-      cart.sa1_->SetExpansionRom({});
-    }
   }
   if (cart.header_.chip == EnhancementChip::Spc7110 ||
       cart.header_.chip == EnhancementChip::Spc7110Rtc ||

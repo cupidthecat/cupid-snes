@@ -104,14 +104,14 @@ void Sa1Expansion() {
   Check(cart->Read(0xc01234) == rom[0x1234] && cart->Read(0x009234) == rom[0x1234],
         "MMC switches back to the base cartridge without replacing its ROM storage");
   cart->Write(0x2226, 0x80);
-  cart->Write(0x701234, 0x37);
-  Check(cart->Read(0x401234) == 0x37 && cart->Read(0x601234) == 0x37 &&
-            cart->Read(0x7c1234) == 0x37,
-        "Slot-board shared RAM aliases across the expanded console windows");
+  cart->Write(0x401234, 0x37);
+  Check(cart->Read(0x401234) == 0x37 && cart->Read(0x421234) == 0x37 &&
+            cart->Read(0x601234, 0x71) == 0x71 && cart->Read(0x7c1234, 0x71) == 0x71,
+        "A slot preserves normal shared RAM windows and leaves unconnected banks open");
   auto empty = Cartridge::FromBroadcastCartridge(rom, {});
   empty->Write(0x2220, 4);
-  Check(empty->Read(0xc01234, 0x71) == 0x71 && empty->Read(0x009234, 0x53) == 0x53,
-        "An absent expansion leaves its selected ROM bus undriven");
+  Check(empty->Read(0xc01234, 0x71) == rom[0x1234] && empty->Read(0x009234, 0x53) == rom[0x1234],
+        "An absent expansion retains base ROM mirroring in both windows");
   Check(!Cartridge::FromBroadcastCartridge(rom, std::span<const uint8_t>(expansion).first(4096)),
         "Invalid expansion sizes are rejected");
   auto machine = std::make_unique<Emulator>();
@@ -119,7 +119,7 @@ void Sa1Expansion() {
         "Slot-board loader connects SA-1 and its expansion");
   auto &bus = machine->GetBus();
   bus.Write(0x2226, 0x80);
-  bus.Write(0x721234, 0x6e);
+  bus.Write(0x421234, 0x6e);
   Check(bus.Read(0x401234) == 0x6e, "Expanded shared RAM is installed in the console bus");
   bus.Write(0x7e1234, 0x42);
   Check(bus.Read(0x7e1234) == 0x42 && bus.Read(0x401234) == 0x6e,
@@ -140,6 +140,28 @@ void Sa1Expansion() {
   processor.Reset();
   processor.WriteCpu(0x2220, 4);
   Check(processor.ReadSa1(0xc01234) == 0x62, "Processor reset preserves the attached expansion");
+
+  for (const size_t capacity : {0x100000, 0x200000, 0x400000}) {
+    std::vector<uint8_t> flash(capacity, 0xff);
+    flash[0x11234] = 0x57;
+    if (capacity > 0x100000)
+      flash[0x111234] = 0x9c;
+    auto slot = Cartridge::FromBroadcastCartridge(rom, flash);
+    Check(slot && slot->MemoryPackData().size() == capacity && !slot->MemoryPackMetadata().empty(),
+          "SA-1 flash slots retain physical storage and device metadata");
+    slot->Write(0x2220, 5);
+    Check(slot->Read(0xc11234) == 0x57 && slot->Read(0x009234) == rom[0x1234],
+          "Flash block addressing preserves the fixed base-ROM window");
+    slot->Write(0xc05555, 0x40);
+    slot->Write(0xc11234, 0);
+    Check(slot->Read(0xc11234) == 0x57, "SA-1 ROM writes do not forward flash command sequences");
+    flash[0x11234] = 0x6e;
+    Check(slot->LoadMemoryPack(flash), "SA-1 flash saves replace the attached array in place");
+    slot->Reset();
+    slot->Write(0x2220, 0x85);
+    Check(slot->Read(0xc11234) == 0x6e && slot->Read(0x029234) == 0x6e,
+          "Reset retains the flash device and both mapped read paths");
+  }
 }
 
 void SuperFxOscillator() {

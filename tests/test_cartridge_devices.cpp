@@ -52,6 +52,163 @@ std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &bytes) {
   return emu;
 }
 
+void IdentifiedSlotCartridges() {
+  auto ordinary = Rom();
+  const std::string_view biosTitle = "Satellaview BS-X     ";
+  std::copy(biosTitle.begin(), biosTitle.end(), ordinary.begin() + 0x7fc0);
+  auto cart = Cartridge::FromRomImage(ordinary, nullptr, nullptr, nullptr);
+  Check(cart && cart->Header().mapping == MappingType::LoRom && cart->SramData().empty() &&
+            cart->Read(0x025000, 0xa5) == 0xa5,
+        "A BIOS title alone does not connect a broadcast controller");
+
+  for (const auto [mode, expected] : {std::tuple{uint8_t(0x20), MappingType::BroadcastLoRom},
+                                      std::tuple{uint8_t(0x21), MappingType::BroadcastHiRom},
+                                      std::tuple{uint8_t(0x23), MappingType::BroadcastSa1}}) {
+    const size_t header = mode == 0x21 ? 0xffc0 : 0x7fc0;
+    auto bytes = Rom(0x100000, mode);
+    std::copy_n("ZGNJ", 4, bytes.begin() + header - 14);
+    bytes[header + 0x1a] = 0x33;
+    bytes[header + 0x18] = 3;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->BoardConnected() && cart->Header().mapping == expected &&
+              cart->SramData().size() == 8192 && cart->MemoryPackData().empty(),
+          "A valid identifier selects its slot board without inserting a memory pack");
+    if (mode != 0x23) {
+      Check(cart->Read(mode == 0x21 ? 0x208123 : 0xc08123, 0x49) == 0x49,
+            "An absent ordinary memory slot preserves open bus");
+      auto machine = std::make_unique<Emulator>();
+      Check(machine->LoadBroadcastCartridge(bytes, {}), "An explicit empty slot loads");
+      machine->GetBus().Write(0x7e0000, 0x5b);
+      Check(machine->LoadedCartridge()->MemoryPackData().empty() &&
+                machine->GetBus().Read(mode == 0x21 ? 0x208123 : 0xc08123) == 0x5b,
+            "Explicit slot loading retains physical absence");
+    }
+    bytes[header + 0x18] = 0;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && !cart->BoardConnected() && cart->SramData().empty() &&
+              cart->Read(0x008000, 0x79) == 0x79,
+          "Slot profiles without their declared RAM remain unconnected");
+  }
+
+  for (const uint8_t declaration : {3, 5, 7, 8}) {
+    auto bytes = Rom();
+    std::copy_n("ZBSJ", 4, bytes.begin() + 0x7fb2);
+    bytes[0x7fda] = 0x33;
+    bytes[0x7fd8] = declaration;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->Header().mapping == MappingType::Bsx &&
+              cart->SramData().size() == (size_t(1024) << declaration) &&
+              cart->Read(0x025000, 0) == 0x80 && cart->MemoryPackData().empty(),
+          "The mapper identifier selects hardware and retains its declared save capacity");
+    Check(cart->Read(0xc08123, 0x96) == 0x96,
+          "The mapper leaves an absent memory pack electrically unconnected");
+    if (declaration >= 7) {
+      cart->Write(0x105123, 0x47);
+      cart->Write(0x175abc, 0x63);
+      Check(cart->SramData()[0x10123] == 0x47 && cart->SramData()[0x17abc] == 0x63 &&
+                cart->SramData()[0x123] == 0xff,
+            "The mapper save window retains its connected bank address lines");
+    }
+  }
+
+  auto bytes = Rom();
+  std::copy_n("ZBSJ", 4, bytes.begin() + 0x7fb2);
+  bytes[0x7fda] = 0x33;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && !cart->BoardConnected() && cart->Read(0x025000, 0x47) == 0x47,
+        "The mapper profile requires save RAM before connecting its registers");
+  bytes[0x7fd8] = 3;
+  bytes[0x7fda] = 1;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && cart->Header().mapping == MappingType::LoRom && cart->Read(0x025000, 0x47) == 0x47,
+        "Legacy maker metadata does not enable an extended identifier");
+
+  for (const std::string_view identifier : {"ZgNJ", "ZGNE", "Z NJ", "ZG?J", "AGNJ"}) {
+    bytes = Rom();
+    std::copy(identifier.begin(), identifier.end(), bytes.begin() + 0x7fb2);
+    bytes[0x7fda] = 0x33;
+    bytes[0x7fd8] = 3;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->Header().mapping == MappingType::LoRom,
+          "Invalid or unrelated identifiers retain the ordinary board");
+  }
+
+  for (const uint8_t mode : {0x20, 0x21, 0x23}) {
+    const size_t header = mode == 0x21 ? 0xffc0 : 0x7fc0;
+    bytes = Rom(0x100000, mode, 0xf6);
+    std::copy_n("ZBSJ", 4, bytes.begin() + header - 14);
+    bytes[header + 0x1a] = 0x33;
+    bytes[header + 0x18] = 0;
+    bytes[header - 3] = 7;
+    bytes[header - 1] = 2;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->Header().mapping == MappingType::Bsx &&
+              cart->Header().chip == EnhancementChip::None &&
+              cart->RomData().size() == bytes.size() && cart->SramData().size() == 0x20000,
+          "A valid mapper ID precedes processor and firmware selection and accepts expansion RAM");
+  }
+
+  bytes = Rom(0x100000, 0x22, 0x45);
+  std::copy_n("ZGNJ", 4, bytes.begin() + 0x7fb2);
+  bytes[0x7fda] = 0x33;
+  bytes[0x7fd8] = 3;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && !cart->BoardConnected() && cart->Header().chip == EnhancementChip::None,
+        "A slot identifier with unsupported wiring does not connect the raw device family");
+
+  bytes = Rom();
+  std::copy_n("ZBSJ", 4, bytes.begin() + 0x7fb2);
+  bytes[0x7fda] = 0x33;
+  CartridgeDatabase database;
+  DatabaseOverride override;
+  override.forceMapping = MappingType::HiRom;
+  override.forceSramSize = 0x2000;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  database.AddOverride(cart->RomCrc32(), override);
+  cart = Cartridge::FromRomImage(bytes, nullptr, &database, nullptr);
+  Check(cart && cart->BoardConnected() && cart->Header().mapping == MappingType::HiRom &&
+            cart->SramData().size() == 0x2000 && cart->Read(0x025000, 0x47) == 0x47,
+        "An explicit database mapping takes precedence over automatic board selection");
+
+  bytes = Rom(0x200000);
+  std::copy_n("ZBSJ", 4, bytes.begin() + 0x7fb2);
+  bytes[0x7fda] = 0x33;
+  bytes[0x7fd8] = 3;
+  bytes[0x123] = 0x25;
+  bytes[0x100123] = 0xb7;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && cart->Read(0x008123) == 0x25 && cart->Read(0x208123) == 0xb7 &&
+            cart->Read(0x808123) == 0x25 && cart->Read(0xa08123) == 0xb7,
+        "Mapper BIOS windows retain the bank address line above one MiB");
+
+  bytes = Rom(0x128000, 0x20, 0xf6);
+  std::copy_n("ZGNJ", 4, bytes.begin() + 0x7fb2);
+  bytes[0x7fda] = 0x33;
+  bytes[0x7fd8] = 3;
+  bytes[0x7fbf] = 2;
+  cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+  Check(cart && cart->Header().chip == EnhancementChip::None &&
+            cart->RomData().size() == 0x100000 && !cart->HasArmProcessor(),
+        "A slot ID removes declared firmware trailers without connecting their processor");
+
+  for (const char *identifier : {"ZGNJ", "ZX3J", "ZBPJ"}) {
+    bytes = Rom(0x100000, 0x23);
+    std::copy_n(identifier, 4, bytes.begin() + 0x7fb2);
+    bytes[0x7fda] = 0x33;
+    bytes[0x7fd8] = 3;
+    cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    Check(cart && cart->Header().mapping == MappingType::BroadcastSa1,
+          "SA-1 slot selection accepts every valid broadcast identifier");
+    Check(cart->Read(0x500123, 0xa5) == 0xa5 && cart->Read(0x600123, 0xa5) == 0xa5,
+          "A memory slot does not enlarge the CPU's SA-1 RAM window");
+    for (unsigned page = 4; page < 8; ++page) {
+      cart->Write(0x002220, uint8_t(0x80 | page));
+      Check(cart->Read(0xc08123, 0xa5) == bytes[0x8123],
+            "An absent SA-1 expansion retains physical program-ROM mirroring");
+    }
+  }
+}
+
 void CompleteBoardProfiles() {
   const std::array<uint8_t, 8> program{0x78, 0xa9, 0x5a, 0x8f, 0, 0x10, 0x7e, 0xdb};
   for (const auto [size, mode, type, ram] :
@@ -797,8 +954,7 @@ void BroadcastBoards() {
   for (const bool hi : {false, true}) {
     auto base = Rom(0x200000, hi ? 0x21 : 0x20);
     const unsigned header = hi ? 0xffc0 : 0x7fc0;
-    base[header - 14] = 'Z';
-    base[header - 11] = 'J';
+    std::copy_n("ZGNJ", 4, base.begin() + header - 14);
     base[header + 0x1a] = 0x33;
     base[header + 0x18] = 3;
     base[0x8000] = 0x4c;
@@ -886,7 +1042,8 @@ void BroadcastBoards() {
     const std::vector<uint8_t> saved(data.begin(), data.end());
     Check(!emu->LoadMemoryPack(std::span(saved).first(50)), "Reject short memory-pack save");
     Check(bus.Read(port) == 0x64, "Invalid save leaves memory pack intact");
-    Check(emu->LoadBroadcastCartridge(base, {}, &error), "Blank memory pack loads");
+    const std::vector<uint8_t> blankPack(saved.size(), 0xff);
+    Check(emu->LoadBroadcastCartridge(base, blankPack, &error), "Supplied blank memory pack loads");
     Check(emu->LoadMemoryPack(saved) && bus.Read(port) == 0x64, "Memory pack save round trip");
     Check(emu->LoadMemoryPackMetadata(savedMetadata) &&
               emu->LoadedCartridge()->MemoryPackMetadata() == savedMetadata,
@@ -911,8 +1068,8 @@ void BroadcastBoards() {
   const std::string_view title = "SOUND NOVEL-TCOOL";
   std::fill_n(base.begin() + 0x7fc0, 21, ' ');
   std::copy(title.begin(), title.end(), base.begin() + 0x7fc0);
-  base[0x7fb2] = 'Z';
-  base[0x7fb5] = 'J';
+  std::copy_n("ZSTJ", 4, base.begin() + 0x7fb2);
+  base[0x7fd8] = 3;
   base[0x7fda] = 0x33;
   base[0x123] = 0x11;
   base[0x100123] = 0x22;
@@ -926,6 +1083,7 @@ void BroadcastBoards() {
 
 int main() {
   try {
+    IdentifiedSlotCartridges();
     CompleteBoardProfiles();
     HeaderRamDeclarations();
     BootHeaderRanking();

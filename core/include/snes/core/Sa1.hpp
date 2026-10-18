@@ -11,6 +11,8 @@
 
 namespace snes::core {
 
+class BsMemory;
+
 namespace detail {
 class ExecutionContext;
 }
@@ -30,11 +32,11 @@ public:
   void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
   bool CpuIrqPending() const noexcept;
   void SetPal(bool enabled) noexcept;
-  // BS-slot boards route ROM pages 4-7 to a separate read-only expansion.
-  // An empty span represents an unpopulated slot; Reset() preserves the board.
-  void SetExpansionRom(std::span<const uint8_t> bytes) noexcept {
+  // Populated memory slots supply ROM pages 4-7. An empty slot retains
+  // program-ROM mirroring. Reset() preserves the attached storage.
+  void SetExpansionRom(std::span<const uint8_t> bytes, const BsMemory *device = nullptr) noexcept {
     expansion_ = bytes;
-    broadcastBoard_ = true;
+    expansionDevice_ = device;
   }
 
   // Untimed accesses to the coprocessor's bus, useful to a debugger. Register
@@ -57,7 +59,7 @@ private:
 
   std::span<const uint8_t> rom_;
   std::span<const uint8_t> expansion_;
-  bool broadcastBoard_ = false;
+  const BsMemory *expansionDevice_ = nullptr;
   std::span<uint8_t> bwram_;
   std::array<uint8_t, 2048> iram_{};
   std::array<uint8_t, 256> registers_{};

@@ -15,10 +15,11 @@ bool HasWiring(const RomHeader &header, size_t romBytes, bool hasRam) {
   const bool high = header.mapping == MappingType::HiRom;
   switch (header.mapping) {
   case MappingType::Bsx:
-  case MappingType::SufamiTurbo:
   case MappingType::BroadcastLoRom:
   case MappingType::BroadcastHiRom:
   case MappingType::BroadcastSa1:
+    return hasRam;
+  case MappingType::SufamiTurbo:
   case MappingType::Competition92:
   case MappingType::Competition94:
     return true;
@@ -58,6 +59,38 @@ bool HasWiring(const RomHeader &header, size_t romBytes, bool hasRam) {
 }
 
 } // namespace
+
+void SelectRomBoard(RomHeader &header, std::span<const uint8_t> image) {
+  if (header.maker != 0x33)
+    return;
+  const auto identifier = image.subspan(header.headerOffset - 14, 4);
+  const auto valid = [](uint8_t value) {
+    return (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z');
+  };
+  if (!std::all_of(identifier.begin(), identifier.end(), valid) || identifier[0] != 'Z' ||
+      identifier[3] != 'J')
+    return;
+  header.chip = EnhancementChip::None;
+  if (identifier[1] == 'B' && identifier[2] == 'S') {
+    header.mapping = MappingType::Bsx;
+    return;
+  }
+  switch (header.mapping) {
+  case MappingType::LoRom:
+    header.mapping = MappingType::BroadcastLoRom;
+    break;
+  case MappingType::HiRom:
+    header.mapping = MappingType::BroadcastHiRom;
+    break;
+  case MappingType::Sa1:
+    header.mapping = MappingType::BroadcastSa1;
+    header.chip = EnhancementChip::Sa1;
+    break;
+  default:
+    header.mapping = MappingType::Unknown;
+    break;
+  }
+}
 
 RomBoardProfile ResolveRomBoardProfile(const RomHeader &header, size_t romBytes,
                                        std::optional<size_t> forcedRam, bool forcedMapping) {

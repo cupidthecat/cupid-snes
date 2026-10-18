@@ -122,6 +122,9 @@ void SufamiStorage() {
 void BroadcastStorage() {
   auto bios = Image();
   std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
+  std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
+  bios[0x7fda] = 0x33;
+  bios[0x7fd8] = 5;
   auto cart = Cartridge::FromBroadcastCartridge(bios, {});
   Check(cart && cart->Header().mapping == MappingType::Bsx && cart->SramData().size() == 0x8000,
         "The broadcast base cartridge exposes its save storage");

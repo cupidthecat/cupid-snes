@@ -1,5 +1,6 @@
 // SA-1 bus, register file, and processor scheduling.
 #include "snes/core/Sa1.hpp"
+#include "snes/core/BsMemory.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
 
 #include <algorithm>
@@ -33,7 +34,7 @@ void Sa1::Reset(std::span<const uint8_t> rom, std::span<uint8_t> bwram) {
   rom_ = rom;
   bwram_ = bwram;
   expansion_ = {};
-  broadcastBoard_ = false;
+  expansionDevice_ = nullptr;
   Reset();
 }
 
@@ -219,7 +220,7 @@ void Sa1::ClockAccess(uint32_t address) {
   if (RomAddress(address)) {
     if (CpuRomConflict())
       Clock(2);
-  } else if (BwramAddress(address, broadcastBoard_ ? 0x7d : 0x6f)) {
+  } else if (BwramAddress(address, 0x6f)) {
     Clock(2);
     for (unsigned phase = 0; phase < 2; ++phase)
       if (CpuBwramConflict())
@@ -334,8 +335,6 @@ bool Sa1::RomOffset(uint32_t address, uint32_t &offset) const noexcept {
     const unsigned block = ((bank & 0x80) >> 6) | ((bank & 0x20) >> 5);
     const uint8_t mapping = registers_[0x20 + block];
     unsigned page = (mapping & 0x80) ? (mapping & 7) : block;
-    if (broadcastBoard_ && (mapping & 7) >= 4 && !(mapping & 0x80))
-      page += 4;
     offset = page * 0x100000 + uint32_t(bank & 0x1f) * 0x8000 + (address & 0x7fff);
     return true;
   }
@@ -343,8 +342,9 @@ bool Sa1::RomOffset(uint32_t address, uint32_t &offset) const noexcept {
 }
 
 uint8_t Sa1::ReadRom(uint32_t offset, uint8_t openBus) const {
-  if (broadcastBoard_ && offset >= 0x400000)
-    return expansion_.empty() ? openBus : expansion_[Mirror(offset - 0x400000, expansion_.size())];
+  if (!expansion_.empty() && offset >= 0x400000)
+    return expansionDevice_ ? expansionDevice_->Read(offset, 0)
+                            : expansion_[Mirror(offset, expansion_.size())];
   return rom_.empty() ? openBus : rom_[Mirror(offset, rom_.size())];
 }
 
@@ -422,10 +422,8 @@ uint8_t Sa1::ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io) {
   }
   if (side == Side::Sa1 && bank >= 0x60 && bank <= 0x6f)
     return ReadBitmap(address & 0xfffff, openBus);
-  const auto lastLinearBank = broadcastBoard_ ? 0x7d : (side == Side::Sa1 ? 0x5f : 0x4f);
+  const auto lastLinearBank = side == Side::Sa1 ? 0x5f : 0x4f;
   if (bank >= 0x40 && bank <= lastLinearBank) {
-    if (broadcastBoard_)
-      address &= 0x1ffff;
     if (side == Side::Cpu && conversionActive_)
       return ReadConverted(address & 0x3ffff);
     return ReadBwram(address & 0x3ffff, openBus);
@@ -475,8 +473,8 @@ void Sa1::WriteMemory(uint32_t address, uint8_t value, Side side) {
   }
   if (side == Side::Sa1 && bank >= 0x60 && bank <= 0x6f)
     WriteBitmap(address & 0xfffff, value);
-  else if (bank >= 0x40 && bank <= (broadcastBoard_ ? 0x7d : (side == Side::Sa1 ? 0x5f : 0x4f)))
-    WriteBwram(address & (broadcastBoard_ ? 0x1ffff : 0x3ffff), value, side);
+  else if (bank >= 0x40 && bank <= (side == Side::Sa1 ? 0x5f : 0x4f))
+    WriteBwram(address & 0x3ffff, value, side);
 }
 
 bool Sa1::WritableRegister(uint16_t address, Side side) noexcept {
