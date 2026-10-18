@@ -41,8 +41,6 @@ public:
   }
   void WindowWrite(bool active) noexcept {
     windowWrite_ = active;
-    if (!active)
-      windowChanged_ = false;
   }
   uint8_t Blocked() const noexcept {
     return blocked_;
@@ -81,12 +79,12 @@ private:
   uint16_t mapAddress_ = 0, dataAddress_ = 0;
   uint8_t scrollFine_ = 0;
   uint8_t objectCount_ = 0, objectStall_ = 0, fetchingObject_ = 0;
-  uint8_t windowLine_ = 0;
-  bool objectPending_ = false, windowStarting_ = false, insertBackground_ = false;
+  uint8_t windowLine_ = 0xff, windowPhase_ = 0;
+  bool objectPending_ = false, objectAborted_ = false;
+  bool windowStarting_ = false, insertBackground_ = false;
   bool warm_ = true, coincidence_ = false, irqLine_ = false, stopped_ = false;
   bool secondModel_ = false, windowReached_ = false, windowActive_ = false;
-  bool windowUsed_ = false, lateWindow_ = false;
-  bool windowWrite_ = false, windowChanged_ = false;
+  bool lateWindow_ = false, windowWrite_ = false, windowCheck_ = false, windowReset_ = false;
   bool sleeping_ = false, vramRelease_ = false;
   uint16_t dmaSource_ = 0;
   uint8_t dmaPosition_ = 0xa1, scanY_ = 0, scanX_ = 0;
@@ -98,6 +96,7 @@ private:
   void SynchronizeDma();
   uint8_t UpdateInterrupt();
   void CompareLine(int line);
+  void CompareWindow();
   void EndLine();
   void BeginTransfer();
   void Transfer();

@@ -327,6 +327,225 @@ std::array<uint8_t, 8192> PatternedVideoRam() {
   return ram;
 }
 
+void WindowScene(System &system, bool secondModel, uint8_t lcd, uint8_t wy, uint8_t wx,
+                 uint8_t scroll = 0, bool objects = false,
+                 std::initializer_list<uint8_t> program = {0}) {
+  static const auto ram = PatternedVideoRam();
+  system.Load(secondModel, std::vector<uint8_t>(program));
+  for (unsigned i = 0; i < ram.size(); ++i)
+    system.devices.Write(uint16_t(0x8000 + i), ram[i], Machine::Access::Dma);
+  if (objects) {
+    constexpr std::array<unsigned, 10> positions{0, 1, 4, 8, 12, 14, 79, 80, 160, 167};
+    for (unsigned i = 0; i < positions.size(); ++i) {
+      const std::array<uint8_t, 4> object{17, uint8_t(positions[i]), uint8_t(i * 7 + 5),
+                                          uint8_t((i & 3) * 0x20)};
+      for (unsigned byte = 0; byte < object.size(); ++byte)
+        system.devices.Write(uint16_t(0xfe00 + i * 4 + byte), object[byte], Machine::Access::Dma);
+    }
+  }
+  for (const auto [address, value] : std::array<Write, 6>{{{0xff43, scroll},
+                                                           {0xff47, 0xe4},
+                                                           {0xff48, 0xe4},
+                                                           {0xff49, 0x1b},
+                                                           {0xff4a, wy},
+                                                           {0xff4b, wx}}})
+    system.machine.WriteMemory(address, value);
+  system.machine.WriteMemory(0xff40, lcd);
+}
+
+void AccumulatePixels(uint64_t &digest, const System &system) {
+  uint64_t hash = 14695981039346656037ull;
+  for (unsigned shift : {0u, 8u, 16u, 24u})
+    hash = (hash ^ uint8_t(system.pixels.size() >> shift)) * 1099511628211ull;
+  for (auto pixel : system.pixels)
+    hash = (hash ^ pixel) * 1099511628211ull;
+  for (unsigned shift = 0; shift < 64; shift += 8)
+    digest = (digest ^ uint8_t(hash >> shift)) * 1099511628211ull;
+}
+
+void WindowRegisterExecution() {
+  std::vector<Write> writes;
+  for (uint8_t value : {0x91, 0x93, 0x97, 0xb3, 0xf3})
+    writes.emplace_back(0xff40, value);
+  for (uint16_t address : {0xff42, 0xff43})
+    for (uint8_t value : {0, 1, 7, 255})
+      writes.emplace_back(address, value);
+  for (uint8_t value : {0, 7, 80, 166})
+    writes.emplace_back(0xff4b, value);
+  std::vector<unsigned> clocks{530, 534, 538, 542, 546, 547};
+  for (unsigned clock = 548; clock <= 570; ++clock)
+    clocks.push_back(clock);
+  clocks.insert(clocks.end(), {580, 600, 620, 650, 700});
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    for (unsigned scene = 0; scene < 4; ++scene)
+      for (const auto [address, value] : writes)
+        for (unsigned clock : clocks) {
+          System system;
+          constexpr std::array<uint8_t, 4> lcd{0x93, 0x97, 0xf3, 0xf7};
+          WindowScene(system, secondModel, lcd[scene], 0, scene == 2 ? 7 : 80, 3, true,
+                      {0xe0, uint8_t(address)});
+          auto state = system.machine.CpuState();
+          state.a = value;
+          system.machine.SetCpuState(state);
+          system.machine.AdvanceHardware(clock);
+          Check(system.machine.RunInstruction() == 12,
+                "Window register fixtures preserve the LDH instruction clock count");
+          system.machine.AdvanceHardware(1600 - clock - 12);
+          AccumulatePixels(digest, system);
+        }
+    Check(digest == 0xe3993b121955656bull,
+          "Instruction-driven window writes preserve every output pixel and prefix count");
+  }
+}
+
+void WindowComparisonPhases() {
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    for (uint8_t lcd : {0x91, 0xb1})
+      for (uint8_t wy : {0, 1, 143, 144, 153, 154, 255})
+        for (uint16_t address : {0xff40, 0xff4a})
+          for (uint8_t value : {0, 1, 0x91, 0xb1, 255}) {
+            if ((address == 0xff40 && value != 0x91 && value != 0xb1) ||
+                (address == 0xff4a && (value == 0x91 || value == 0xb1)))
+              continue;
+            for (unsigned clock : {0u, 2u, 3u, 4u, 453u, 454u, 65660u, 69766u, 70220u, 70222u}) {
+              System system;
+              WindowScene(system, secondModel, lcd, wy, 80);
+              system.machine.AdvanceHardware(clock);
+              system.machine.WriteMemory(address, value);
+              system.machine.AdvanceHardware(900);
+              AccumulatePixels(digest, system);
+            }
+          }
+    for (bool stopped : {false, true})
+      for (unsigned delay = 0; delay < 16; ++delay)
+        for (uint8_t wy : {0, 1, 255}) {
+          System system;
+          WindowScene(system, secondModel, stopped ? 0x91 : 0, 1, 80);
+          if (stopped) {
+            system.machine.WriteMemory(0xff80, 0x10);
+            system.machine.WriteMemory(0xff81, 0);
+            auto state = system.machine.CpuState();
+            state.pc = 0xff80;
+            system.machine.SetCpuState(state);
+            system.machine.RunInstruction();
+            Check(system.machine.CpuState().stopped, "The window phase fixture enters STOP");
+          }
+          system.machine.AdvanceHardware(delay);
+          system.machine.WriteMemory(0xff4a, wy);
+          system.machine.WriteMemory(0xff40, 0xb1);
+          system.machine.AdvanceHardware(12);
+          if (stopped) {
+            system.machine.WriteMemory(0xffff, 0x10);
+            system.host.Write(0x6004, 0xfe);
+            system.machine.WriteMemory(0xff00, 0x20);
+            system.machine.RunInstruction();
+            Check(!system.machine.CpuState().stopped, "Joypad input resumes the window fixture");
+          }
+          system.machine.AdvanceHardware(900);
+          AccumulatePixels(digest, system);
+        }
+    Check(digest == 0xfc8380cf34ecc632ull,
+          "Window comparisons retain startup, scanline, frame, LCD-off and STOP phases");
+  }
+}
+
+void WindowPowerExecution() {
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    for (uint8_t lcd : {0x91, 0xb1, 0xf3})
+      for (uint8_t wy : {0, 1, 255})
+        for (uint8_t wx : {0, 7, 80, 166})
+          for (unsigned delay = 0; delay < 16; ++delay) {
+            System system;
+            WindowScene(system, secondModel, 0, wy, wx, 3, false, {0xe0, 0x40});
+            auto state = system.machine.CpuState();
+            state.a = lcd;
+            system.machine.SetCpuState(state);
+            system.machine.AdvanceHardware(delay);
+            Check(system.machine.RunInstruction() == 12,
+                  "LCD power-on preserves the instruction clock count");
+            system.machine.AdvanceHardware(1500);
+            AccumulatePixels(digest, system);
+          }
+    Check(digest == 0xf095fad5f9642f25ull,
+          "Instruction-driven LCD power-on retains window rows at every divider phase");
+  }
+}
+
+void RepeatedWindowStarts() {
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    for (unsigned background : {0u, 1u})
+      for (unsigned clock : {96u, 140u, 200u})
+        for (unsigned gap : {0u, 3u, 8u, 32u})
+          for (uint8_t wx : {0, 7, 80, 166, 255}) {
+            System system;
+            WindowScene(system, secondModel, uint8_t(0xf2 | background), 0, 7);
+            const std::array<unsigned, 6> times{
+                clock,           clock + gap, clock + gap + 1, clock + gap + 80, clock + gap + 84,
+                clock + gap + 85};
+            const std::array<Write, 6> writes{
+                {{0xff40, uint8_t(0x92 | background)},
+                 {0xff4b, wx},
+                 {0xff40, uint8_t(0xf2 | background)},
+                 {0xff40, uint8_t(0x92 | background)},
+                 {0xff4b, uint8_t(wx % 2 == 0 ? 166 : std::min(165, int(wx) + 40))},
+                 {0xff40, uint8_t(0xf2 | background)}}};
+            unsigned now = 0;
+            for (unsigned i = 0; i < times.size(); ++i) {
+              system.machine.AdvanceHardware(times[i] - now);
+              system.machine.WriteMemory(writes[i].first, writes[i].second);
+              now = times[i];
+            }
+            system.machine.AdvanceHardware(2200 - now);
+            AccumulatePixels(digest, system);
+          }
+    Check(digest == 0x6b0f66bb8c84796bull,
+          "Repeated window starts count their tile rows even when background output is disabled");
+  }
+}
+
+void WindowObjectCancellation() {
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    const auto prepare = [&](System &system, uint8_t wx, std::initializer_list<uint8_t> program) {
+      WindowScene(system, secondModel, 0xf3, 0, wx, 3, false, program);
+      const std::array<uint8_t, 4> object{16, 8, 2, 0};
+      for (unsigned i = 0; i < object.size(); ++i)
+        system.devices.Write(uint16_t(0xfe00 + i), object[i], Machine::Access::Dma);
+    };
+    for (unsigned clock = 540; clock < 562; ++clock) {
+      System system;
+      prepare(system, 80, {0xe0, 0x40});
+      auto state = system.machine.CpuState();
+      state.a = 0xf1;
+      system.machine.SetCpuState(state);
+      system.machine.AdvanceHardware(clock);
+      system.machine.WriteMemory(0xff4b, 7);
+      Check(system.machine.RunInstruction() == 12,
+            "Object cancellation preserves the LCD-control instruction clocks");
+      system.machine.AdvanceHardware(590 - clock - 12);
+      AccumulatePixels(digest, system);
+    }
+    for (unsigned clock = 530; clock < 581; ++clock)
+      for (unsigned gap = 0; gap < 9; ++gap)
+        for (uint8_t wx : {7, 80}) {
+          System system;
+          prepare(system, wx, {0});
+          system.machine.AdvanceHardware(clock);
+          system.machine.WriteMemory(0xff40, 0xf1);
+          system.machine.AdvanceHardware(gap);
+          system.machine.WriteMemory(0xff40, 0xf3);
+          system.machine.AdvanceHardware(1200 - clock - gap);
+          AccumulatePixels(digest, system);
+        }
+    Check(digest == 0x7b2c81f699db95d4ull,
+          "Object control pulses retain pixel ordering, completed rows and cancelled fetches");
+  }
+}
+
 void SharedObjectBusLatches() {
   const auto ram = PatternedVideoRam();
   for (bool secondModel : {false, true}) {
@@ -492,6 +711,11 @@ int main() {
     SharedObjectBusLatches();
     WindowWriteDuringObjectFetch();
     VideoDmaBusContention();
+    WindowRegisterExecution();
+    WindowComparisonPhases();
+    WindowPowerExecution();
+    RepeatedWindowStarts();
+    WindowObjectCancellation();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

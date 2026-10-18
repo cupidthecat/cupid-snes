@@ -19,12 +19,13 @@ void Video::Reset(bool secondModel) {
   position_ = -16;
   mapAddress_ = dataAddress_ = 0;
   scrollFine_ = 0;
-  objectCount_ = objectStall_ = fetchingObject_ = windowLine_ = 0;
-  objectPending_ = windowStarting_ = insertBackground_ = false;
+  objectCount_ = objectStall_ = fetchingObject_ = windowPhase_ = 0;
+  windowLine_ = 0xff;
+  objectPending_ = objectAborted_ = windowStarting_ = insertBackground_ = false;
   warm_ = true;
   coincidence_ = irqLine_ = stopped_ = false;
-  windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
-  windowWrite_ = windowChanged_ = false;
+  windowReached_ = windowActive_ = lateWindow_ = false;
+  windowWrite_ = windowCheck_ = windowReset_ = false;
   secondModel_ = secondModel;
   sleeping_ = vramRelease_ = false;
   dmaSource_ = 0;
@@ -73,6 +74,8 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
   const auto previous = registers_[reg];
   registers_[reg] = reg == 1 ? value & 0x78 : value;
   if (reg == 0) {
+    if (!(previous & 0x80) && (value & 0x80))
+      windowReset_ = true;
     if ((previous ^ value) & 0x80) {
       dot_ = transferClocks_ = hblankDot_ = 0;
       line_ = ly_ = mode_ = blocked_ = 0;
@@ -80,18 +83,18 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
       warm_ = true;
       vramRelease_ = false;
       fifoHead_ = fifoSize_ = objectCount_ = objectStall_ = 0;
-      windowLine_ = 0;
-      windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
+      objectPending_ = objectAborted_ = false;
+      windowLine_ = 0xff;
+      windowReached_ = windowActive_ = lateWindow_ = false;
     }
-    if ((previous & 2) && !(value & 2)) {
-      objectStall_ = 0;
-      objectPending_ = false;
-    }
+    if ((previous & 2) && !(value & 2) && (objectPending_ || objectStall_ > 1))
+      objectAborted_ = true;
+    windowCheck_ = !windowReached_;
   }
   if (reg == 5)
     CompareLine(comparisonLine_);
-  if (reg == 11)
-    windowChanged_ = windowWrite_ && previous != value;
+  if (reg == 10)
+    windowCheck_ = !windowReached_;
   return UpdateInterrupt();
 }
 
@@ -145,6 +148,13 @@ void Video::CompareLine(int line) {
   coincidence_ = line >= 0 && line == registers_[5];
 }
 
+void Video::CompareWindow() {
+  // The window comparator sees all eight bits, including blanked line comparisons.
+  const auto line = warm_ && dot_ < 2 ? uint8_t(0) : uint8_t(comparisonLine_);
+  if ((registers_[0] & 0xa0) == 0xa0 && registers_[10] == line)
+    windowReached_ = true;
+}
+
 uint8_t Video::UpdateInterrupt() {
   if (!(registers_[0] & 0x80))
     return 0;
@@ -167,10 +177,25 @@ uint8_t Video::UpdateInterrupt() {
 
 uint8_t Video::Advance(unsigned clocks) {
   uint8_t interrupts = 0;
-  if (!(registers_[0] & 0x80) || stopped_)
-    return 0;
-  while (clocks--)
-    interrupts |= Tick();
+  while (clocks--) {
+    // This clock keeps running while LCD rendering is disabled or stopped.
+    if (windowReached_)
+      windowCheck_ = false;
+    const bool check = windowCheck_ && windowPhase_ == 2;
+    if (check)
+      windowCheck_ = false;
+    windowPhase_ = uint8_t((windowPhase_ + 1) & 3);
+    // An enable pulse restarts the divider even if rendering is disabled again.
+    if (windowReset_ && !stopped_) {
+      windowPhase_ = 1;
+      windowReset_ = false;
+    }
+    if ((registers_[0] & 0x80) && !stopped_) {
+      interrupts |= Tick();
+    }
+    if (check)
+      CompareWindow();
+  }
   return interrupts;
 }
 
@@ -179,8 +204,11 @@ uint8_t Video::Tick() {
   uint8_t interrupts = 0;
   if (line_ < 144) {
     if (warm_ && line_ == 0) {
-      if (dot_ == 2)
+      if (dot_ == 2) {
+        windowReached_ = false;
+        windowLine_ = 0xff;
         CompareLine(0);
+      }
       if (dot_ == 78)
         blocked_ = 2;
       if (dot_ == 80)
@@ -197,6 +225,7 @@ uint8_t Video::Tick() {
         CompareLine(line_);
         mode_ = irqMode_ = 2;
         blocked_ = 3;
+        CompareWindow();
       }
       if (dot_ >= 6 && dot_ <= 84 && (dot_ & 1) == 0) {
         const unsigned index = (dot_ - 6) / 2;
@@ -266,24 +295,21 @@ uint8_t Video::Tick() {
 }
 
 void Video::EndLine() {
-  if (line_ < 144) {
+  if (line_ < 144)
     output_.BeginLine();
-    if (windowUsed_ || lateWindow_)
-      ++windowLine_;
-  }
   dot_ = 0;
   warm_ = false;
   objectCount_ = 0;
   hblankDot_ = 0;
-  windowUsed_ = false;
   if (++line_ >= 144 && line_ < 154)
     coincidence_ = false;
   if (line_ == 154) {
     line_ = 0;
-    windowLine_ = 0;
     windowReached_ = false;
     output_.BeginFrame();
   }
+  if (line_ < 144)
+    CompareWindow();
 }
 
 void Video::BeginTransfer() {
@@ -297,10 +323,8 @@ void Video::BeginTransfer() {
   position_ = -16;
   scrollFine_ = registers_[3] & 7;
   x_ = objectStall_ = 0;
-  objectPending_ = windowStarting_ = insertBackground_ = false;
-  windowReached_ |= line_ == registers_[10];
-  windowActive_ = lateWindow_ && (registers_[0] & 0x21) == 0x21;
-  windowUsed_ = windowActive_;
+  objectPending_ = objectAborted_ = windowStarting_ = insertBackground_ = false;
+  windowActive_ = lateWindow_ && (registers_[0] & 0x20);
   if (windowActive_)
     fetchX_ = 1;
   for (unsigned i = 0; i < objectCount_; ++i)
@@ -317,6 +341,8 @@ uint16_t Video::TileAddress() const {
 void Video::FetchBackground() {
   switch (fetchPhase_) {
   case MapAddress: {
+    if (!(registers_[0] & 0x20))
+      windowActive_ = false;
     const unsigned y = windowActive_ ? windowLine_ : uint8_t(line_ + registers_[2]);
     const unsigned column = windowActive_    ? fetchX_
                             : position_ < -8 ? registers_[3] / 8
@@ -350,6 +376,14 @@ void Video::FetchBackground() {
   fetchPhase_ = QueueWrite;
   if (fifoSize_)
     return;
+  const int coordinate = position_ + 7;
+  const auto windowX = coordinate < 0 || coordinate > 167 ? 0 : coordinate;
+  if (windowReached_ && !(registers_[0] & 0x20) && registers_[11] == windowX) {
+    // Disabling the window can leave a zero pixel at a pending queue refill.
+    fifo_[fifoHead_] = 0;
+    fifoSize_ = 1;
+    return;
+  }
   for (unsigned bit = 0; bit < 8; ++bit)
     fifo_[(fifoHead_ + bit) & 7] =
         uint8_t(((low_ >> (7 - bit)) & 1) | (((high_ >> (7 - bit)) & 1) << 1));
@@ -358,16 +392,21 @@ void Video::FetchBackground() {
 }
 
 bool Video::StartWindow() {
-  if (windowChanged_ || windowActive_ || !windowReached_ || (registers_[0] & 0x21) != 0x21 ||
-      registers_[11] >= 166)
+  if (windowActive_ || !windowReached_ || !(registers_[0] & 0x20))
+    return false;
+  if (registers_[11] == 166 && position_ == 159)
+    ++windowLine_;
+  if (registers_[11] >= 166)
     return false;
   const bool left = registers_[11] == 0;
   const bool match = left ? position_ == -7 || (position_ >= -16 && position_ <= -8 &&
                                                 (position_ != -16 || (registers_[3] & 7)))
-                          : position_ == int(registers_[11]) - 7;
+                          : position_ == int(registers_[11]) - 7 ||
+                                (!windowWrite_ && position_ == int(registers_[11]) - 6);
   if (!match)
     return false;
-  windowActive_ = windowUsed_ = windowStarting_ = true;
+  ++windowLine_;
+  windowActive_ = windowStarting_ = true;
   fifoHead_ = fifoSize_ = fetchPhase_ = fetchX_ = 0;
   return left && (registers_[3] & 7);
 }
@@ -466,8 +505,13 @@ void Video::Transfer() {
   ++transferClocks_;
   if (transferClocks_ <= 4)
     return;
-  const bool resumingObject = objectPending_ || objectStall_;
-  if (resumingObject) {
+  const bool aborted = objectAborted_;
+  const bool resumingObject = aborted || objectPending_ || objectStall_;
+  if (aborted) {
+    objects_[fetchingObject_].fetched = false;
+    objectPending_ = objectAborted_ = false;
+    objectStall_ = 0;
+  } else if (resumingObject) {
     if (AdvanceObject())
       return;
   }
@@ -478,7 +522,7 @@ void Video::Transfer() {
         fetchPhase_ == MapAddress && fifoSize_ == 8)
       insertBackground_ = true;
   }
-  if (StartObject()) {
+  if (!aborted && StartObject()) {
     AdvanceObject();
     return;
   }
@@ -518,7 +562,11 @@ void Video::Transfer() {
   FetchBackground();
   if (x_ == 160) {
     vramRelease_ = true;
-    lateWindow_ = windowReached_ && registers_[11] == 166 && (registers_[0] & 0x21) == 0x21;
+    if (line_ == 143)
+      windowLine_ = 0xff;
+    lateWindow_ = windowReached_ && registers_[11] == 166 && (registers_[0] & 0x20);
+    if (lateWindow_)
+      ++windowLine_;
     mode_ = 0;
     blocked_ = 0;
     hblankDot_ = dot_;

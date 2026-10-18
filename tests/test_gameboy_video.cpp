@@ -225,10 +225,10 @@ void ObjectBackgroundAndWindowTiming() {
   window.Step(1);
   window.video.WindowWrite(false);
   Check(window.screen.pixels.size() == 161 && window.screen.pixels[160].clock == 558,
-        "A CPU window-coordinate write spanning its trigger clock suppresses that trigger");
+        "A coordinate write during object fetch retains the first output clock");
   window.Step(10);
-  Check(window.screen.pixels.back().shade == 1,
-        "A suppressed window trigger remains missed once the output position advances");
+  Check(window.screen.pixels.size() == 165 && window.screen.pixels.back().shade == 2,
+        "A window can start one pixel late after an object fetch completes");
 }
 
 void ObjectPlanePhases() {
