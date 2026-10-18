@@ -38,8 +38,11 @@ uint32_t Adapter::ClockRate() const noexcept {
   return (secondModel_ ? 20'971'520 : masterHz_) / host_.Divider();
 }
 
-void Adapter::Advance(uint32_t masterClocks) {
+void Adapter::Advance(uint32_t masterClocks, bool synchronize) {
+  // Charge time under the current divider before a control write can reset it.
   clockCredit_ += int64_t(masterClocks) * ClockRate();
+  if (!synchronize)
+    return;
   while (clockCredit_ > 0) {
     unsigned clocks = 128;
     if (loaded_ && (host_.Control() & 0x80))

@@ -174,7 +174,8 @@ public:
   void ObserveDmaWrite(uint32_t address, uint8_t value);
 
   uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
-  void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
+  void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
+                       bool synchronizeHandheld = true);
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {

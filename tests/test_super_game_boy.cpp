@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "audio/MsuFixture.hpp"
 #include "snes/core/gameboy/AudioMixer.hpp"
 
 #include <algorithm>
@@ -6,8 +7,10 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 using namespace snes::core;
 
@@ -233,6 +236,124 @@ void ConsoleClockBoundaries() {
       }
 }
 
+uint64_t PcmDigest(std::span<const int16_t> samples) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  for (int16_t sample : samples) {
+    const auto word = uint16_t(sample);
+    for (unsigned shift : {0u, 8u}) {
+      hash ^= uint8_t(word >> shift);
+      hash *= 0x100000001b3ull;
+    }
+  }
+  return hash;
+}
+
+void ConsoleAudioHandoffs() {
+  struct Expected {
+    size_t rawFrames;
+    uint64_t rawHash;
+    size_t mixedFrames;
+    uint64_t mixedHash;
+    uint8_t battery;
+  };
+  constexpr std::array<Expected, 32> expected{{
+      {11029u, 0xd20f79c689d3b609ull, 8455u, 0xbc220bc4a5e9e401ull, 22u},
+      {11029u, 0x1182d2bd50a314b9ull, 8455u, 0x780f83204c91ec31ull, 44u},
+      {8824u, 0x7858ef16845f3545ull, 8455u, 0x9268ea00b9848e5ull, 238u},
+      {8825u, 0xab0d54220d75bef1ull, 8455u, 0xd3abc93f116ef5d9ull, 220u},
+      {6368u, 0x6fb3bba546253149ull, 8455u, 0x7af02a2c9c3f37d9ull, 123u},
+      {6368u, 0xab3a27d3f2515fcdull, 8455u, 0xf3ce9626675608b5ull, 246u},
+      {4983u, 0x2973d80d2118dcc9ull, 8455u, 0xd5678ffd8e8c4085ull, 29u},
+      {4984u, 0xde428f147c5e4971ull, 8455u, 0xbb86cafa0bf421a5ull, 58u},
+      {13027u, 0x44a4d9b1b3416465ull, 10073u, 0x8119ac43871b7bd1ull, 183u},
+      {13027u, 0xc826ce8b46d32515ull, 10073u, 0xd9a928adfa8e48d1ull, 110u},
+      {10423u, 0xf82b885eed38a069ull, 10073u, 0x8089450991292e1dull, 59u},
+      {10423u, 0x221624b3deae00b1ull, 10073u, 0xa31fb43cf389f475ull, 118u},
+      {7510u, 0x5b2db67fcb5e2f19ull, 10073u, 0x85c7040d50430b4dull, 68u},
+      {7510u, 0xc9e57577428c0855ull, 10073u, 0xf2bb23d9b0db42c5ull, 136u},
+      {5871u, 0x93361342c189a735ull, 10073u, 0x171e16c30cfac365ull, 157u},
+      {5872u, 0x3e68e0a80075d57dull, 10073u, 0xb52c5e0b132a5b41ull, 58u},
+      {10770u, 0x5c2bdb7cf50706d1ull, 8455u, 0xa7ec23328c573f59ull, 177u},
+      {10770u, 0x87fc35249638fdull, 8455u, 0xd79723bcb9c5d15ull, 98u},
+      {8617u, 0x43b858c64d685285ull, 8455u, 0x3915d2c8cf6f49a9ull, 158u},
+      {8618u, 0xba21af54306e45f1ull, 8455u, 0x8fa4997c1ae67931ull, 60u},
+      {6218u, 0xbc788a51d44ddfcdull, 8455u, 0xf361096522bf1f4dull, 98u},
+      {6219u, 0x7a20f85ed75acf09ull, 8455u, 0x71c4b7fb64432521ull, 196u},
+      {4867u, 0xb5e84cc5dff76935ull, 8455u, 0xa7c3ce3d1b5e18e1ull, 181u},
+      {4867u, 0x7d578ecb2f42a2f1ull, 8455u, 0x9e619ba7134252c5ull, 106u},
+      {12838u, 0x151b2552d14328e1ull, 10073u, 0x8e81ddcf51bc42a5ull, 198u},
+      {12838u, 0xd807bb7354dc6331ull, 10073u, 0x9f929a74e706b199ull, 140u},
+      {10272u, 0xb0b5377b1d7fd3f9ull, 10073u, 0x17b80f687a0be221ull, 21u},
+      {10272u, 0x6280671ccb705011ull, 10073u, 0x7e19c9b164d19acdull, 42u},
+      {7401u, 0x12254cf4d85207adull, 10073u, 0x2635bebbfc11fefdull, 2u},
+      {7402u, 0x6d012bdea9d9d6adull, 10073u, 0xcbe00929f8f33ff5ull, 4u},
+      {5786u, 0x7de65b806fccba99ull, 10073u, 0x52137d1c89adce65ull, 219u},
+      {5786u, 0x44db9b7da6c1afd9ull, 10073u, 0x10988d2dce254e51ull, 182u},
+  }};
+  struct Output final : IAudioOutput {
+    std::vector<int16_t> samples;
+    void Submit(const AudioBuffer &buffer) override {
+      Check(buffer.sampleRate == 32040, "Handoff output retains the fixed stream rate");
+      for (float sample : buffer.interleavedStereo)
+        samples.push_back(
+            int16_t(std::clamp<long>(std::lrint(double(sample) * 32768), -32768, 32767)));
+    }
+  };
+  unsigned index = 0;
+  for (bool secondModel : {false, true})
+    for (bool pal : {false, true})
+      for (uint8_t divider = 0; divider < 4; ++divider) {
+        auto bios = Bios(secondModel, pal, 0);
+        msu_test::Program p;
+        p.Emit({0x78});
+        p.Delay(1 + divider);
+        p.Store(0x6003, uint8_t(0x80 | divider));
+        p.Delay(3);
+        p.Store(0x6003, uint8_t((divider + 1) & 3));
+        p.Delay(1);
+        p.Store(0x6003, uint8_t(0x80 | ((divider + 2) & 3)));
+        p.Delay(4);
+        p.Store(0x6003, uint8_t(0x80 | divider));
+        p.Emit({0xdb});
+        std::copy(p.code.begin(), p.code.end(), bios.begin());
+        Output output;
+        std::vector<int16_t> raw;
+        auto emulator = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+        Check(emulator->LoadSuperGameBoy(bios, Game(true), Boot()),
+              "The generated reset and divider program loads");
+        std::vector<uint8_t> battery(8192, 0);
+        Check(emulator->LoadSlotBattery(0, battery),
+              "The handoff program starts with an empty save");
+        emulator->AttachAudioOutput(&output);
+        const_cast<Cartridge *>(emulator->LoadedCartridge())
+            ->SetGameBoyAudioOutput([&](int16_t left, int16_t right, uint32_t) {
+              raw.push_back(left);
+              raw.push_back(right);
+            });
+        for (bool warm : {false, true}) {
+          raw.clear();
+          output.samples.clear();
+          if (warm)
+            Check(emulator->Reset(), "Warm console reset retains the handheld save input");
+          for (unsigned frame = 0; frame < 16; ++frame)
+            emulator->StepFrame();
+          const auto &snapshot = expected[index++];
+          Check(std::count_if(raw.begin(), raw.end(),
+                              [](int16_t value) { return value > 1 || value < -1; }) > 1000,
+                "The handheld produces audible samples before its signature is checked");
+          Check(raw.size() == snapshot.rawFrames * 2 && PcmDigest(raw) == snapshot.rawHash,
+                "Scanline handoffs preserve every raw sample across divider changes and repeated "
+                "resets");
+          Check(output.samples.size() == snapshot.mixedFrames * 2 &&
+                    PcmDigest(output.samples) == snapshot.mixedHash,
+                "The complete mixed stream retains its sample count and phase");
+          battery[0] = snapshot.battery;
+          Check(emulator->SaveSlotBattery(0) == battery,
+                "Sound handoffs preserve the complete generated save");
+        }
+      }
+}
+
 void StereoAudioMix() {
   struct Fixture {
     uint32_t rate;
@@ -306,6 +427,7 @@ int main() {
     ClockAndBattery();
     ConsoleExecutionAndFailedLoads();
     ConsoleClockBoundaries();
+    ConsoleAudioHandoffs();
     StereoAudioMix();
     std::puts("Super Game Boy cartridge mapping, execution, clocks and battery checks passed");
     return 0;

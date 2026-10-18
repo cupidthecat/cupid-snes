@@ -724,9 +724,10 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
   return (memselFast_ && IsFastRegion(cpuAddress)) ? 6u : 8u;
 }
 
-void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing,
+                                bool synchronizeHandheld) {
   if (gameBoy_)
-    gameBoy_->Advance(masterClocks);
+    gameBoy_->Advance(masterClocks, synchronizeHandheld);
   if (bsx_)
     bsx_->Advance(masterClocks);
   if (memoryPackDevice_)

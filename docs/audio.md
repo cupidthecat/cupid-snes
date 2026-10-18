@@ -16,6 +16,8 @@ The sound CPU's timers and DSP keep advancing during SLEEP and STOP. The DSP sta
 
 The console exchanges control with the sound CPU at scanline events and sound-port accesses. The sound CPU can finish a bus phase beyond the console deadline before returning control. Its clocks and interpolation history continue across video fields, including when no audio output is attached. A unity-rate stream retains the cubic interpolator's startup delay and priming output.
 
+Handheld oscillator time accumulates under the divider active during each completed console bus interval. Pending handheld instructions run at scanline handoffs. A control-port reset clears the old clock credit before starting the new oscillator phase. Divider changes and repeated resets therefore preserve the phase of both raw handheld samples and the mixed stream.
+
 A long DMA can advance several video fields before `StepFrame` returns. The core drains full DSP output blocks during those transfers and submits the collected samples together. The normal 2,048-sample buffer therefore does not truncate that operation's audio. A maximal eight-channel DMA test compares the submitted count with the DSP phase count and checks that the following frame contains no stale samples.
 
 [MSU-1 packs](msu1.md) add file-backed stereo PCM on an independent 44.1 kHz clock. Cubic interpolation aligns active streams at 32,040 stereo frames per second, then the mixer adds them and clamps once. Playback continues through DSP mute, headless operation and long transfers. Timed volume, pause and track changes preserve interpolation history.

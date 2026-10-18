@@ -21,7 +21,7 @@ public:
             std::string *error = nullptr);
   void Reset();
   void SetPal(bool pal) noexcept;
-  void Advance(uint32_t masterClocks);
+  void Advance(uint32_t masterClocks, bool synchronize = true);
   uint8_t Read(uint32_t address);
   void Write(uint32_t address, uint8_t value);
   static bool Selects(uint32_t address) noexcept;

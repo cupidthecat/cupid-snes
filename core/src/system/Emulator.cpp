@@ -484,7 +484,7 @@ void Emulator::InitSubsystems() {
   timing_.onScanline = [this](uint16_t v) {
     SynchronizeDevices(true);
     SynchronizeExpansionAudio(coprocessorCompletedClock_);
-    SynchronizeCoprocessors();
+    SynchronizeCoprocessors(true);
     ppu_.SetCurrentLine(v);
     ppu_.SetCurrentHClock(0);
   };
@@ -800,8 +800,9 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
   SynchronizeDevices();
 }
 
-void Emulator::SynchronizeCoprocessors() {
-  // The handheld oscillator receives clocks after the CPU's bus interval completes.
+void Emulator::SynchronizeCoprocessors(bool synchronizeHandheld) {
+  // Charge the handheld oscillator after each completed CPU bus interval.
+  // Its pending execution resumes at scanline handoffs.
   const auto elapsed = cartridge_->Header().chip == EnhancementChip::SuperGameBoy
                            ? coprocessorCompletedClock_
                            : std::max(timing_.MasterClocksElapsed(), coprocessorClockTarget_);
@@ -809,13 +810,13 @@ void Emulator::SynchronizeCoprocessors() {
   coprocessorsSyncedClock_ = elapsed;
   while (delta > std::numeric_limits<uint32_t>::max()) {
     cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max(), cpu_->regs().mar,
-                                cpu_->DramRefreshActive());
+                                cpu_->DramRefreshActive(), synchronizeHandheld);
     if (srtc_)
       srtc_->Advance(std::numeric_limits<uint32_t>::max());
     delta -= std::numeric_limits<uint32_t>::max();
   }
   cartridge_->AdvanceHardware(static_cast<uint32_t>(delta), cpu_->regs().mar,
-                              cpu_->DramRefreshActive());
+                              cpu_->DramRefreshActive(), synchronizeHandheld);
   if (srtc_)
     srtc_->Advance(static_cast<uint32_t>(delta));
 }

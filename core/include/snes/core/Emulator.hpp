@@ -200,7 +200,7 @@ private:
   void ConfigureAudioStreams();
   void AttachMsu1(const std::string &path);
   void SynchronizeExpansionAudio(uint64_t elapsed);
-  void SynchronizeCoprocessors();
+  void SynchronizeCoprocessors(bool synchronizeHandheld = false);
   void StopFrameExecution();
   uint32_t ResumeCpuInstruction();
   void SuspendFrame();
