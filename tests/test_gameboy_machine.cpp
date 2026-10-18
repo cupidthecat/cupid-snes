@@ -41,7 +41,7 @@ struct Devices final : Machine::Devices {
     clocks += count;
     return previous < interruptAt && clocks >= interruptAt ? 4 : 0;
   }
-  void AudioDividerEdge(bool) override {}
+  void AudioDividerEdge(bool, uint64_t) override {}
 };
 struct System {
   Host host;

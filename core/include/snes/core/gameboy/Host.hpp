@@ -1,22 +1,24 @@
 // Super Game Boy register, video, and joypad-pin interface.
 #pragma once
 
+#include "snes/core/gameboy/Video.hpp"
+
 #include <array>
 #include <cstdint>
 #include <functional>
 
 namespace snes::core::gameboy {
 
-class Host {
+class Host : public Video::Output {
 public:
   explicit Host(std::function<void()> resetHandheld = {});
   void Reset();
   uint8_t Read(uint32_t address);
   void Write(uint32_t address, uint8_t value);
 
-  void BeginFrame() noexcept;
-  void BeginLine() noexcept;
-  void Pixel(uint8_t color) noexcept;
+  void BeginFrame() noexcept override;
+  void BeginLine() noexcept override;
+  void Pixel(uint8_t color) noexcept override;
   uint8_t JoypadWrite(bool p14, bool p15) noexcept;
 
   uint8_t Control() const noexcept {

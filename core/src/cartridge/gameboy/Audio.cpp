@@ -46,21 +46,26 @@ const Impulses &Coefficients() {
 void Audio::Reset(bool secondModel) {
   filters_.fill({});
   capacitor_.fill(0);
-  clock_ = renderClock_ = samples_ = 0;
+  clock_ = renderClock_ = samples_ = phaseClock_ = 0;
+  phase_ = resumeClocks_ = renderedClocks_ = 0;
+  stopped_ = false;
   sampleCycles_ = 0;
   sampleRate_ = secondModel ? 32768 : 33558;
   clockRate_ = secondModel ? 4194304 : 4295454;
+  batchClocks_ = 2 * ((clockRate_ + 2 * sampleRate_ - 1) / (2 * sampleRate_));
   phaseStep_ = uint32_t(std::llround(double(sampleRate_) * 2 * SampleUnit / clockRate_));
   highpass_ = std::pow(0.999958, double(clockRate_) / sampleRate_);
   volume_ = routing_ = 0;
   channels_.Reset(secondModel);
 }
 
-uint8_t Audio::Read(uint16_t address) const {
+uint8_t Audio::Read(uint16_t address) {
+  FlushSound(clock_);
   return channels_.Read(address);
 }
 
 void Audio::Write(uint16_t address, uint8_t value) {
+  FlushSound(clock_);
   channels_.Write(address, value);
 }
 
@@ -89,10 +94,11 @@ void Audio::Power(uint64_t clock, bool enabled) {
 
 void Audio::Change(uint64_t clock, unsigned channel, unsigned code, int phaseOffset) {
   auto &filter = filters_[channel];
+  AdvancePhase(clock);
   // The phase accumulator wraps within sixteen samples. Keeping its whole-sample
   // part preserves delayed transitions without changing an already emitted sample.
-  const uint32_t phase = uint32_t(clock / 2) * phaseStep_ - uint32_t(samples_) * SampleUnit +
-                         uint32_t(phaseOffset / 2) * phaseStep_;
+  const uint32_t phase =
+      phase_ + (uint32_t(clock / 2 - phaseClock_ / 2) + uint32_t(phaseOffset / 2)) * phaseStep_;
   const unsigned fraction = (phase >> 20) & 255;
   const uint64_t first = samples_ + (phase >> 28) + 1;
   const auto &impulse = Coefficients()[fraction];
@@ -110,7 +116,30 @@ void Audio::Change(uint64_t clock, unsigned channel, unsigned code, int phaseOff
   }
 }
 
+void Audio::AdvancePhase(uint64_t clock) {
+  if (clock <= phaseClock_)
+    return;
+  if (!stopped_ && resumeClocks_ == 0)
+    phase_ += uint32_t(clock / 2 - phaseClock_ / 2) * phaseStep_;
+  phaseClock_ = clock;
+}
+
+void Audio::FlushSound(uint64_t clock) {
+  if (clock > phaseClock_ && !stopped_ && resumeClocks_ == 0)
+    renderedClocks_ += unsigned(clock - phaseClock_);
+  channels_.AdvanceTo(clock);
+  AdvancePhase(clock);
+}
+
+void Audio::Stop(bool stopped) noexcept {
+  if (stopped_ && !stopped)
+    resumeClocks_ = 4;
+  stopped_ = stopped;
+  channels_.Stop(stopped || resumeClocks_ != 0);
+}
+
 void Audio::Render() {
+  renderedClocks_ = 0;
   ++samples_;
   std::array<int, 2> mixed{};
   for (auto &filter : filters_) {
@@ -130,31 +159,52 @@ void Audio::Render() {
     sample[side] = int16_t(std::clamp(mixed[side] - int(capacitor_[side]), -32768, 32767));
     capacitor_[side] = mixed[side] - (mixed[side] - capacitor_[side]) * highpass_;
   }
+  phase_ = phase_ >= SampleUnit ? phase_ - SampleUnit : 0;
   output_.Sample(renderClock_, sample[0], sample[1]);
 }
 
 void Audio::Advance(unsigned clocks) {
-  AdvanceTo(clock_ + clocks);
+  const auto target = clock_ + clocks;
+  while (clock_ + 4 < target)
+    AdvanceTo(clock_ + 4);
+  AdvanceTo(target);
 }
 
 void Audio::AdvanceTo(uint64_t clock) {
   clock_ = std::max(clock_, clock);
+  uint64_t batchEnd = std::min(clock_ & ~uint64_t(3), renderClock_ + 16);
   while (renderClock_ + 4 <= clock_) {
     renderClock_ += 4;
-    channels_.AdvanceTo(renderClock_);
+    if (stopped_ || resumeClocks_) {
+      channels_.Suspend(4);
+      phaseClock_ += 4;
+    }
+    if (resumeClocks_) {
+      resumeClocks_ -= 4;
+      if (resumeClocks_ == 0)
+        channels_.Stop(stopped_);
+      continue;
+    }
     sampleCycles_ += sampleRate_ * 4;
-    if (sampleCycles_ >= clockRate_) {
+    if (renderClock_ < batchEnd)
+      continue;
+    batchEnd = std::min(clock_ & ~uint64_t(3), renderClock_ + 16);
+    if (channels_.NeedsStep() || renderedClocks_ + renderClock_ - phaseClock_ >= batchClocks_ ||
+        sampleCycles_ >= clockRate_)
+      FlushSound(renderClock_);
+    while (sampleCycles_ >= clockRate_) {
       sampleCycles_ -= clockRate_;
       Render();
     }
   }
-  channels_.AdvanceTo(clock_);
 }
 
 void Audio::DividerEdge(bool rising, uint64_t clock) {
   if (clock > renderClock_ + 4)
     AdvanceTo((clock - 1) & ~uint64_t(3));
+  FlushSound(clock > renderClock_ ? renderClock_ : clock);
   channels_.DividerEdge(rising, clock);
+  AdvancePhase(clock);
   AdvanceTo(clock);
 }
 

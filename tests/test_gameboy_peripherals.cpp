@@ -1,0 +1,234 @@
+#include "snes/core/gameboy/Peripherals.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+using namespace snes::core::gameboy;
+namespace {
+void Check(bool condition, const char *message) {
+  if (!condition)
+    throw std::runtime_error(message);
+}
+using Write = std::pair<uint16_t, uint8_t>;
+struct Expected {
+  unsigned samples;
+  uint64_t digest;
+};
+constexpr std::array<std::array<std::array<Expected, 5>, 8>, 2> ExpectedWake = {
+    {{{{{{90, 0xd397907034cdb145ull},
+         {90, 0x4709f726e86f9dd5ull},
+         {90, 0xaaafae92991de271ull},
+         {91, 0x7c2be1a77aca14b1ull},
+         {122, 0x2fba93a39acae8e9ull}}},
+       {{{86, 0x08e27dcdeb65dd59ull},
+         {86, 0x08e27dcdeb65dd59ull},
+         {86, 0x08e27dcdeb65dd59ull},
+         {87, 0xc9b4c617fcf3fee5ull},
+         {118, 0xde6d225d32c27481ull}}},
+       {{{86, 0xb5b4d432eba881edull},
+         {86, 0xb5b4d432eba881edull},
+         {86, 0xb5b4d432eba881edull},
+         {87, 0x8c9263aad7dbf259ull},
+         {118, 0x6cf17928093eb7b1ull}}},
+       {{{86, 0xdaedeb997afb6f31ull},
+         {86, 0xaa0c569425b07731ull},
+         {86, 0x7b0511165aeee525ull},
+         {87, 0x2b7ba407c1630839ull},
+         {117, 0x1a38f2b5760e04d9ull}}},
+       {{{86, 0x4d50c538ae976bc1ull},
+         {86, 0xe285291ec4cb2e5dull},
+         {86, 0xeac48bddb7246b1dull},
+         {87, 0xc67fdb7811d12c8dull},
+         {117, 0xedae0f33fe0ba985ull}}},
+       {{{89, 0x73a98e1057299f15ull},
+         {89, 0xd7c2767ff7156339ull},
+         {89, 0x7e0aace0463ebae9ull},
+         {90, 0xac2f1d53692d0f51ull},
+         {120, 0x45a538195c19d4b5ull}}},
+       {{{89, 0x3b38eb4cb69a8aa5ull},
+         {89, 0x822f54c2dbf48c6dull},
+         {89, 0xa1ed99f631e68859ull},
+         {90, 0x92cb362a298d2611ull},
+         {120, 0x0d05bcc788f72561ull}}},
+       {{{86, 0x2ceb6da5e3c58879ull},
+         {86, 0xfdea289f537f892dull},
+         {86, 0x84120acc26953575ull},
+         {87, 0xc284985ceb288f75ull},
+         {117, 0x42b695254b2052e1ull}}}}},
+     {{{{{90, 0xf9c92360584d2e01ull},
+         {90, 0xdb263dda14710689ull},
+         {91, 0x450da5cebe695c35ull},
+         {91, 0x64e1c9d8d2309dadull},
+         {122, 0x71c80522e809b5fdull}}},
+       {{{86, 0xe0815f613ec74ab9ull},
+         {86, 0xe0815f613ec74ab9ull},
+         {86, 0xe0815f613ec74ab9ull},
+         {87, 0x60334936bd8409cdull},
+         {118, 0xe021448b749a2669ull}}},
+       {{{86, 0xc0ce56e53d62686dull},
+         {86, 0xc0ce56e53d62686dull},
+         {86, 0xc0ce56e53d62686dull},
+         {87, 0x0b5331fb2ce1d78dull},
+         {118, 0xd86953049a8ce085ull}}},
+       {{{86, 0xeead588a54046b59ull},
+         {86, 0x19531a11163908f1ull},
+         {86, 0x19531a11163908f1ull},
+         {87, 0x1f3cef85f9b3ede1ull},
+         {117, 0x5669d153303582d1ull}}},
+       {{{86, 0x1db3ee58ed1fa021ull},
+         {86, 0xed6922c6c3695b65ull},
+         {86, 0xed6922c6c3695b65ull},
+         {87, 0xfb4780dfdea60219ull},
+         {117, 0x4b6ea59622367c85ull}}},
+       {{{89, 0xdeae08e8c97bbd6dull},
+         {89, 0xbf1d95a480ef66edull},
+         {89, 0xc2b8c15c6e45fbc9ull},
+         {90, 0x8a6a85147ec5a495ull},
+         {120, 0x29b4da45ea171c99ull}}},
+       {{{89, 0xf71820c43a300b15ull},
+         {89, 0x037c834f7c2dca0dull},
+         {89, 0xff580242c59ede9dull},
+         {90, 0x5dec8e88c9539fedull},
+         {120, 0x8e48f29a7374439dull}}},
+       {{{86, 0x5583245e9d19283dull},
+         {86, 0xb3a7664a96235e5dull},
+         {86, 0x508147426759b8e5ull},
+         {87, 0x031310b99410ccd9ull},
+         {117, 0x422f248303fc0df5ull}}}}}}};
+
+std::vector<Write> Fixture(unsigned which) {
+  if (which == 0)
+    return {{0xff26, 0x80}, {0xff24, 0x77}, {0xff25, 0xff}, {0xff11, 0x40}, {0xff12, 0xb2},
+            {0xff13, 0x87}, {0xff14, 0x85}, {0xff16, 0xc0}, {0xff17, 0x81}, {0xff18, 0xa2},
+            {0xff19, 0x86}, {0xff30, 0x0},  {0xff31, 0x11}, {0xff32, 0x22}, {0xff33, 0x33},
+            {0xff34, 0x44}, {0xff35, 0x55}, {0xff36, 0x66}, {0xff37, 0x77}, {0xff38, 0x88},
+            {0xff39, 0x99}, {0xff3a, 0xaa}, {0xff3b, 0xbb}, {0xff3c, 0xcc}, {0xff3d, 0xdd},
+            {0xff3e, 0xee}, {0xff3f, 0xff}, {0xff1a, 0x80}, {0xff1c, 0x20}, {0xff1d, 0x23},
+            {0xff1e, 0x87}, {0xff21, 0x72}, {0xff22, 0x19}, {0xff23, 0x80}, {0xff00, 0x20}};
+  std::vector<Write> writes = {{0xff26, 0x80}, {0xff24, 0x77}, {0xff25, 0xff}, {0xff00, 0x20}};
+  if (which == 7) {
+    writes.insert(writes.end(), {{0xff11, 0xc0}, {0xff12, 0xf0}, {0xff13, 0xff}, {0xff14, 0x87}});
+  } else if (which <= 2) {
+    writes.insert(writes.end(), {{0xff10, uint8_t(0x10 | (which == 1 ? 1 : 6))},
+                                 {0xff11, 0xc0},
+                                 {0xff12, 0xf0},
+                                 {0xff13, 0xff},
+                                 {0xff14, 0x87}});
+  } else if (which <= 4) {
+    writes.insert(writes.end(),
+                  {{0xff21, 0xf0}, {0xff22, uint8_t(0x18 | (which - 3))}, {0xff23, 0x80}});
+  } else {
+    for (unsigned i = 0; i < 16; ++i)
+      writes.emplace_back(uint16_t(0xff30 + i), uint8_t(i * 29 + 0x35));
+    writes.insert(writes.end(), {{0xff1a, 0x80},
+                                 {0xff1c, 0x20},
+                                 {0xff1d, uint8_t(which == 5 ? 0xfe : 0xff)},
+                                 {0xff1e, 0x87}});
+  }
+  return writes;
+}
+
+struct System final : Audio::Output {
+  Host host;
+  Peripherals devices{host, *this};
+  Machine machine{host, devices};
+  unsigned samples = 0;
+  uint64_t digest = 14695981039346656037ull, lastSample = 0;
+  void Sample(uint64_t clock, int16_t left, int16_t right) override {
+    Check(clock > lastSample, "Audio callbacks keep increasing device clocks");
+    lastSample = clock;
+    ++samples;
+    for (int16_t value : {left, right})
+      for (unsigned shift : {0u, 8u}) {
+        digest ^= (uint16_t(value) >> shift) & 255;
+        digest *= 1099511628211ull;
+      }
+  }
+  void Load(bool secondModel, const std::vector<uint8_t> &program) {
+    std::vector<uint8_t> rom(32768);
+    std::copy(program.begin(), program.end(), rom.begin() + 0x200);
+    std::array<uint8_t, 256> boot{};
+    Check(machine.Load(rom, boot), "Generated cartridge and boot images load");
+    host.Reset();
+    machine.Reset(secondModel);
+    machine.WriteMemory(0xff40, 0);
+    machine.WriteMemory(0xff50, 1);
+    machine.WriteMemory(0xff04, 0);
+    Cpu::State state;
+    state.pc = 0x200;
+    state.sp = 0xd000;
+    machine.SetCpuState(state);
+    samples = 0;
+    digest = 14695981039346656037ull;
+    lastSample = 0;
+  }
+};
+
+void StopAndWake() {
+  constexpr std::array<unsigned, 5> waits = {0, 1, 2, 31, 1000};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned fixture = 0; fixture < 8; ++fixture)
+      for (unsigned wait = 0; wait < waits.size(); ++wait) {
+        const auto writes = Fixture(fixture);
+        std::vector<uint8_t> program;
+        for (const auto &[address, value] : writes)
+          program.insert(program.end(), {0x3e, value, 0xe0, uint8_t(address)});
+        program.insert(program.end(), {0x10, 0});
+        const auto resume = uint16_t(0x200 + program.size());
+        program.insert(program.end(), {0xf0, 0x30, 0, 0xc3, uint8_t(resume), uint8_t(resume >> 8)});
+        System system;
+        system.Load(model != 0, program);
+        for (unsigned i = 0; i < writes.size() * 2 + 1; ++i)
+          system.machine.RunInstruction();
+        Check(system.machine.CpuState().stopped, "STOP freezes processor execution");
+        for (unsigned i = 0; i < waits[wait]; ++i)
+          Check(system.machine.RunInstruction() == 4 && system.machine.CpuState().stopped,
+                "Sleeping clocks keep the processor stopped");
+        system.host.Write(0x6004, 0xfe);
+        system.machine.WriteMemory(0xff00, 0x20);
+        Check(system.machine.RunInstruction() == 12 && !system.machine.CpuState().stopped,
+              "A falling joypad pin wakes the processor through its resume cycles");
+        for (unsigned i = 0; i < 1024; ++i)
+          system.machine.RunInstruction();
+        const auto expected = ExpectedWake[model][fixture][wait];
+        if (system.samples != expected.samples || system.digest != expected.digest)
+          std::fprintf(stderr, "Model %u fixture %u wait %u: %u samples, digest %016llx\n", model,
+                       fixture, waits[wait], system.samples,
+                       static_cast<unsigned long long>(system.digest));
+        Check(system.samples == expected.samples && system.digest == expected.digest,
+              "STOP and wake retain oscillator timing, sample phase, and stereo output");
+      }
+}
+
+void HostVideoAndReset() {
+  System system;
+  system.Load(true, {0x18, 0xfe});
+  system.machine.WriteMemory(0xff47, 0xe4);
+  system.machine.WriteMemory(0xff40, 0x91);
+  system.machine.AdvanceHardware(456 * 144);
+  Check(system.machine.ReadMemory(0xff44) == 144 && (system.machine.ReadMemory(0xff0f) & 1),
+        "The display requests vertical blank through the machine interrupt bus");
+  system.host.Write(0x6001, 0);
+  for (unsigned i = 0; i < 320; ++i)
+    Check(system.host.Read(0x7800) == 0, "The host receives complete blank-background tile rows");
+  system.machine.Reset(true);
+  Check(system.machine.ReadMemory(0xff26) == 0x70 && system.machine.ReadMemory(0xff40) == 0,
+        "Reset clears sound and display register state together");
+}
+} // namespace
+
+int main() {
+  try {
+    StopAndWake();
+    HostVideoAndReset();
+    std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
+    return 0;
+  } catch (const std::exception &error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
+  }
+}

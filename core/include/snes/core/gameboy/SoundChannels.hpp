@@ -31,6 +31,13 @@ public:
   void Advance(unsigned clocks);
   void AdvanceTo(uint64_t clock);
   void DividerEdge(bool rising, uint64_t clock);
+  void Stop(bool stopped) noexcept {
+    stopped_ = stopped;
+  }
+  // Move wall-clock deadlines while retaining unprocessed oscillator clocks.
+  void Suspend(unsigned clocks) noexcept;
+  // Wave fetches and sweep pipelines need service before the next sample.
+  bool NeedsStep() const noexcept;
   State GetState() const noexcept;
 
 private:
@@ -58,6 +65,7 @@ private:
   bool secondModel_ = false;
   bool noiseReloaded_ = false;
   bool sweepStarting_ = false;
+  bool stopped_ = false;
 
   void Power(bool enabled);
   void Tick();

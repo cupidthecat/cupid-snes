@@ -90,6 +90,7 @@ void Machine::Flush(uint64_t target) {
     RunDma(1);
     cartridge_.AdvanceRtc(1);
   }
+  devices_.FinishAdvance();
 }
 
 void Machine::RequestInterrupt(uint8_t mask) {
@@ -97,7 +98,7 @@ void Machine::RequestInterrupt(uint8_t mask) {
 }
 
 void Machine::AudioDividerEdge(bool rising) {
-  devices_.AudioDividerEdge(rising);
+  devices_.AudioDividerEdge(rising, deviceClock_);
 }
 
 void Machine::DriveData(uint16_t address, uint8_t value) {

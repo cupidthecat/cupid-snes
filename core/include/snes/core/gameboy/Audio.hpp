@@ -17,11 +17,13 @@ public:
 
   explicit Audio(Output &output) : output_(output) {}
   void Reset(bool secondModel = false);
-  uint8_t Read(uint16_t address) const;
+  uint8_t Read(uint16_t address);
   void Write(uint16_t address, uint8_t value);
   void Advance(unsigned clocks);
+  // Complete an elapsed bus timing batch, including any sample due in it.
   void AdvanceTo(uint64_t clock);
   void DividerEdge(bool rising, uint64_t clock);
+  void Stop(bool stopped) noexcept;
   unsigned SampleRate() const noexcept {
     return sampleRate_;
   }
@@ -38,9 +40,11 @@ private:
   Output &output_;
   std::array<Filter, 4> filters_{};
   std::array<double, 2> capacitor_{};
-  uint64_t clock_ = 0, renderClock_ = 0, samples_ = 0;
+  uint64_t clock_ = 0, renderClock_ = 0, samples_ = 0, phaseClock_ = 0;
   unsigned sampleCycles_ = 0, sampleRate_ = 33558, clockRate_ = 4295454;
-  uint32_t phaseStep_ = 4194275;
+  uint32_t phaseStep_ = 4194275, phase_ = 0;
+  unsigned resumeClocks_ = 0, renderedClocks_ = 0, batchClocks_ = 128;
+  bool stopped_ = false;
   uint8_t volume_ = 0, routing_ = 0;
   double highpass_ = 1;
   SoundChannels channels_{*this};
@@ -50,6 +54,8 @@ private:
   void Mixer(uint64_t clock, uint8_t volume, uint8_t routing) override;
   void Power(uint64_t clock, bool enabled) override;
   void Change(uint64_t clock, unsigned channel, unsigned level, int phaseOffset);
+  void AdvancePhase(uint64_t clock);
+  void FlushSound(uint64_t clock);
   void Render();
 };
 

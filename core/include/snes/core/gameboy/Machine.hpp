@@ -20,7 +20,9 @@ public:
     // Writes and elapsed clocks return newly requested interrupt bits.
     virtual uint8_t Write(uint16_t address, uint8_t value, Access access) = 0;
     virtual uint8_t Advance(unsigned clocks) = 0;
-    virtual void AudioDividerEdge(bool rising) = 0;
+    virtual void AudioDividerEdge(bool rising, uint64_t clock) = 0;
+    // Complete a CPU bus timing batch after its individual hardware clocks.
+    virtual void FinishAdvance() {}
     virtual void AddressBus(uint16_t, bool) {}
     virtual void Stop(bool) {}
     virtual void WindowWrite(bool) {}

@@ -27,6 +27,7 @@ void SoundChannels::Reset(bool secondModel) {
   emittedChannels_ = 0;
   powered_ = dividerHigh_ = sweepEnabled_ = sweepNegated_ = false;
   noisePending_ = waveAccess_ = false;
+  stopped_ = false;
   secondModel_ = secondModel;
   for (unsigned i = 0; i < 4; ++i)
     output_.Dac(0, i, {}, 0);
@@ -46,6 +47,27 @@ bool SoundChannels::DacEnabled(unsigned channel) const noexcept {
 
 bool SoundChannels::LengthEnabled(unsigned channel) const noexcept {
   return (registers_[Base[channel] + 4] & 0x40) != 0;
+}
+
+void SoundChannels::Suspend(unsigned clocks) noexcept {
+  clocks_ += clocks;
+  audioClock_ += clocks;
+  if (noisePending_)
+    noiseStart_ += clocks;
+  if (sweepStop_)
+    sweepStop_ += clocks;
+  if (waveAccess_)
+    waveRead_ += clocks;
+  if (dividerEvent_)
+    dividerEvent_ += clocks;
+  if (sweepStarting_)
+    sweepTrigger_ += clocks;
+}
+
+bool SoundChannels::NeedsStep() const noexcept {
+  return channels_[2].enabled || sweepStop_ ||
+         (sweepStarting_ && audioClock_ - sweepTrigger_ <
+                                ((registers_[0] & 7) ? 4u * (3u + (registers_[0] & 7)) : 4u));
 }
 
 SoundChannels::State SoundChannels::GetState() const noexcept {
@@ -453,6 +475,15 @@ void SoundChannels::DividerEdge(bool rising, uint64_t clock) {
 }
 
 void SoundChannels::Tick() {
+  if (stopped_) {
+    if (noisePending_)
+      noiseStart_ += 4;
+    if (sweepStop_)
+      sweepStop_ += 4;
+    if (waveAccess_)
+      waveRead_ += 4;
+    return;
+  }
   if (!powered_)
     return;
   for (unsigned half = 0; half < 2; ++half) {
