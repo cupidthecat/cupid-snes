@@ -37,6 +37,12 @@ public:
   void WriteConsoleAudio(int16_t left, int16_t right) {
     mixer_.WriteConsole(left, right);
   }
+  void SetExpansionAudioRate(uint32_t rate) {
+    mixer_.SetExpansionRate(rate);
+  }
+  void WriteExpansionAudio(float left, float right) {
+    mixer_.WriteExpansion(left, right);
+  }
 
 private:
   bool secondModel_ = false, loaded_ = false;

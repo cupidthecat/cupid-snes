@@ -28,6 +28,7 @@
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/Trace.hpp"
+#include "snes/core/audio/StreamMixer.hpp"
 
 #include <array>
 #include <cstdint>
@@ -195,6 +196,9 @@ private:
   void ResetHardware(bool warm);
   void AdvanceClocks(uint32_t clocks);
   void SynchronizeDevices(bool communication = false);
+  void ConfigureExpansionAudio();
+  void AttachMsu1(const std::string &path);
+  void SynchronizeExpansionAudio(uint64_t elapsed);
   void SynchronizeCoprocessors();
   void StopFrameExecution();
   uint32_t ResumeCpuInstruction();
@@ -234,6 +238,8 @@ private:
   std::unique_ptr<Dsp2> dsp2_;
   std::unique_ptr<Srtc> srtc_;
   std::unique_ptr<Msu1> msu1_;
+  audio::StreamMixer expansionMixer_;
+  uint64_t msuSamplesClocked_ = 0;
 
   // Audio output buffer (stereo interleaved int16_t, enough for 1+ frames)
   static constexpr int kAudioBufSamples = 2048;

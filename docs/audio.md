@@ -16,7 +16,7 @@ The sound CPU's timers and DSP keep advancing during SLEEP and STOP. Each SMP bu
 
 A long DMA can advance several video fields before `StepFrame` returns. The core drains full DSP output blocks during those transfers and submits the collected samples together. The normal 2,048-sample buffer therefore does not truncate that operation's audio. A maximal eight-channel DMA test compares the submitted count with the DSP phase count and checks that the following frame contains no stale samples.
 
-[MSU-1 packs](msu1.md) add file-backed stereo PCM. The core resamples PCM to 32 kHz and mixes it at each DSP output sample, before the next console bus operation. Playback continues without a host audio sink, and full buffers are drained during long transfers. Mid-frame volume, pause and track changes retain samples that have already played.
+[MSU-1 packs](msu1.md) add file-backed stereo PCM on an independent 44.1 kHz clock. Cubic interpolation aligns active streams at 32,040 stereo frames per second, then the mixer adds them and clamps once. Playback continues through DSP mute, headless operation and long transfers. Timed volume, pause and track changes preserve interpolation history.
 
 ## Checks
 

@@ -842,6 +842,16 @@ void Cartridge::WriteGameBoyConsoleAudio(int16_t left, int16_t right) {
     gameBoy_->WriteConsoleAudio(left, right);
 }
 
+void Cartridge::SetGameBoyExpansionAudioRate(uint32_t rate) {
+  if (gameBoy_)
+    gameBoy_->SetExpansionAudioRate(rate);
+}
+
+void Cartridge::WriteGameBoyExpansionAudio(float left, float right) {
+  if (gameBoy_)
+    gameBoy_->WriteExpansionAudio(left, right);
+}
+
 bool Cartridge::MapSpc7110(MemoryBus &bus, uint8_t slot) const {
   if (!spc7110_)
     return false;
