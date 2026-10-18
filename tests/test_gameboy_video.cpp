@@ -287,6 +287,29 @@ void ObjectQueueTiming() {
   }
 }
 
+void VideoMemoryRelease() {
+  for (bool secondModel : {false, true})
+    for (bool signedTiles : {false, true}) {
+      System system;
+      system.video.Reset(secondModel);
+      for (unsigned i = 0; i < 1024; ++i)
+        system.video.Write(uint16_t(0x9800 + i), 1);
+      system.video.Write(0x8000, 0x12);
+      system.video.Write(0x9000, 0x34);
+      system.video.Write(0xff40, signedTiles ? 0x81 : 0x91);
+      system.Step(251);
+      Check(system.video.Read(0x9000) == 0xff,
+            "VRAM remains blocked until the final pixel leaves the queue");
+      system.Step(1);
+      Check(system.video.Read(0x9000) == (signedTiles ? 0x34 : 0x12) &&
+                system.video.Read(0x9000, true) == (signedTiles ? 0x34 : 0x12),
+            "CPU and DMA reads retain the final fetch address line during VRAM release");
+      system.Step(1);
+      Check(system.video.Read(0x9000) == 0x34,
+            "The upper VRAM address line is released on the following clock");
+    }
+}
+
 void LateEnableAndShutdown() {
   System window;
   window.video.Write(0xff4b, 80);
@@ -444,6 +467,7 @@ int main() {
     ObjectBackgroundAndWindowTiming();
     ObjectPlanePhases();
     ObjectQueueTiming();
+    VideoMemoryRelease();
     LateEnableAndShutdown();
     LiveScrollFetches();
     ClippedWindowDataAndFetchDelay();

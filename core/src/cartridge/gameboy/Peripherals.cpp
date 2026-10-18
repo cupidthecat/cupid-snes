@@ -67,8 +67,8 @@ void Peripherals::SetCpuSleeping(bool sleeping) {
   video_.SetCpuSleeping(sleeping);
 }
 
-uint8_t Peripherals::DmaStatus(uint8_t position, bool) {
-  video_.DmaStatus(position);
+uint8_t Peripherals::DmaStatus(uint16_t source, uint8_t position) {
+  video_.DmaStatus(source, position);
   return 0;
 }
 

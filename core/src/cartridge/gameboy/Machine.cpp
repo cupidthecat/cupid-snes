@@ -238,7 +238,7 @@ void Machine::WriteData(uint16_t address, uint8_t value, Access access) {
     dmaSource_ = uint16_t(value) << 8;
     dmaPosition_ = 0xff;
     dmaClocks_ = 2;
-    flags_ |= devices_.DmaStatus(dmaPosition_, dmaRestarting_);
+    flags_ |= devices_.DmaStatus(dmaSource_, dmaPosition_);
   } else if (address >= 0xfe00 && address < 0xff00 && access == Access::Cpu &&
              dmaPosition_ != 0xa1) {
     devices_.BlockedOamAccess(address, true);
@@ -265,7 +265,7 @@ void Machine::RunDma(unsigned clocks, bool force) {
       ++dmaPosition_;
       ++dmaSource_;
     }
-    flags_ |= devices_.DmaStatus(dmaPosition_, dmaRestarting_);
+    flags_ |= devices_.DmaStatus(dmaSource_, dmaPosition_);
   }
 }
 

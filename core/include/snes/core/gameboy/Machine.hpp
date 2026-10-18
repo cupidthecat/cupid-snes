@@ -30,7 +30,7 @@ public:
     virtual void SetCpuSleeping(bool) {}
     virtual void Stop(bool) {}
     virtual void WindowWrite(bool) {}
-    virtual uint8_t DmaStatus(uint8_t, bool) {
+    virtual uint8_t DmaStatus(uint16_t, uint8_t) {
       return 0;
     }
   };

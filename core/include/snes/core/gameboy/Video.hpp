@@ -32,7 +32,8 @@ public:
   void SetCpuSleeping(bool sleeping) noexcept {
     sleeping_ = sleeping;
   }
-  void DmaStatus(uint8_t position) noexcept {
+  void DmaStatus(uint16_t source, uint8_t position) noexcept {
+    dmaSource_ = source;
     dmaPosition_ = position;
   }
   void Stop(bool stopped) noexcept {
@@ -86,12 +87,14 @@ private:
   bool secondModel_ = false, windowReached_ = false, windowActive_ = false;
   bool windowUsed_ = false, lateWindow_ = false;
   bool windowWrite_ = false, windowChanged_ = false;
-  bool sleeping_ = false;
+  bool sleeping_ = false, vramRelease_ = false;
+  uint16_t dmaSource_ = 0;
   uint8_t dmaPosition_ = 0xa1, scanY_ = 0, scanX_ = 0;
 
   uint8_t Tick();
   uint8_t ScannerRow() const noexcept;
   uint8_t ReadObject(uint8_t address) const noexcept;
+  uint8_t ReadVram(uint16_t address);
   void SynchronizeDma();
   uint8_t UpdateInterrupt();
   void CompareLine(int line);

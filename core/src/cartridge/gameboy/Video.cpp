@@ -26,14 +26,20 @@ void Video::Reset(bool secondModel) {
   windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
   windowWrite_ = windowChanged_ = false;
   secondModel_ = secondModel;
-  sleeping_ = false;
+  sleeping_ = vramRelease_ = false;
+  dmaSource_ = 0;
   dmaPosition_ = 0xa1;
   scanY_ = scanX_ = 0;
 }
 
 uint8_t Video::Read(uint16_t address, bool dma) {
-  if (address >= 0x8000 && address < 0xa000)
-    return !dma && (blocked_ & 4) ? 0xff : vram_[address & 0x1fff];
+  if (address >= 0x8000 && address < 0xa000) {
+    if (!dma && (blocked_ & 4))
+      return 0xff;
+    // The upper address line retains its fetch value for the release clock.
+    const auto mask = vramRelease_ && !(dataAddress_ & 0x1000) ? 0x0fff : 0x1fff;
+    return vram_[address & mask];
+  }
   if (address >= 0xfe00 && address < 0xff00) {
     return dma ? oam_.Read(uint8_t(address))
                : oam_.ReadCpu(uint8_t(address), ScannerRow(), blocked_ & 3);
@@ -72,6 +78,7 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
       line_ = ly_ = mode_ = blocked_ = 0;
       irqMode_ = 0xff;
       warm_ = true;
+      vramRelease_ = false;
       fifoHead_ = fifoSize_ = objectCount_ = objectStall_ = 0;
       windowLine_ = 0;
       windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
@@ -112,6 +119,20 @@ uint8_t Video::ReadObject(uint8_t address) const noexcept {
   if (dmaPosition_ > 0 && dmaPosition_ < 0xa0)
     address = uint8_t((dmaPosition_ & 0xfe) | (address & 1));
   return oam_.Read(address);
+}
+
+uint8_t Video::ReadVram(uint16_t address) {
+  SynchronizeDma();
+  if (dmaPosition_ >= 1 && dmaPosition_ <= 160 && dmaSource_ >= 0x8000 && dmaSource_ < 0xa000) {
+    const auto byte = uint8_t(dmaPosition_ - (sleeping_ ? 0 : 1));
+    const auto source = uint16_t(dmaSource_ - (sleeping_ ? 0 : 1));
+    // Both bus masters drive high address bits onto the same memory access.
+    address |= source & 0x1fff;
+    const auto value = vram_[address & 0x1fff];
+    oam_.Write(byte, value);
+    return value;
+  }
+  return vram_[address & 0x1fff];
 }
 
 void Video::SynchronizeDma() {
@@ -201,8 +222,10 @@ uint8_t Video::Tick() {
     }
     if (mode_ == 3 && dot_ != (warm_ ? 80 : 84))
       Transfer();
-    if (hblankDot_ && dot_ == hblankDot_ + 1)
+    if (hblankDot_ && dot_ == hblankDot_ + 1) {
+      vramRelease_ = false;
       irqMode_ = 0;
+    }
   } else if (line_ == 144) {
     if (dot_ == 2) {
       ly_ = 144;
@@ -303,22 +326,19 @@ void Video::FetchBackground() {
     break;
   }
   case MapRead:
-    SynchronizeDma();
-    tile_ = vram_[mapAddress_];
+    tile_ = ReadVram(mapAddress_);
     break;
   case LowerAddress:
     dataAddress_ = TileAddress();
     break;
   case LowerRead:
-    SynchronizeDma();
-    low_ = vram_[dataAddress_];
+    low_ = ReadVram(dataAddress_);
     break;
   case UpperAddress:
     dataAddress_ = uint16_t(TileAddress() + 1);
     break;
   case UpperRead:
-    SynchronizeDma();
-    high_ = vram_[dataAddress_];
+    high_ = ReadVram(dataAddress_);
     if (windowActive_)
       ++fetchX_;
     break;
@@ -400,13 +420,12 @@ void Video::FetchObject() {
     object.address = uint16_t(scanY_ * 16);
   }
   if (objectStall_ == 3 || objectStall_ == 1) {
-    SynchronizeDma();
     const unsigned height = registers_[0] & 4 ? 16 : 8;
     unsigned row = uint8_t(line_ + 16 - object.y) & (height - 1);
     if (object.flags & 0x40)
       row = height - 1 - row;
     const unsigned base = height == 16 ? object.address & ~16u : object.address;
-    const auto value = vram_[base + row * 2 + (objectStall_ == 1 ? 1 : 0)];
+    const auto value = ReadVram(uint16_t(base + row * 2 + (objectStall_ == 1 ? 1 : 0)));
     if (objectStall_ == 3)
       object.low = value;
     else
@@ -498,6 +517,7 @@ void Video::Transfer() {
   }
   FetchBackground();
   if (x_ == 160) {
+    vramRelease_ = true;
     lateWindow_ = windowReached_ && registers_[11] == 166 && (registers_[0] & 0x21) == 0x21;
     mode_ = 0;
     blocked_ = 0;

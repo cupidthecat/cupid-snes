@@ -398,6 +398,74 @@ void WindowWriteDuringObjectFetch() {
       }
 }
 
+void VideoDmaBusContention() {
+  struct Fixture {
+    unsigned scene, page, start, phase;
+    bool sleeping;
+  };
+  std::vector<Fixture> fixtures;
+  for (unsigned scene = 0; scene < 4; ++scene)
+    for (unsigned page : {0x80u, 0x87u, 0x90u, 0x98u, 0x9fu})
+      for (unsigned start : {78u, 450u, 526u, 534u, 640u})
+        for (bool sleeping : {false, true})
+          for (unsigned phase : {3u, 12u, 63u, 255u, 639u, 640u, 645u})
+            fixtures.push_back({scene, page, start, phase, sleeping});
+  const auto ram = PatternedVideoRam();
+  for (bool secondModel : {false, true}) {
+    uint64_t digest = 14695981039346656037ull;
+    for (const auto &fixture : fixtures) {
+      System system;
+      system.Load(secondModel, {0});
+      for (unsigned i = 0; i < ram.size(); ++i)
+        system.devices.Write(uint16_t(0x8000 + i), ram[i], Machine::Access::Dma);
+      for (unsigned i = 0; i < 40; ++i) {
+        const std::array<uint8_t, 4> object{17, uint8_t(i * 13 + 8), uint8_t(i * 7 + 5),
+                                            uint8_t((i & 3) * 0x20)};
+        for (unsigned byte = 0; byte < object.size(); ++byte)
+          system.devices.Write(uint16_t(0xfe00 + i * 4 + byte), object[byte], Machine::Access::Dma);
+      }
+      for (const auto [address, value] : std::array<Write, 7>{{{0xff43, 3},
+                                                               {0xff47, 0xe4},
+                                                               {0xff48, 0xe4},
+                                                               {0xff49, 0x1b},
+                                                               {0xff4b, 80},
+                                                               {0xff80, 0x76},
+                                                               {0xff81, 0}}})
+        system.machine.WriteMemory(address, value);
+      auto state = system.machine.CpuState();
+      state.pc = 0xff80;
+      system.machine.SetCpuState(state);
+      constexpr std::array<uint8_t, 4> lcd{0x91, 0x93, 0x97, 0xf3};
+      system.machine.WriteMemory(0xff40, lcd[fixture.scene]);
+      system.machine.AdvanceHardware(fixture.start);
+      system.machine.WriteMemory(0xff46, uint8_t(fixture.page));
+      system.machine.AdvanceHardware(fixture.phase);
+      unsigned sleepClocks = 0;
+      if (fixture.sleeping) {
+        sleepClocks = system.machine.RunInstruction();
+        Check(system.machine.CpuState().halted, "The DMA fixture enters CPU sleep from HRAM");
+      }
+      uint64_t hash = 14695981039346656037ull;
+      const auto mix = [&](uint8_t value) { hash = (hash ^ value) * 1099511628211ull; };
+      const auto capture = [&] {
+        for (unsigned i = 0; i < 160; ++i)
+          mix(system.devices.Read(uint16_t(0xfe00 + i), Machine::Access::Dma));
+      };
+      capture();
+      system.machine.AdvanceHardware(2000 - fixture.start - fixture.phase - sleepClocks);
+      capture();
+      for (unsigned shift : {0u, 8u, 16u, 24u})
+        mix(uint8_t(system.pixels.size() >> shift));
+      for (auto shade : system.pixels)
+        mix(shade);
+      for (unsigned shift = 0; shift < 64; shift += 8)
+        digest = (digest ^ uint8_t(hash >> shift)) * 1099511628211ull;
+    }
+    Check(digest == 0xb335eaae69c0d30dull,
+          "Video DMA retains address collisions, OAM feedback, sleep and release phases");
+  }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -423,6 +491,7 @@ int main() {
     ObjectMemoryExecution();
     SharedObjectBusLatches();
     WindowWriteDuringObjectFetch();
+    VideoDmaBusContention();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

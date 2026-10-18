@@ -22,7 +22,7 @@ public:
   void BlockedOamAccess(uint16_t address, bool write) override;
   void SetDmaSynchronizer(std::function<void()> synchronize) override;
   void SetCpuSleeping(bool sleeping) override;
-  uint8_t DmaStatus(uint8_t position, bool restarting) override;
+  uint8_t DmaStatus(uint16_t source, uint8_t position) override;
 
 private:
   Video video_;
