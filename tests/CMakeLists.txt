@@ -44,6 +44,10 @@ add_executable(snes_gameboy_machine_tests test_gameboy_machine.cpp)
 target_link_libraries(snes_gameboy_machine_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_machine_tests COMMAND snes_gameboy_machine_tests)
 
+add_executable(snes_gameboy_sound_channels_tests test_gameboy_sound_channels.cpp)
+target_link_libraries(snes_gameboy_sound_channels_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_sound_channels_tests COMMAND snes_gameboy_sound_channels_tests)
+
 add_executable(snes_gameboy_video_tests test_gameboy_video.cpp)
 target_link_libraries(snes_gameboy_video_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_video_tests COMMAND snes_gameboy_video_tests)
