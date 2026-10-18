@@ -24,11 +24,12 @@ void SoundChannels::Reset(bool secondModel) {
   noiseReloaded_ = false;
   sweepShadow_ = 0;
   phase_ = waveShift_ = waveLatch_ = emittedDacs_ = sweepCounter_ = 0;
+  emittedChannels_ = 0;
   powered_ = dividerHigh_ = sweepEnabled_ = sweepNegated_ = false;
   noisePending_ = waveAccess_ = false;
   secondModel_ = secondModel;
   for (unsigned i = 0; i < 4; ++i)
-    output_.Dac(0, i, 0, false);
+    output_.Dac(0, i, 0, false, false);
   output_.Mixer(0, 0, 0);
 }
 
@@ -83,11 +84,14 @@ void SoundChannels::Emit(uint64_t clock) {
     const uint8_t value = channels_[i].enabled ? channels_[i].amplitude : 0;
     const uint8_t mask = uint8_t(1u << i);
     const bool dac = DacEnabled(i);
-    if (value == emitted_[i] && dac == ((emittedDacs_ & mask) != 0))
+    const bool active = channels_[i].enabled;
+    if (value == emitted_[i] && dac == ((emittedDacs_ & mask) != 0) &&
+        active == ((emittedChannels_ & mask) != 0))
       continue;
     emitted_[i] = value;
     emittedDacs_ = uint8_t((emittedDacs_ & ~mask) | (dac ? mask : 0));
-    output_.Dac(clock, i, value, dac);
+    emittedChannels_ = uint8_t((emittedChannels_ & ~mask) | (active ? mask : 0));
+    output_.Dac(clock, i, value, dac, active);
   }
 }
 
@@ -443,12 +447,12 @@ void SoundChannels::DividerEdge(bool rising, uint64_t clock) {
 void SoundChannels::Tick() {
   if (!powered_)
     return;
-  if (sweepStop_ && audioClock_ >= sweepStop_) {
-    channels_[0].enabled = false;
-    sweepStop_ = 0;
-  }
   for (unsigned half = 0; half < 2; ++half) {
     const uint64_t end = audioClock_ - 2 + half * 2;
+    if (sweepStop_ && end >= sweepStop_) {
+      channels_[0].enabled = false;
+      sweepStop_ = 0;
+    }
     if (dividerEvent_ && end >= dividerEvent_) {
       dividerEvent_ = 0;
       ClockFrame();

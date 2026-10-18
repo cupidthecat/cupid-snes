@@ -10,7 +10,8 @@ class SoundChannels {
 public:
   struct Output {
     virtual ~Output() = default;
-    virtual void Dac(uint64_t clock, unsigned channel, uint8_t level, bool enabled) = 0;
+    virtual void Dac(uint64_t clock, unsigned channel, uint8_t level, bool dacEnabled,
+                     bool channelEnabled) = 0;
     virtual void Mixer(uint64_t clock, uint8_t volume, uint8_t routing) = 0;
   };
   struct State {
@@ -45,8 +46,8 @@ private:
            dividerEvent_ = 0, sweepTrigger_ = 0;
   uint16_t noise_ = 0x7fff, noiseCounter_ = 0, sweepShadow_ = 0;
   int noiseCountdown_ = 0, noiseReloadDelta_ = 0;
-  uint8_t phase_ = 0, waveShift_ = 0, waveLatch_ = 0, emittedDacs_ = 0, sweepCounter_ = 0,
-          noiseAlignment_ = 0;
+  uint8_t phase_ = 0, waveShift_ = 0, waveLatch_ = 0, emittedDacs_ = 0, emittedChannels_ = 0,
+          sweepCounter_ = 0, noiseAlignment_ = 0;
   bool powered_ = false, dividerHigh_ = false, sweepEnabled_ = false;
   bool sweepNegated_ = false, noisePending_ = false, waveAccess_ = false;
   bool secondModel_ = false;

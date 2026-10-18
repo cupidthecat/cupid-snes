@@ -18,7 +18,7 @@ struct System final : SoundChannels::Output, ClockedIo::Bus {
     uint64_t clock;
     unsigned channel;
     uint8_t level;
-    bool enabled;
+    bool dacEnabled, channelEnabled;
     bool operator==(const Edge &) const = default;
   };
   SoundChannels sound{*this};
@@ -30,9 +30,10 @@ struct System final : SoundChannels::Output, ClockedIo::Bus {
     sound.Reset(secondModel);
     divider.Reset();
   }
-  void Dac(uint64_t time, unsigned channel, uint8_t level, bool enabled) override {
+  void Dac(uint64_t time, unsigned channel, uint8_t level, bool dacEnabled,
+           bool channelEnabled) override {
     Check(edges.empty() || time >= edges.back().clock, "DAC events retain clock order");
-    edges.push_back({time, channel, level, enabled});
+    edges.push_back({time, channel, level, dacEnabled, channelEnabled});
   }
   void Mixer(uint64_t, uint8_t value, uint8_t outputs) override {
     volume = value;
@@ -80,6 +81,9 @@ void PowerAndRegisters() {
         "Power-on preserves wave RAM and ignores earlier envelope writes");
   system.sound.Write(0xff12, 0xf0);
   system.sound.Write(0xff14, 0xc0);
+  Check(system.edges.back().dacEnabled && system.edges.back().channelEnabled &&
+            system.edges.back().level == 0,
+        "A muted trigger still emits its channel activation");
   system.Step(8183);
   Check(system.sound.Read(0xff26) == 0xf1, "A length loaded while off survives power-on");
   system.Step(1);
@@ -147,6 +151,9 @@ void SweepOverflowAndLiveWrites() {
   system.Step(1);
   Check(system.sound.Read(0xff26) == 0xf0,
         "Sweep overflow silences the channel after sixteen clocks");
+  Check(system.edges.back().clock == 16 && system.edges.back().dacEnabled &&
+            !system.edges.back().channelEnabled,
+        "Sweep shutdown retains the DAC connection and reports the exact calculation clock");
   system.Step(24568 - 16);
   Check(system.sound.GetState().frequencies[0] == 122,
         "The sweep frequency latch continues calculating after channel shutdown");
