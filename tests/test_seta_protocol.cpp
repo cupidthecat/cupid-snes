@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SetaProtocol.hpp"
 
 #include <algorithm>
@@ -115,7 +115,7 @@ void CartridgeMaps() {
       arm[i * 4 + byte] = uint8_t(program[i] >> (byte * 8));
   Check(firmware->Set(FirmwareKind::St011, dsp) && firmware->Set(FirmwareKind::St018, arm),
         "Generated programs supply both cartridge processors");
-  Emulator::Config config;
+  auto config = snes::tests::DeterministicConsoleConfig();
   config.cartridgeFirmware = firmware;
   auto machine = std::make_unique<Emulator>(config);
   auto image = Image(0xf6);

@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -24,7 +24,7 @@ std::unique_ptr<Emulator> Machine() {
   rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
   rom[0] = 0xdb; // STP, so only hardware events advance in frame tests.
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!emu->LoadCartridge(rom, &error))
     throw std::runtime_error(error);

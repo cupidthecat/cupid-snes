@@ -4,6 +4,26 @@ The core executes SA-1 and Super FX programs, supplied DSP-3/4 firmware, and Cx4
 
 Existing LoROM, HiROM, extended and special boards, DSP-1/2, OBC1, S-RTC, S-DD1, ST010, Sufami Turbo, controllers, and PPU rendering paths remain in use. This work concerns original hardware compatibility. It does not add frontend features or change the renderer into a per-dot model.
 
+## Console startup and video hardware
+
+`Emulator::Config::entropyMode` selects deterministic startup (`None`), a correlated memory pattern with sparse bit changes (`Low`), or independent byte generation (`High`). The default is `Low`. `entropySeed` and `entropySequence` make startup reproducible; an omitted seed uses the process CPU clock. WRAM and progressive video memory and registers consume one shared stream in startup order.
+
+The progressive video path retains WRAM, APURAM and VRAM on warm reset. It clears OAM and initializes palette memory and register latches through a fresh startup stream. Deterministic mode clears palette memory and retains defined fallback bits, including the PPU bus values and VRAM increment selection. Reset preserves the selected video hardware configuration.
+
+`Emulator::Config::ppu` selects PPU2 revision 1, 2 or 3 and a VRAM capacity of 65,536 or 131,072 bytes. Revision 3 and 64 KiB are the defaults. The status register reports the selected revision. VRAM register addresses retain the upper address bit; the memory interface applies the capacity mask. At 64 KiB the two banks alias, while 128 KiB exposes both banks to CPU ports, backgrounds and objects.
+
+For example, a deterministic 128 KiB console with PPU2 revision 2 uses:
+
+```cpp
+snes::core::Emulator::Config config;
+config.entropyMode = snes::core::EntropyMode::None;
+config.entropySeed = 0;
+config.ppu = {2, 131072};
+snes::core::Emulator emulator(config);
+```
+
+These settings cover the current progressive renderer. A separate scanline execution model and its palette and sprite-memory retention rules remain pending.
+
 ## Cartridge implementations
 
 | Device | Implemented behavior | Important limits |
@@ -85,7 +105,7 @@ The memory controller exposes D7-only registers, pending and applied mapping bit
 
 ## Validation scope
 
-The current Windows Release build passes all 61 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
+The current Windows Release build passes all 75 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
 
 Run the complete test set with:
 

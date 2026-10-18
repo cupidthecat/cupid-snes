@@ -6,6 +6,7 @@
 #include "snes/core/detail/ExecutionContext.hpp"
 
 #include <algorithm>
+#include <ctime>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -61,11 +62,9 @@ std::optional<const char *> UnsupportedChipName(EnhancementChip chip) {
 
 // Construction / destruction
 
-Emulator::Emulator() : config_(Config{}) {
-  Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
-}
+Emulator::Emulator() : Emulator(Config{}) {}
 
-Emulator::Emulator(Config config) : config_(std::move(config)) {
+Emulator::Emulator(Config config) : config_(std::move(config)), ppu_(config_.ppu) {
   Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
 }
 
@@ -544,6 +543,10 @@ bool Emulator::Reset() {
 }
 
 void Emulator::ResetHardware(bool warm) {
+  const uint32_t seed = config_.entropySeed ? *config_.entropySeed : uint32_t(std::clock());
+  PowerOnState startup(config_.entropyMode, seed, config_.entropySequence);
+  if (!warm)
+    startup.Fill({bus_.WramData(), MemoryBus::WramSize});
   if (warm) {
     bus_.ResetRegisters();
     cartridge_->Reset();
@@ -560,7 +563,7 @@ void Emulator::ResetHardware(bool warm) {
     dsp_.Power();
   }
   smp_.Power(warm);
-  ppu_.Reset(warm);
+  ppu_.Power(startup, warm);
   cpuIo_.Reset();
   dma_.Reset();
   irq_.Reset();

@@ -1,5 +1,5 @@
+#include "ConsoleConfig.hpp"
 #include "snes/core/Cartridge.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -63,7 +63,7 @@ void DmaLengthLatch() {
 }
 void MappingAndRomOwnership() {
   auto image = Image();
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image) && machine->LoadedCartridge()->HasCx4Processor(),
         "The system loader selects processor execution with appended data firmware");
   auto &bus = machine->GetBus();
@@ -144,7 +144,7 @@ void ConsoleExchange() {
                        0xd0, 0xf4, 0x5c, 0x00, 0x00, 0x7e};
   std::copy(std::begin(boot), std::end(boot), image.begin());
   std::copy(std::begin(worker), std::end(worker), image.begin() + 0x100);
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The generated console and Cx4 programs load together");
   machine->StepFrame();
   Check(machine->GetBus().WramData()[0x100] == 0x2a && machine->GetPpu().CgramData()[0] == 0x2a,

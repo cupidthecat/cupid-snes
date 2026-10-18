@@ -1,5 +1,5 @@
+#include "ConsoleConfig.hpp"
 #include "snes/core/Cartridge.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -98,7 +98,7 @@ void FirmwareCatalogAndPartitioning() {
         "Clock partitioning preserves firmware output");
 }
 void MappedFirmwarePorts() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(Image()), "The system loader accepts appended ST018 firmware");
   auto &bus = machine->GetBus();
   Check(bus.Read(0x003804) == 0, "System-bus status starts before the processor boot delay");
@@ -125,7 +125,7 @@ void ConsoleMailboxExchange() {
                           0x00, 0x38, 0x8f, 0x00, 0x00, 0x7e, 0x8d, 0x22, 0x21, 0x9c, 0x22,
                           0x21, 0xa9, 0x0f, 0x8d, 0x00, 0x21, 0xcb, 0x80, 0xfd};
   std::copy(std::begin(console), std::end(console), image.begin());
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The generated console and ARM programs load together");
   machine->StepFrame();
   Check(machine->GetBus().WramData()[0] == 0x3a && machine->GetPpu().CgramData()[0] == 0x3a,
@@ -143,7 +143,7 @@ void WorkRamReset() {
   for (unsigned i = 0; i < std::size(firmware); ++i)
     for (unsigned byte = 0; byte < 4; ++byte)
       image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The work RAM counter firmware loads");
   auto &bus = machine->GetBus();
   machine->StepFrame();

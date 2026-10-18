@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/St010.hpp"
 #include "st010_cases.hpp"
 
@@ -153,7 +153,7 @@ void CartridgeMapping() {
   const auto overridden = Cartridge::FromRomImage(image, nullptr, &database, nullptr);
   Check(overridden && overridden->SramData().size() == 4096,
         "Header overrides cannot remove required device RAM");
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(image), "ST010 is accepted by emulator");
   auto &bus = emu->GetBus();
   for (unsigned bank = 0; bank < 256; ++bank) {
@@ -218,7 +218,7 @@ void CpuCommandProgram() {
       0x8f, 0x20, 0,    0x68, 0xa9, 0x80, 0x8f, 0x21, 0,    0x68, 0xaf, 0x10, 0,    0x68,
       0x8f, 0,    0,    0x7e, 0xaf, 0x11, 0,    0x68, 0x8f, 1,    0,    0x7e, 0xdb};
   std::copy(program.begin(), program.end(), rom.begin());
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(rom), "CPU fixture loads");
   emu->StepFrame();
   Check(emu->GetBus().Read(0x7e0000) == 0x38 && emu->GetBus().Read(0x7e0001) == 1,

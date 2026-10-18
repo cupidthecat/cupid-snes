@@ -1,6 +1,6 @@
 // Regression coverage for cartridge mappers and enhancement devices.
 
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -53,7 +53,7 @@ std::vector<uint8_t> Rom(size_t size = 0x100000, uint8_t mode = 0x20, uint8_t ty
 }
 
 std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &bytes) {
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!emu->LoadCartridge(bytes, &error))
     throw std::runtime_error(error);
@@ -84,7 +84,7 @@ void IdentifiedSlotCartridges() {
     if (mode != 0x23) {
       Check(cart->Read(mode == 0x21 ? 0x208123 : 0xc08123, 0x49) == 0x49,
             "An absent ordinary memory slot preserves open bus");
-      auto machine = std::make_unique<Emulator>();
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       Check(machine->LoadBroadcastCartridge(bytes, {}), "An explicit empty slot loads");
       machine->GetBus().Write(0x7e0000, 0x5b);
       Check(machine->LoadedCartridge()->MemoryPackData().empty() &&
@@ -384,7 +384,7 @@ void DeviceFamilyHeaders() {
 
 void DetectionAndReload() {
   const auto firmware = DetectionFirmware();
-  Emulator::Config config;
+  auto config = snes::tests::DeterministicConsoleConfig();
   config.cartridgeFirmware = firmware;
   struct Fixture {
     uint8_t mode, type, maker;
@@ -740,6 +740,8 @@ void ObjectController() {
   auto emu = Load(image);
   auto &bus = emu->GetBus();
   Check(bus.Read(0x006000) == 0xff && bus.Read(0xbf7ff6) == 0xff, "OBC1 power-on RAM");
+  for (unsigned byte = 0; byte < 4; ++byte)
+    bus.Write(0x7e7ff0 + byte, uint8_t(0xf0 + byte));
   for (unsigned select = 0; select < 2; ++select) {
     bus.Write(0x007ff5, static_cast<uint8_t>(select));
     const unsigned base = select ? 0x7800 : 0x7c00;
@@ -751,7 +753,7 @@ void ObjectController() {
               "OBC1 object port writes backing RAM");
         Check(bus.Read(0xbf7ff0 + byte) == uint8_t(object + byte),
               "OBC1 object ports share bank mirrors");
-        Check(bus.Read(0x7e7ff0 + byte) != uint8_t(object + byte), "OBC1 leaves WRAM mapped");
+        Check(bus.Read(0x7e7ff0 + byte) == uint8_t(0xf0 + byte), "OBC1 leaves WRAM mapped");
       }
     }
     bus.Write(base + 0x200, 0);
@@ -779,7 +781,7 @@ void Sufami() {
   std::vector<uint8_t> a(0x80000, 0x11), b(0x100000, 0x22);
   Signature(a, 0, "BANDAI SFC-ADX");
   Signature(b, 0, "BANDAI SFC-ADX");
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadSufamiTurbo(bios, a, b), "Load two Sufami Turbo slots");
   Check(emu->LoadedCartridge()->Header().mapping == MappingType::SufamiTurbo,
         "Sufami Turbo mapper selection");
@@ -978,7 +980,7 @@ void BroadcastBoards() {
     std::vector<uint8_t> pack(0x100000, 0xff);
     pack[0x8123] = 0x53;
     pack[0x18123] = 0x72;
-    auto emu = std::make_unique<Emulator>();
+    auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     std::string error;
     Check(emu->LoadBroadcastCartridge(base, pack, &error), "BS base and memory pack load");
     auto &bus = emu->GetBus();

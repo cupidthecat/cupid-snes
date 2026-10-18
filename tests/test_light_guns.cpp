@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 
 #include <algorithm>
 #include <array>
@@ -155,7 +155,7 @@ std::unique_ptr<Emulator> Machine(Input &input) {
   rom[0x7fd7] = 5;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   emu->AttachInputProvider(&input);
   Check(emu->LoadCartridge(rom), "Fixture loads");
   return emu;

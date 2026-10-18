@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 
 #include <algorithm>
 #include <array>
@@ -120,7 +120,7 @@ void AutomaticScheduling() {
   for (bool pal : {false, true}) {
     for (const auto &test : cases) {
       for (bool clearRam : {false, true}) {
-        auto machine = std::make_unique<Emulator>();
+        auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
         std::string error;
         if (!machine->LoadCartridge(Program(test.probe, pal), &error))
           throw std::runtime_error(error);

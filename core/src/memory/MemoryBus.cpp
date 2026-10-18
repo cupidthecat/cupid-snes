@@ -156,11 +156,8 @@ void MemoryBus::Reset() {
   }
   nextSlot_ = 1;
 
-  // Clear WRAM to 0x55/0xAA pattern (common uninitialized SNES WRAM pattern)
-  // Initialize WRAM deterministically.
-  for (size_t i = 0; i < WramSize; ++i) {
-    wram_[i] = (i & 1) ? 0xAA : 0x55;
-  }
+  // The console applies its startup entropy after mapping the cartridge.
+  wram_.fill(0);
 
   ResetRegisters();
 

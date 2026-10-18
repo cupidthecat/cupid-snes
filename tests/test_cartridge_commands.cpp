@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -66,7 +66,7 @@ struct Program {
 };
 
 void Dsp1StatusBytes() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Program program;
   program.Read(0x20c000, 0);
   program.Read(0xbfc001, 1);
@@ -103,7 +103,7 @@ void CommandBuses() {
     for (unsigned byte = 0; byte < 3; ++byte)
       bytes[i * 3 + byte] = uint8_t(instructions[i] >> (byte * 8));
   Check(firmware->Set(FirmwareKind::Dsp3, bytes), "Generated DSP-3 handshake firmware loads");
-  Emulator::Config config;
+  auto config = snes::tests::DeterministicConsoleConfig();
   config.cartridgeFirmware = firmware;
   auto machine = std::make_unique<Emulator>(config);
   Program hex;
@@ -205,7 +205,7 @@ void SignalFallbackRegressions() {
     chip.Write(0xff);
     Check(chip.Read() == 0xab, "The 512th input byte completes the wrapped scaling packet");
   }
-  Emulator::Config config;
+  auto config = snes::tests::DeterministicConsoleConfig();
   config.cartridgeFirmware = std::make_shared<CartridgeFirmware>();
   auto machine = std::make_unique<Emulator>(config);
   Check(machine->LoadCartridge(Rom(0x20, 3)), "A DSP-1 fallback board loads");
@@ -243,7 +243,7 @@ void BroadcastControllerCpu() {
   std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
   bios[0x7fda] = 0x33;
   bios[0x7fd8] = 5;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Program program;
   program.Read(0x025000, 0);
   program.Read(0x015fff, 1);
@@ -269,7 +269,7 @@ void BroadcastBus() {
   std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
   bios[0x7fda] = 0x33;
   bios[0x7fd8] = 5;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(bios) &&
             machine->LoadedCartridge()->Header().mapping == MappingType::Bsx,
         "An ordinary BIOS load selects the BS-X memory controller");

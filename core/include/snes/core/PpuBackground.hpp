@@ -6,7 +6,7 @@ namespace snes::core {
 
 class PpuBackground {
 public:
-  using Vram = std::span<const uint16_t, Ppu::VramWords>;
+  using Vram = std::span<const uint16_t>;
   struct Sample {
     uint8_t palette = 0;
     uint8_t group = 0;

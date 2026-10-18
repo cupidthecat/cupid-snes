@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/gameboy/AudioMixer.hpp"
 
 #include <algorithm>
@@ -167,7 +167,7 @@ void ClockAndBattery() {
 
 void ConsoleExecutionAndFailedLoads() {
   for (bool secondModel : {false, true}) {
-    auto emulator = std::make_unique<Emulator>();
+    auto emulator = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     const auto bios = Bios(secondModel);
     const auto game = Game();
     const auto boot = Boot();
@@ -218,7 +218,7 @@ void ConsoleClockBoundaries() {
   for (bool secondModel : {false, true})
     for (bool pal : {false, true})
       for (uint8_t divider = 0; divider < 4; ++divider, ++fixture) {
-        auto emulator = std::make_unique<Emulator>();
+        auto emulator = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
         Check(emulator->LoadSuperGameBoy(Bios(secondModel, pal, uint8_t(0x80 | divider)),
                                          Game(true), Boot()),
               "A generated console program selects the adapter model, region and oscillator");

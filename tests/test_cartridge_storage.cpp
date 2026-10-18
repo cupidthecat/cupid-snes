@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 
 #include <algorithm>
 #include <array>
@@ -88,7 +88,7 @@ void BoardDefaults() {
 }
 void CpuLoadResetReload() {
   for (bool hi : {false, true}) {
-    auto machine = std::make_unique<Emulator>();
+    auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     const auto image = Image(hi ? 0x21 : 0x20);
     Check(machine->LoadCartridge(image), "A generated save cartridge loads");
     auto &bus = machine->GetBus();
@@ -149,7 +149,7 @@ void ProcessorOwnedMemory() {
           "SETA save RAM belongs to its signal processor");
     RetainedSave(*cart, 0);
   }
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(Image(0x23, 0x35)), "The generated SA-1 cartridge loads");
   auto &bus = machine->GetBus();
   Check(bus.Read(0x003123) == 0, "SA-1 internal RAM starts cleared");

@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -110,7 +110,7 @@ void AdjacentFiles() {
   const auto rom = files.directory / "game.sfc";
   files.Write(rom, Rom());
   files.Write(firmware / "dsp1.rom", Firmware(FirmwareKind::Dsp1, 0x79));
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridgeFromFile(rom.string(), &error) &&
             machine->LoadedCartridge()->HasSignalProcessor(),
@@ -142,7 +142,7 @@ void EmbeddedImages() {
     bytes.insert(bytes.end(), firmware.begin(), firmware.end());
     auto catalog = std::make_shared<CartridgeFirmware>();
     Check(catalog->Set(kind, Firmware(kind, 0x18)), "Explicit alternate firmware is available");
-    Emulator::Config config;
+    auto config = snes::tests::DeterministicConsoleConfig();
     config.cartridgeFirmware = catalog;
     auto machine = std::make_unique<Emulator>(config);
     Check(machine->LoadCartridge(bytes) && machine->LoadedCartridge()->HasSignalProcessor() &&
@@ -200,7 +200,7 @@ void RequiredFirmwareLoads() {
     auto unrelated = std::make_shared<CartridgeFirmware>();
     Check(unrelated->Set(FirmwareKind::Dsp1, Firmware(FirmwareKind::Dsp1, 0x18)),
           "The catalog contains firmware for a different processor");
-    Emulator::Config config;
+    auto config = snes::tests::DeterministicConsoleConfig();
     config.cartridgeFirmware = unrelated;
     auto machine = std::make_unique<Emulator>(config);
     auto ordinary = Rom();
@@ -256,7 +256,7 @@ void RequiredFirmwareLoads() {
           "Required embedded firmware takes precedence over the catalog");
 
     files.Write(files.Folder("firmware") / CartridgeFirmware::FileName(kind), program);
-    auto adjacent = std::make_unique<Emulator>();
+    auto adjacent = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     Check(adjacent->LoadCartridgeFromFile(path.string(), &error),
           "The file loader discovers required firmware beside the game");
     adjacent->StepFrame();

@@ -1,5 +1,5 @@
+#include "ConsoleConfig.hpp"
 #include "snes/core/CompetitionBoard.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/Timing.hpp"
 
@@ -155,7 +155,7 @@ void FirmwarePorts() {
 }
 
 void ConsoleLoading() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   for (auto type :
        {CompetitionBoard::Board::CampusChallenge92, CompetitionBoard::Board::PowerFest94}) {
     auto images = Images();

@@ -8,7 +8,7 @@
 // Read  registers: $2134-$213F
 //
 // Internal memory:
-//   VRAM  - 64 KB (32K × 16-bit words)
+//   VRAM  - 64 or 128 KiB, selected by the hardware configuration
 //   OAM   - 544 bytes (128 objects × 4 bytes + 32 bytes high table)
 //   CGRAM - 512 bytes (256 × 15-bit colors stored as uint16_t)
 //
@@ -29,11 +29,18 @@ namespace snes::core {
 
 class PpuBackground;
 class PpuObject;
+class PowerOnState;
 
 // Ppu - PPU register model
 class Ppu {
 public:
+  struct Config {
+    uint8_t revision2 = 3;
+    uint32_t vramBytes = 65536;
+  };
+
   Ppu();
+  explicit Ppu(Config config);
   ~Ppu();
 
   // Non-copyable
@@ -42,6 +49,10 @@ public:
 
   // Warm reset retains VRAM; OAM, CGRAM and latches reset on either path.
   void Reset(bool retainVram = false);
+  void Power(PowerOnState &state, bool retainVram = false);
+  const Config &Configuration() const noexcept {
+    return config_;
+  }
 
   // Bus interface - called from MemoryBus via handler callbacks
   //   addr is the full 24-bit address (only $2100-$213F are dispatched here)
@@ -138,6 +149,7 @@ public:
     return vram_.get();
   }
   static constexpr size_t VramWords = 32768; // 64KB / 2
+  static constexpr size_t VramStorageWords = 65536;
 
   uint8_t *OamData() noexcept {
     return oam_.data();
@@ -500,15 +512,17 @@ private:
 
   void SynchronizePipeline(uint16_t clock);
   void StorePipelinePixel(unsigned x);
+  void InitializePowerOnState(PowerOnState &state, bool retainVram);
 
   // State
+  Config config_;
   std::unique_ptr<PpuBackground> background_;
   std::unique_ptr<PpuObject> object_;
   uint16_t pipelineClock_ = 0;
   IO io_;
   Latch latch_;
 
-  // VRAM - 64 KB = 32K × 16-bit words (heap-allocated to avoid stack overflow)
+  // Physical VRAM storage; the configured address mask selects the visible capacity.
   std::unique_ptr<uint16_t[]> vram_;
 
   // OAM - 544 bytes raw (128 objects × 4 bytes + 32 bytes high table)

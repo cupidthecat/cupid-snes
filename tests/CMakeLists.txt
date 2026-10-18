@@ -84,6 +84,10 @@ add_executable(snes_console_reset_tests test_console_reset.cpp)
 target_link_libraries(snes_console_reset_tests PRIVATE snes_core)
 add_test(NAME snes_console_reset_tests COMMAND snes_console_reset_tests)
 
+add_executable(snes_power_on_state_tests test_power_on_state.cpp)
+target_link_libraries(snes_power_on_state_tests PRIVATE snes_core)
+add_test(NAME snes_power_on_state_tests COMMAND snes_power_on_state_tests)
+
 add_executable(snes_upd_dsp_tests test_upd_dsp.cpp)
 target_link_libraries(snes_upd_dsp_tests PRIVATE snes_core)
 add_test(NAME snes_upd_dsp_tests COMMAND snes_upd_dsp_tests)

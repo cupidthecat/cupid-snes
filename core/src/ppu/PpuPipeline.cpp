@@ -35,8 +35,10 @@ void Ppu::SynchronizePipeline(uint16_t clock) {
     const auto h = pipelineClock_;
     pipelineClock_ += 2;
     if ((h <= 1016 && !(h & 7)) || h >= 1080)
-      object_->Clock(h, fieldId_, io_, latch_, oam_, PpuObject::Vram{vram_.get(), VramWords});
-    if (h < 1080 && background_->Clock(h, io_, PpuBackground::Vram{vram_.get(), VramWords}) &&
+      object_->Clock(h, fieldId_, io_, latch_, oam_,
+                     PpuObject::Vram{vram_.get(), config_.vramBytes / 2});
+    if (h < 1080 &&
+        background_->Clock(h, io_, PpuBackground::Vram{vram_.get(), config_.vramBytes / 2}) &&
         currentLine_ > 0 && (io_.overscan || currentLine_ < 225))
       StorePipelinePixel((h - 58) / 4);
   }

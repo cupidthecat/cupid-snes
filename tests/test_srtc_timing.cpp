@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <cstdio>
@@ -36,7 +36,7 @@ unsigned Seconds(Emulator &emu) {
 }
 void ConsoleClock() {
   for (bool pal : {false, true}) {
-    auto emu = std::make_unique<Emulator>();
+    auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     const auto image = Image(pal);
     Check(emu->LoadCartridge(image), "The generated clock cartridge loads");
     auto &bus = emu->GetBus();
@@ -61,7 +61,7 @@ void ConsoleClock() {
   }
 }
 void ColdStorage() {
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(Image(false)), "The generated battery-backed clock board loads");
   const auto ram = emu->LoadedCartridge()->SramData();
   Check(ram.size() == 8192, "The clock board exposes its declared battery RAM");

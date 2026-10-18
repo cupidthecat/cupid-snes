@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -34,7 +34,7 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, size_t size = 0x100000) {
 }
 
 std::unique_ptr<Emulator> Machine(const std::vector<uint8_t> &rom) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!machine->LoadCartridge(rom, &error))
     throw std::runtime_error(error);
@@ -114,7 +114,7 @@ void Sa1Expansion() {
         "An absent expansion retains base ROM mirroring in both windows");
   Check(!Cartridge::FromBroadcastCartridge(rom, std::span<const uint8_t>(expansion).first(4096)),
         "Invalid expansion sizes are rejected");
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadBroadcastCartridge(rom, expansion),
         "Slot-board loader connects SA-1 and its expansion");
   auto &bus = machine->GetBus();

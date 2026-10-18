@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -106,7 +106,7 @@ std::vector<uint8_t> Rom(std::initializer_list<uint8_t> code = {0x80, 0xfe}, boo
 }
 
 std::unique_ptr<Emulator> Load(const std::filesystem::path &path) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!machine->LoadCartridgeFromFile(path.string(), &error))
     throw std::runtime_error(error);

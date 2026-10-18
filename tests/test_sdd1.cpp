@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/Sdd1.hpp"
 
 #include <algorithm>
@@ -36,7 +36,7 @@ std::vector<uint8_t> Image(size_t size = 0x600000) {
 }
 
 std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &rom) {
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!emu->LoadCartridge(rom, &error))
     throw std::runtime_error(error);

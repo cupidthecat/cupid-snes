@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -33,7 +33,7 @@ std::vector<uint8_t> Rom(uint8_t chip = 0, bool pal = false) {
 }
 
 std::unique_ptr<Emulator> Machine(uint8_t chip = 0, bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(Rom(chip, pal)), "Reset fixture loads");
   return machine;
 }
@@ -319,7 +319,7 @@ void ControllerAttachments() {
 
 int main() {
   try {
-    auto empty = std::make_unique<Emulator>();
+    auto empty = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     Check(!empty->Reset() && !empty->Initialized(), "An empty console has nothing to reset");
     RetainedMemoryAndRegisters();
     CancelSuspendedDma();

@@ -234,6 +234,29 @@ void RetainedTileTail() {
           "An inactive background drains the unconsumed tail of the preceding tiled line");
   }
 }
+void ExtendedVramFetches() {
+  for (uint32_t bytes : {65536u, 131072u}) {
+    auto ppu = std::make_unique<Ppu>(Ppu::Config{3, bytes});
+    ppu->WriteIO(0x2100, 15);
+    ppu->WriteIO(0x2107, 0x80);
+    ppu->WriteIO(0x210b, 9);
+    ppu->WriteIO(0x212c, 1);
+    ppu->CgramData()[1] = 31;
+    ppu->CgramData()[2] = 31 << 5;
+    for (unsigned entry = 0; entry < 32; ++entry)
+      ppu->VramData()[0x8000 + entry] = 1;
+    for (unsigned row = 0; row < 8; ++row) {
+      ppu->VramData()[0x1000 + row] = 0x00ff;
+      ppu->VramData()[0x9008 + row] = 0xff00;
+    }
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    ppu->ScanlineBegin(1);
+    ppu->VBlankBegin();
+    Check(Color(*ppu, 0, 0) == (bytes == 131072 ? 31 << 5 : 31),
+          "Background names and patterns use the selected VRAM capacity");
+  }
+}
 } // namespace
 int main() {
   try {
@@ -244,6 +267,7 @@ int main() {
     MidlineOutputMode();
     LiveObjectPriority();
     RetainedTileTail();
+    ExtendedVramFetches();
     std::puts("Background fetch tests passed");
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

@@ -7,7 +7,7 @@ namespace snes::core {
 class PpuObject {
 public:
   using Oam = std::span<const uint8_t, Ppu::OamSize>;
-  using Vram = std::span<const uint16_t, Ppu::VramWords>;
+  using Vram = std::span<const uint16_t>;
   struct Sample {
     uint8_t palette = 0;
     uint8_t priority = 0; // Object priority selector, before the live mode table.

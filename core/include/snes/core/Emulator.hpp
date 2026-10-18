@@ -22,6 +22,7 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Msu1.hpp"
 #include "snes/core/Platform.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/Ppu.hpp"
 #include "snes/core/Smp.hpp"
 #include "snes/core/Srtc.hpp"
@@ -63,6 +64,10 @@ public:
     uint32_t visibleHeight = 224;
     uint64_t masterCyclesPerFrame = 357368;
     std::shared_ptr<const CartridgeFirmware> cartridgeFirmware;
+    EntropyMode entropyMode = EntropyMode::Low;
+    std::optional<uint32_t> entropySeed;
+    uint32_t entropySequence = 0;
+    Ppu::Config ppu;
   };
 
   explicit Emulator();

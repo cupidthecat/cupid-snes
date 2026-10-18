@@ -1,6 +1,6 @@
 // Regression coverage for cartridge, PPU, DMA, and timing hardware.
 
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -39,7 +39,7 @@ std::vector<uint8_t> Rom(size_t size, uint8_t mode, uint8_t type = 0) {
 }
 
 std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &rom) {
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!emu->LoadCartridge(rom, &error)) {
     std::fprintf(stderr, "Fixture failed to load: %s\n", error.c_str());

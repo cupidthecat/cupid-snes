@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -29,7 +29,7 @@ std::vector<uint8_t> Rom(bool pal = false) {
 }
 
 std::unique_ptr<Emulator> Machine(bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(Rom(pal), &error), "The frame fixture loads");
   return machine;
@@ -127,7 +127,7 @@ void CartridgeAtScanlineBoundary() {
       auto rom = Rom(pal);
       rom[0x7fd5] = 0x23;
       rom[0x7fd6] = 0x35;
-      auto machine = std::make_unique<Emulator>();
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       std::string error;
       Check(machine->LoadCartridge(rom, &error), "The scanline cartridge fixture loads");
       machine->GetCpu()->Step();

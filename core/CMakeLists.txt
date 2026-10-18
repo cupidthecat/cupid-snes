@@ -60,6 +60,7 @@ add_library(snes_core
   src/ppu/PpuBackground.cpp
   src/ppu/PpuObject.cpp
   src/ppu/Ppu.cpp
+  src/ppu/PpuPower.cpp
   src/ppu/PpuRender.cpp
   src/audio/Dsp.cpp
   src/audio/Dsp1.cpp
@@ -76,6 +77,7 @@ add_library(snes_core
   src/system/Emulator.cpp
   src/system/ExecutionContext.cpp
   src/system/Logging.cpp
+  src/system/PowerOnState.cpp
 )
 
 target_include_directories(snes_core

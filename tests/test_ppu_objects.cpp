@@ -14,8 +14,8 @@ uint16_t Color(const Ppu &ppu, unsigned x, unsigned y) {
   const auto pixel = ppu.OutputData()[y * Ppu::OutputWidth + x];
   return uint16_t(((pixel >> 3) & 31) | ((pixel >> 6) & 0x3e0) | ((pixel >> 9) & 0x7c00));
 }
-std::unique_ptr<Ppu> Fixture(unsigned count, uint8_t y) {
-  auto ppu = std::make_unique<Ppu>();
+std::unique_ptr<Ppu> Fixture(unsigned count, uint8_t y, Ppu::Config config = {}) {
+  auto ppu = std::make_unique<Ppu>(config);
   ppu->WriteIO(0x2100, 15);
   ppu->WriteIO(0x2101, 1);
   ppu->WriteIO(0x212c, 16);
@@ -171,6 +171,24 @@ void LivePalette() {
     Check(Color(*ppu, x, 0) == (x < 5 ? 31 : 31 << 5),
           "Object palette writes change later pixel samples while retaining earlier colors");
 }
+void ExtendedVramFetches() {
+  for (uint32_t bytes : {65536u, 131072u}) {
+    auto ppu = Fixture(1, 0, Ppu::Config{3, bytes});
+    ppu->WriteIO(0x2101, 4);
+    ppu->CgramData()[129] = 31;
+    ppu->CgramData()[130] = 31 << 5;
+    for (unsigned row = 0; row < 8; ++row) {
+      ppu->VramData()[row] = 0x00ff;
+      ppu->VramData()[0x8000 + row] = 0xff00;
+    }
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    ppu->ScanlineBegin(1);
+    ppu->VBlankBegin();
+    Check(Color(*ppu, 16, 0) == (bytes == 131072 ? 31 << 5 : 31),
+          "Object pattern fetches use the selected VRAM bank without aliasing at 128 KiB");
+  }
+}
 } // namespace
 int main() {
   unsigned failures = 0;
@@ -190,6 +208,7 @@ int main() {
   run("BlankedPatternWord", BlankedPatternWord);
   run("VblankAddressReset", VblankAddressReset);
   run("LivePalette", LivePalette);
+  run("ExtendedVramFetches", ExtendedVramFetches);
   if (!failures)
     std::puts("Object fetch tests passed");
   return failures ? 1 : 0;

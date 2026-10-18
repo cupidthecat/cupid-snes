@@ -1,5 +1,5 @@
+#include "ConsoleConfig.hpp"
 #include "audio/SoundUploadFixture.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/Spc700.hpp"
 
@@ -28,7 +28,7 @@ std::unique_ptr<Emulator> Machine(bool pal) {
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
   rom[0] = 0xdb;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(rom, &error), "The sound-clock fixture loads");
   return machine;
@@ -223,7 +223,7 @@ void UploadedPortEdges() {
     const auto &edges = pal ? palEdges : ntscEdges;
     for (unsigned setting = 0; setting < 4; ++setting) {
       for (unsigned delay = edges[setting] - 1; delay <= edges[setting] + 1; ++delay) {
-        auto machine = std::make_unique<Emulator>();
+        auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
         std::string error;
         Check(machine->LoadCartridge(sound_upload_test::PortProgram(setting, delay, pal), &error),
               "The console-to-sound upload fixture loads");

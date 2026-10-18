@@ -7,6 +7,7 @@
 // Register state controls memory access and the rendering pipeline.
 
 #include "snes/core/Ppu.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/PpuBackground.hpp"
 #include "snes/core/PpuObject.hpp"
 #include <algorithm>
@@ -31,11 +32,15 @@ bool PpuDebugEnabled() {
 } // namespace
 
 // Constructor / Reset
-Ppu::Ppu()
-    : background_(std::make_unique<PpuBackground>()), object_(std::make_unique<PpuObject>()),
-      vram_(std::make_unique<uint16_t[]>(VramWords)),
+Ppu::Ppu() : Ppu(Config{}) {}
+
+Ppu::Ppu(Config config)
+    : config_(config), background_(std::make_unique<PpuBackground>()),
+      object_(std::make_unique<PpuObject>()), vram_(std::make_unique<uint16_t[]>(VramStorageWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
       output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
+  config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
+  config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
   BuildLightTable();
   Reset();
 }
@@ -43,18 +48,15 @@ Ppu::Ppu()
 Ppu::~Ppu() = default;
 
 void Ppu::Reset(bool retainVram) {
+  PowerOnState state(EntropyMode::None, 0);
+  Power(state, retainVram);
+}
+
+void Ppu::Power(PowerOnState &state, bool retainVram) {
   background_->Reset();
   object_->Reset();
   pipelineClock_ = 0;
-  // Clear memory
-  if (!retainVram)
-    std::memset(vram_.get(), 0, VramWords * sizeof(uint16_t));
-  oam_.fill(0);
-  cgram_.fill(0);
-
-  // Reset IO to power-on defaults
-  io_ = IO{};
-  latch_ = Latch{};
+  InitializePowerOnState(state, retainVram);
   object_->BeginLine(0, io_.obj);
 
   // Clear rendering state
@@ -307,16 +309,18 @@ uint16_t Ppu::TranslatedVramAddress() const {
   uint16_t address = io_.vramAddress;
   switch (io_.vramMapping) {
   case 0:
-    return address & 0x7FFF;
+    break;
   case 1:
-    return (address & 0x7F00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
+    address = (address & 0xFF00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
+    break;
   case 2:
-    return (address & 0x7E00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
+    address = (address & 0xFE00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
+    break;
   case 3:
-    return (address & 0x7C00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
-  default:
-    return address & 0x7FFF;
+    address = (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
+    break;
   }
+  return address & (config_.vramBytes / 2 - 1);
 }
 
 uint16_t Ppu::ReadVram() {
@@ -549,7 +553,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
     // Preserve bit 5 (open bus)
     latch_.ppu2.mdr &= (1 << 5);
-    latch_.ppu2.mdr |= 0x03; // PPU2 version = 3
+    latch_.ppu2.mdr |= config_.revision2;
     latch_.ppu2.mdr |= (isPal_ ? 1 : 0) << 4;
     // Bit 6: counter latch flag
     // When PIO bit 7 is clear, bit 6 always reads high.
@@ -593,7 +597,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2101 - OBSEL (object size + base address)
   case 0x2101: {
     uint8_t oldBaseSize = io_.obj.baseSize;
-    io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0x6000);
+    io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0xE000);
     io_.obj.nameselect = (data >> 3) & 3;
     io_.obj.baseSize = (data >> 5) & 7;
     if (PpuDebugEnabled() && oldBaseSize != io_.obj.baseSize) {
@@ -673,7 +677,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2107 - BG1SC (BG1 tilemap address + size)
   case 0x2107: {
     io_.bg1.screenSize = data & 3;
-    io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG1SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg1.screenSize, io_.bg1.screenAddress);
@@ -684,7 +688,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2108 - BG2SC
   case 0x2108: {
     io_.bg2.screenSize = data & 3;
-    io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG2SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg2.screenSize, io_.bg2.screenAddress);
@@ -695,7 +699,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2109 - BG3SC
   case 0x2109: {
     io_.bg3.screenSize = data & 3;
-    io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG3SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg3.screenSize, io_.bg3.screenAddress);
@@ -706,7 +710,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $210A - BG4SC
   case 0x210A: {
     io_.bg4.screenSize = data & 3;
-    io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG4SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg4.screenSize, io_.bg4.screenAddress);
@@ -716,8 +720,8 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
   // $210B - BG12NBA (BG1/BG2 character data address)
   case 0x210B: {
-    io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
-    io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0x7000);
+    io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+    io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG12NBA bg1=$%04X bg2=$%04X\n", currentLine_,
                    io_.bg1.tiledataAddress, io_.bg2.tiledataAddress);
@@ -727,8 +731,8 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
   // $210C - BG34NBA (BG3/BG4 character data address)
   case 0x210C: {
-    io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
-    io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0x7000);
+    io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+    io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG34NBA bg3=$%04X bg4=$%04X\n", currentLine_,
                    io_.bg3.tiledataAddress, io_.bg4.tiledataAddress);

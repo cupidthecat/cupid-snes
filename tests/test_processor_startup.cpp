@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -67,7 +67,7 @@ std::vector<uint8_t> Image(std::initializer_list<uint8_t> program, bool pal = fa
 }
 
 std::unique_ptr<Emulator> Machine(bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(Image({0xdb}, pal), &error), "Startup fixture loads");
   return machine;
@@ -365,7 +365,7 @@ void DecodedDmaLatches() {
   rom[0x7fd6] = 0x45;
   rom[0x7fd7] = 11;
   rom[0x100000] = 0xc0; // Packed zero codewords decode to zero bytes.
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(rom, &error), "The decompression cartridge fixture loads");
   machine->GetCpu()->Step();
@@ -459,7 +459,7 @@ void HardwareStartupAndReload() {
 }
 
 void FirstInstructionDiagnostic() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   const auto rom = Image({0xad, 0x37, 0x21, // Latch H/V as the first instruction.
                           0xad, 0x3c, 0x21, 0x8f, 0,    1,    0x7e, 0xad, 0x3c, 0x21, 0x29, 1,
                           0x8f, 1,    1,    0x7e, 0xba, 0x8a, 0x8f, 2,    1,    0x7e, 0xdb});

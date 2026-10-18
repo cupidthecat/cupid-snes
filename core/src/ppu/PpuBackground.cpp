@@ -62,7 +62,7 @@ uint16_t PpuBackground::MapAddress(const Ppu::Background &bg, unsigned x, unsign
     offset += 0x400;
   if ((y & 32) && (bg.screenSize & 2))
     offset += (bg.screenSize & 1) ? 0x800 : 0x400;
-  return uint16_t(bg.screenAddress + offset) & 0x7fff;
+  return uint16_t(bg.screenAddress + offset);
 }
 
 void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vram) {
@@ -100,7 +100,7 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
     row &= (width << unsigned(bg.tileSize) << ((bg.screenSize >> 1) & 1)) - 1;
     const unsigned xShift = hires ? 4 : 3 + unsigned(bg.tileSize);
     const unsigned yShift = 3 + unsigned(bg.tileSize);
-    const uint16_t entry = vram[MapAddress(bg, x >> xShift, row >> yShift)];
+    const uint16_t entry = vram[MapAddress(bg, x >> xShift, row >> yShift) & (vram.size() - 1)];
     unsigned character = entry & 1023;
     if (xShift == 4 && bool(x & 8) != bool(entry & 0x4000))
       ++character;
@@ -110,7 +110,8 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
       row ^= 7;
     auto &column = layers_[id].columns[(clock / 32 << unsigned(hires)) + half];
     const unsigned shift = 3 + depthMode;
-    const unsigned tile = ((character & 1023) + (bg.tiledataAddress >> shift)) & (0x7fff >> shift);
+    const unsigned tile =
+        ((character & 1023) + (bg.tiledataAddress >> shift)) & ((vram.size() - 1) >> shift);
     column.address = uint16_t((tile << shift) + (row & 7));
     column.group = (entry >> 10) & 7;
     column.palette = uint8_t((io.bgMode == 0 ? id * 32 : 0) +
@@ -123,7 +124,7 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
 void PpuBackground::Pattern(unsigned id, unsigned pair, unsigned half, unsigned clock,
                             const Ppu::IO &io, Vram vram) {
   auto &column = layers_[id].columns[(clock / 32 << unsigned(Hires(io))) + half];
-  const uint16_t word = vram[(column.address + pair * 8) & 0x7fff];
+  const uint16_t word = vram[(column.address + pair * 8) & (vram.size() - 1)];
   unsigned low = word & 255, high = word >> 8;
   if (column.flip) {
     low = Reverse(low);
@@ -139,7 +140,8 @@ void PpuBackground::Offset(bool vertical, unsigned clock, const Ppu::IO &io, Vra
   const unsigned x = clock / 32 * 8 + (bg.hoffset & ~7u);
   const unsigned y = bg.voffset + (vertical ? 8 : 0);
   const unsigned xShift = Hires(io) ? 3 : 3 + unsigned(bg.tileSize);
-  const uint16_t word = vram[MapAddress(bg, x >> xShift, y >> (3 + unsigned(bg.tileSize)))];
+  const uint16_t word =
+      vram[MapAddress(bg, x >> xShift, y >> (3 + unsigned(bg.tileSize))) & (vram.size() - 1)];
   (vertical ? verticalOffset_ : horizontalOffset_) = word;
 }
 
