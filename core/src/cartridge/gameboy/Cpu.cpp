@@ -314,16 +314,16 @@ void Cpu::Extended(uint8_t opcode) {
 }
 
 void Cpu::Interrupt() {
+  bus_.Resume();
+  state_.halted = false;
   const uint16_t returnAddress = state_.pc;
   ReadByte(returnAddress);
   IdleAt(uint16_t(returnAddress + 1));
   IdleAt(state_.sp);
   WriteByte(--state_.sp, uint8_t(returnAddress >> 8));
   const uint8_t enabled = bus_.InterruptEnable();
-  const uint8_t previousFlags = bus_.InterruptFlags();
   const uint16_t address = --state_.sp;
-  bus_.Write(address, uint8_t(returnAddress));
-  const uint8_t flags = address == 0xff0f ? previousFlags : bus_.InterruptFlags();
+  const uint8_t flags = bus_.WriteInterruptLow(address, uint8_t(returnAddress));
   const uint8_t pending = enabled & flags & 31;
   bus_.Advance(2);
   if (pending) {
@@ -578,6 +578,7 @@ void Cpu::RunInstruction() {
   }
   if (state_.halted && !state_.firstHaltWait)
     bus_.Advance(2);
+  bus_.Synchronize();
   const uint8_t pending = bus_.InterruptEnable() & bus_.InterruptFlags() & 31;
   if (state_.halted)
     bus_.Advance(state_.firstHaltWait ? 4 : 2);
@@ -588,6 +589,7 @@ void Cpu::RunInstruction() {
     state_.enablePending = false;
   }
   if (state_.halted && !effectiveIme && pending) {
+    bus_.Resume();
     state_.halted = false;
     return;
   }

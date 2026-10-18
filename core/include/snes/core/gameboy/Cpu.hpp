@@ -9,17 +9,24 @@ class Cpu {
 public:
   struct Bus {
     virtual ~Bus() = default;
-    // Reads and writes do not advance time. The bus can defer register effects
-    // within the following clock interval when the addressed hardware needs it.
+    // The bus places register effects around the current machine cycle.
+    // Synchronize commits outstanding hardware clocks before interrupt sampling.
     virtual uint8_t Read(uint16_t address) = 0;
     virtual void Write(uint16_t address, uint8_t value) = 0;
     virtual void Advance(unsigned clocks) = 0;
+    virtual void Synchronize() {}
     virtual uint8_t InterruptEnable() const = 0;
     virtual uint8_t InterruptFlags() const = 0;
     virtual void AcknowledgeInterrupt(uint8_t mask) = 0;
     virtual void DriveAddress(uint16_t) {}
     virtual void AddressIncremented(uint16_t) {}
     virtual void SetStopped(bool) {}
+    virtual void Resume() {}
+    virtual uint8_t WriteInterruptLow(uint16_t address, uint8_t value) {
+      const auto previous = InterruptFlags();
+      Write(address, value);
+      return address == 0xff0f ? previous : InterruptFlags();
+    }
   };
 
   struct State {
