@@ -421,6 +421,91 @@ void FrameEventLatches() {
     }
   }
 }
+
+std::vector<uint8_t> SplitPacketProgram(bool reverse, bool pal, uint8_t display, uint8_t pio) {
+  std::vector<uint8_t> code;
+  const auto emit = [&](std::initializer_list<uint8_t> bytes) {
+    code.insert(code.end(), bytes.begin(), bytes.end());
+  };
+  const auto store = [&](uint16_t address, uint8_t value) {
+    emit({0xa9, value, 0x8d, uint8_t(address), uint8_t(address >> 8)});
+  };
+  const auto wait = [&](uint8_t branch) { emit({0xad, 0x12, 0x42, branch, 0xfb}); };
+  store(0x2100, 0x80);
+  store(0x2133, display);
+  store(0x4201, pio);
+  if (reverse)
+    wait(0x10);
+  store(0x4016, 1);
+  store(0x4016, 0);
+  emit({0xa2, 6, 0xad, 0x17, 0x40, 0xca, 0xd0, 0xfa}); // Read six bits.
+  if (reverse)
+    wait(0x30);
+  wait(0x10);
+  emit({0xad, 0x17, 0x40, 0x29, 1, 0x8f, 0, 1, 0x7e, 0xa9, 0xa5, 0x8f, 1, 1, 0x7e, 0xdb});
+  std::vector<uint8_t> rom(0x8000, 0xea);
+  std::copy(code.begin(), code.end(), rom.begin());
+  std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+  rom[0x7fc0] = 'T';
+  rom[0x7fd5] = 0x20;
+  rom[0x7fd6] = 0;
+  rom[0x7fd7] = 5;
+  rom[0x7fd8] = 0;
+  rom[0x7fd9] = pal ? 2 : 1;
+  rom[0x7fdc] = rom[0x7fdd] = 0xff;
+  rom[0x7fde] = rom[0x7fdf] = 0;
+  rom[0x7ffc] = 0;
+  rom[0x7ffd] = 0x80;
+  return rom;
+}
+
+void ScopePacketAcrossFrame() {
+  for (bool reverse : {false, true}) {
+    for (bool pal : {false, true}) {
+      for (uint8_t display : {0, 1, 4, 5}) {
+        for (uint8_t pio : {0x7f, 0xff}) {
+          Input input;
+          input.guns[0].x = -1;
+          input.guns[0].y = 10;
+          input.guns[0].offscreen = false;
+          auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+          machine->AttachInputProvider(&input);
+          Check(machine->LoadCartridge(SplitPacketProgram(reverse, pal, display, pio)),
+                "Scope split-packet program loads");
+          machine->GetAutoJoypad().Ports().Configure(1, ControllerDevice::SuperScope);
+          machine->StepFrame();
+          if (reverse)
+            input.guns[0].x = 32;
+          machine->StepFrame();
+          if (reverse)
+            machine->StepFrame();
+          Check(machine->GetBus().Read(0x7e0100) == (reverse ? 0 : 1) &&
+                    machine->GetBus().Read(0x7e0101) == 0xa5,
+                "Scope offscreen status follows a frame event during an unfinished CPU packet");
+        }
+      }
+    }
+  }
+}
+
+void ScopeStatusHeightSampling() {
+  ControllerPorts ports;
+  LightGunState input;
+  input.x = 100;
+  input.y = 239;
+  input.offscreen = false;
+  ports.Configure(1, ControllerDevice::SuperScope);
+  ports.SetGunCallback([&](int, int) { return input; });
+  ports.SetVDisp(240);
+  ports.LatchLightGuns();
+  Latch(ports);
+  Check(Packet(ports, 6) == 0, "Scope begins an onscreen packet in overscan");
+  ports.SetVDisp(225);
+  Check(ports.Read(1) == 0,
+        "A height write alone retains the sampled Scope status within a packet");
+  Latch(ports);
+  Check(Packet(ports, 8) == 2, "The next Scope packet samples the new display height");
+}
 } // namespace
 int main() {
   try {
@@ -435,6 +520,8 @@ int main() {
     AutomaticPolling();
     ScopeAimAndOffscreen();
     FrameEventLatches();
+    ScopePacketAcrossFrame();
+    ScopeStatusHeightSampling();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

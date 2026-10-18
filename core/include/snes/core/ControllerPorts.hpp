@@ -77,6 +77,7 @@ private:
     bool selectSecond = false;
     bool scopeTriggerLock = false, scopePauseLock = false;
     bool scopeTurbo = false, scopeTurboPressed = false;
+    bool scopeOffscreen = false;
   };
   std::array<Port, 2> ports_{{Port{ControllerDevice::Gamepad, {0, -1, -1, -1}},
                               Port{ControllerDevice::Gamepad, {1, -1, -1, -1}}}};

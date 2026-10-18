@@ -74,8 +74,11 @@ void ControllerPorts::LatchLightGuns() {
   auto &state = port.guns[gun];
   if (gunInput_)
     state = gunInput_(1, gun);
-  if (!state.offscreen && state.x >= 0 && state.x < 256 && state.y >= 0 && state.y < vdisp_ &&
-      gunLatch_)
+  const bool offscreen =
+      state.offscreen || state.x < 0 || state.x >= 256 || state.y < 0 || state.y >= vdisp_;
+  if (port.device == ControllerDevice::SuperScope)
+    port.scopeOffscreen = offscreen;
+  if (!offscreen && gunLatch_)
     gunLatch_(uint16_t(state.x), uint16_t(state.y));
 }
 
@@ -170,6 +173,7 @@ uint8_t ControllerPorts::Read(unsigned index) {
       const auto &aim = port.guns[0];
       const bool offscreen =
           aim.offscreen || aim.x < 0 || aim.x >= 256 || aim.y < 0 || aim.y >= vdisp_;
+      port.scopeOffscreen = offscreen;
       if (buttons.turbo && !port.scopeTurboPressed)
         port.scopeTurbo = !port.scopeTurbo;
       port.scopeTurboPressed = buttons.turbo;
@@ -177,11 +181,12 @@ uint8_t ControllerPorts::Read(unsigned index) {
       const bool pause = buttons.pause && !port.scopePauseLock;
       port.scopeTriggerLock = buttons.trigger;
       port.scopePauseLock = buttons.pause;
-      port.scopePacket =
-          uint8_t((trigger && !offscreen ? 0x80 : 0) | (buttons.cursor ? 0x40 : 0) |
-                  (port.scopeTurbo ? 0x20 : 0) | (pause ? 0x10 : 0) | (offscreen ? 2 : 0));
+      port.scopePacket = uint8_t((trigger && !offscreen ? 0x80 : 0) | (buttons.cursor ? 0x40 : 0) |
+                                 (port.scopeTurbo ? 0x20 : 0) | (pause ? 0x10 : 0));
     }
-    data = position < 8 ? (port.scopePacket >> (7 - position)) & 1 : 1;
+    data = position == 6  ? port.scopeOffscreen
+           : position < 8 ? (port.scopePacket >> (7 - position)) & 1
+                          : 1;
   } else if (port.device == ControllerDevice::Justifier ||
              port.device == ControllerDevice::Justifiers) {
     if (position == 0) {
