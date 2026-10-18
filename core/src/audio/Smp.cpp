@@ -105,6 +105,7 @@ void Smp::Power(bool retainRam) {
   timer2_ = {};
   busWait_ = {};
   hardwareClocks_ = 0;
+  synchronizingCpu_ = yieldedCpu_ = false;
 }
 
 // Bus interface - Spc700 overrides
@@ -171,6 +172,28 @@ void Smp::RunUntilHardwareClock(uint64_t targetClocks) {
   }
 }
 
+int64_t Smp::CpuClockLead() const {
+  const auto distance = hardwareClocks_ >= synchronizationTarget_
+                            ? int64_t(hardwareClocks_ - synchronizationTarget_)
+                            : -int64_t(synchronizationTarget_ - hardwareClocks_);
+  return distance * synchronizationFrequency_ - synchronizationPhase_;
+}
+
+void Smp::SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency) {
+  synchronizationFrequency_ = masterFrequency;
+  const auto fraction = (masterClocks % masterFrequency) * kHardwareClockFrequency;
+  synchronizationTarget_ =
+      (masterClocks / masterFrequency) * kHardwareClockFrequency + fraction / masterFrequency;
+  synchronizationPhase_ = uint32_t(fraction % masterFrequency);
+  if (CpuClockLead() >= 0)
+    return;
+  synchronizingCpu_ = true;
+  yieldedCpu_ = false;
+  while (!yieldedCpu_)
+    StepCycle();
+  synchronizingCpu_ = false;
+}
+
 bool Smp::ExecuteBusCycle(const PendingCycle &cycle) {
   return ClockBusCycle(cycle, busWait_);
 }
@@ -190,18 +213,40 @@ bool Smp::ClockBusCycle(const PendingCycle &cycle, BusWait &wait) {
     wait.timerTicks = timerTicks[setting];
   }
 
-  const unsigned previousTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
-  ++wait.elapsed;
-  ++hardwareClocks_;
-  cycles_ = hardwareClocks_ / 2;
-  const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
-  StepTimers(nextTicks - previousTicks);
-  if ((hardwareClocks_ & 1) == 0)
-    tickDsp();
-
   // Model the communication input latch at the midpoint and hold it through
   // completion, including accesses whose midpoint falls between full cycles.
   const bool inputPort = cycle.kind == PendingCycleKind::Read && (cycle.address & 0xfffc) == 0x00f4;
+  const bool resumed = std::exchange(wait.deferred, false);
+  if (resumed && inputPort && !wait.sampled && 2 * wait.elapsed >= wait.duration) {
+    wait.readData = ReadBus(cycle.address);
+    wait.sampled = true;
+  }
+  if (wait.elapsed < wait.duration) {
+    const unsigned previousTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
+    ++wait.elapsed;
+    ++hardwareClocks_;
+    cycles_ = hardwareClocks_ / 2;
+    const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
+    StepTimers(nextTicks - previousTicks);
+    if ((hardwareClocks_ & 1) == 0)
+      tickDsp();
+  }
+
+  const bool midpoint = inputPort && !wait.sampled && 2 * wait.elapsed >= wait.duration;
+  const bool finished = wait.elapsed == wait.duration;
+  const bool outputPort =
+      cycle.kind == PendingCycleKind::Write &&
+      ((cycle.address & 0xfffc) == 0x00f4 || (cycle.address == 0x00f1 && (cycle.data & 0x30)));
+  // Keep the bus operation suspended before changing a communication latch.
+  // Bound execution even when a program never touches those latches.
+  constexpr int64_t maximumClockLead = 442'368'000'000;
+  if (synchronizingCpu_ && !resumed && cycle.kind != PendingCycleKind::Idle &&
+      (midpoint || finished) &&
+      (((midpoint || (finished && outputPort)) && CpuClockLead() >= 0) ||
+       CpuClockLead() > maximumClockLead)) {
+    wait.deferred = yieldedCpu_ = true;
+    return false;
+  }
   if (inputPort && !wait.sampled && 2 * wait.elapsed >= wait.duration) {
     wait.readData = ReadBus(cycle.address);
     wait.sampled = true;
@@ -235,11 +280,15 @@ void Smp::StepTimers(unsigned clocks) {
 // CPU-side port access
 
 uint8_t Smp::PortRead(uint8_t port) const {
+  if (synchronizeCpu_)
+    synchronizeCpu_();
   // CPU reads $2140+n → returns what SMP wrote to $F4+n
   return cpuOutput_[port & 3];
 }
 
 void Smp::PortWrite(uint8_t port, uint8_t data) {
+  if (synchronizeCpu_)
+    synchronizeCpu_();
   // CPU writes $2140+n → sets data for SMP to read from $F4+n
   apuInput_[port & 3] = data;
 }

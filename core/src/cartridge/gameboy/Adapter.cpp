@@ -26,10 +26,12 @@ void Adapter::ResetHandheld() {
 void Adapter::Reset() {
   host_.Reset();
   ResetHandheld();
+  mixer_.Reset(ClockRate() / 128);
 }
 
 void Adapter::SetPal(bool pal) noexcept {
   masterHz_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+  mixer_.SetHandheldRate(ClockRate() / 128);
 }
 
 uint32_t Adapter::ClockRate() const noexcept {
@@ -61,6 +63,8 @@ uint8_t Adapter::Read(uint32_t address) {
 
 void Adapter::Write(uint32_t address, uint8_t value) {
   host_.Write(address, value);
+  if (uint16_t(address) == 0x6003)
+    mixer_.SetHandheldRate(ClockRate() / 128);
 }
 
 void Adapter::MapCpu(MemoryBus &bus, uint8_t slot) {
@@ -83,6 +87,7 @@ void Adapter::LoadBattery(std::span<const uint8_t> data) {
 }
 
 void Adapter::Sample(uint64_t, int16_t left, int16_t right) {
+  mixer_.WriteHandheld(left, right);
   if (audioOutput_)
     audioOutput_(left, right, ClockRate() / 128);
 }

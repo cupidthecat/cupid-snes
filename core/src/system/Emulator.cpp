@@ -290,6 +290,7 @@ void Emulator::InitSubsystems() {
   // 1. Inter-subsystem connections
   dsp_.SetRam(smp_.Ram());
   smp_.SetDsp(dsp_);
+  smp_.SetCpuSynchronizationCallback([this] { SynchronizeDevices(true); });
   dma_.SetBus(&bus_);
 
   // 2. Map the 24-bit address space
@@ -447,6 +448,8 @@ void Emulator::InitSubsystems() {
 
   // New scanline
   timing_.onScanline = [this](uint16_t v) {
+    if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy)
+      SynchronizeDevices(true);
     SynchronizeCoprocessors();
     ppu_.SetCurrentLine(v);
     ppu_.SetCurrentHClock(0);
@@ -569,6 +572,12 @@ void Emulator::ResetHardware(bool warm) {
                    country != 0x0f && country != 0x10;
   timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
   cartridge_->SetPal(pal);
+  cartridge_->SetGameBoyMixedAudioOutput([this](float left, float right) {
+    if (collectingAudio_) {
+      audioOutputBuffer_.interleavedStereo.push_back(left);
+      audioOutputBuffer_.interleavedStereo.push_back(right);
+    }
+  });
   if (srtc_)
     srtc_->SetPal(pal);
   ppu_.SetPal(pal);
@@ -581,6 +590,7 @@ void Emulator::ResetHardware(bool warm) {
   dmaArmed_ = false;
   audioOverflow_.clear();
   collectingAudio_ = false;
+  audioOutputBuffer_.interleavedStereo.clear();
   nextSmpMasterClock_ = 0;
   coprocessorsSyncedClock_ = 0;
   coprocessorClockTarget_ = 0;
@@ -657,6 +667,7 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
 
   // Prepare DSP audio buffer for this frame
   audioOverflow_.clear();
+  audioOutputBuffer_.interleavedStereo.clear();
   collectingAudio_ = audioOutput_ != nullptr;
   dsp_.ResetSamplesWritten();
   dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
@@ -688,13 +699,15 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   if (audioOutput_) {
     auto &audio = audioOutputBuffer_;
     audio.sampleRate = AudioTiming::SampleRate;
-    audio.interleavedStereo.clear();
-    const int samples = dsp_.SamplesWritten();
-    audio.interleavedStereo.reserve(audioOverflow_.size() + static_cast<size_t>(samples) * 2);
-    for (int16_t value : audioOverflow_)
-      audio.interleavedStereo.push_back(static_cast<float>(value) / 32768.0f);
-    for (int i = 0; i < samples * 2; ++i)
-      audio.interleavedStereo.push_back(static_cast<float>(audioBuf_[i]) / 32768.0f);
+    if (cartridge_->Header().chip != EnhancementChip::SuperGameBoy) {
+      audio.interleavedStereo.clear();
+      const int samples = dsp_.SamplesWritten();
+      audio.interleavedStereo.reserve(audioOverflow_.size() + static_cast<size_t>(samples) * 2);
+      for (int16_t value : audioOverflow_)
+        audio.interleavedStereo.push_back(static_cast<float>(value) / 32768.0f);
+      for (int i = 0; i < samples * 2; ++i)
+        audio.interleavedStereo.push_back(static_cast<float>(audioBuf_[i]) / 32768.0f);
+    }
     audioOutput_->Submit(audio);
   }
 
@@ -770,11 +783,14 @@ void Emulator::SynchronizeCoprocessors() {
     srtc_->Advance(static_cast<uint32_t>(delta));
 }
 
-void Emulator::SynchronizeDevices() {
-  const auto elapsed = timing_.MasterClocksElapsed();
+void Emulator::SynchronizeDevices(bool communication) {
+  const bool adapter = cartridge_->Header().chip == EnhancementChip::SuperGameBoy;
+  if (adapter && !communication)
+    return;
+  const auto elapsed = adapter ? coprocessorCompletedClock_ : timing_.MasterClocksElapsed();
   // Several CPU bus phases can end within one sound clock. No audio state
   // changes until that clock edge, so avoid repeating the conversion there.
-  if (elapsed < nextSmpMasterClock_)
+  if (!adapter && elapsed < nextSmpMasterClock_)
     return;
   const uint64_t masterHz = timing_.MasterClockHz();
   constexpr uint64_t soundHz = Smp::kHardwareClockFrequency;
@@ -785,7 +801,10 @@ void Emulator::SynchronizeDevices() {
   const auto phase = fractionalClocks % masterHz;
   nextSmpMasterClock_ = elapsed + (masterHz - phase + soundHz - 1) / soundHz;
   const int firstSample = dsp_.SamplesWritten();
-  smp_.RunUntilHardwareClock(smpTarget);
+  if (adapter)
+    smp_.SynchronizeCpu(elapsed, uint32_t(masterHz));
+  else
+    smp_.RunUntilHardwareClock(smpTarget);
   if (msu1_) {
     // Mix before this bus phase completes: later volume or track writes
     // must not change PCM that has already played. Use the DSP's sample
@@ -799,6 +818,9 @@ void Emulator::SynchronizeDevices() {
       }
     }
   }
+  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy)
+    for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample)
+      cartridge_->WriteGameBoyConsoleAudio(audioBuf_[sample * 2], audioBuf_[sample * 2 + 1]);
   // Explicit debugger operations can cross several fields. Drain complete
   // blocks during their bus phases so a long operation retains all audio.
   if (dsp_.SamplesWritten() == kAudioBufSamples) {

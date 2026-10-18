@@ -76,6 +76,38 @@ void PortSamplingEdges() {
   }
 }
 
+void CommunicationHandoffs() {
+  constexpr std::array<unsigned, 4> waits{2, 4, 10, 20};
+  for (unsigned setting = 0; setting < waits.size(); ++setting) {
+    Smp smp;
+    smp.IoState().iplRomEnable = false;
+    smp.IoState().internalWaitStates = uint8_t(setting);
+    smp.r.pc = 0x200;
+    const std::array<uint8_t, 6> program{0xe4, 0xf4, 0xc4, 0xf5, 0x2f, 0xfa};
+    std::copy(program.begin(), program.end(), smp.Ram() + 0x200);
+    smp.PortWrite(0, 0x11);
+    const auto inputClock = 4 + waits[setting] / 2;
+    const auto dummyClock = 8 + waits[setting] + waits[setting] / 2;
+    const auto outputClock = 8 + 3 * waits[setting];
+    const auto synchronize = [&](uint64_t clock) {
+      smp.SynchronizeCpu(clock, uint32_t(Smp::kHardwareClockFrequency));
+    };
+    synchronize(1);
+    Check(smp.HardwareClockCount() == inputClock && smp.r.a == 0,
+          "The sound processor yields before sampling a stretched input port");
+    smp.PortWrite(0, 0x77);
+    synchronize(inputClock + 1);
+    Check(smp.HardwareClockCount() == dummyClock && smp.r.a == 0x77 && smp.CpuOutput(1) == 0,
+          "The resumed input sees the console write before the next communication handoff");
+    synchronize(dummyClock + 1);
+    Check(smp.HardwareClockCount() == outputClock && smp.CpuOutput(1) == 0,
+          "A completed output write yields before changing the console-visible latch");
+    synchronize(outputClock + 1);
+    Check(smp.CpuOutput(1) == 0x77,
+          "The next console handoff commits the pending output without another bus clock");
+  }
+}
+
 void HardwareClockPhase() {
   for (bool pal : {false, true}) {
     auto machine = Machine(pal);
@@ -336,9 +368,9 @@ void ControlTransitions() {
 
 int main() {
   unsigned failures = 0;
-  for (auto test :
-       {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset, ConsoleAudioRate,
-        UploadedPortEdges, HaltedBusSequence, HaltedWaitClasses, ControlTransitions}) {
+  for (auto test : {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset,
+                    ConsoleAudioRate, UploadedPortEdges, HaltedBusSequence, HaltedWaitClasses,
+                    ControlTransitions, CommunicationHandoffs}) {
     try {
       test();
     } catch (const std::exception &error) {

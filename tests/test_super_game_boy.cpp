@@ -1,7 +1,9 @@
 #include "snes/core/Emulator.hpp"
+#include "snes/core/gameboy/AudioMixer.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -230,6 +232,72 @@ void ConsoleClockBoundaries() {
         }
       }
 }
+
+void StereoAudioMix() {
+  struct Fixture {
+    uint32_t rate;
+    unsigned pattern, frames;
+    uint64_t digest;
+  };
+  constexpr Fixture fixtures[]{
+      {18204, 0, 513, 0x07b7d0126b1d1ebcULL}, {18204, 1, 513, 0xfdd18d6c4f00241cULL},
+      {18204, 2, 513, 0x2ea0746f40726c75ULL}, {18473, 0, 513, 0xeba162e704833beeULL},
+      {18473, 1, 513, 0x0caf84c579596953ULL}, {18473, 2, 513, 0xe625c9fbfcaaac0cULL},
+      {18643, 0, 513, 0xd8d5643790966efcULL}, {18643, 1, 513, 0x5fea83f84077bfabULL},
+      {18643, 2, 513, 0xdf30b3e64bf1f65bULL}, {23405, 0, 513, 0x8b3c82664c4b2f5bULL},
+      {23405, 1, 513, 0x75faf91aae5d64bcULL}, {23405, 2, 513, 0xdb55b81c91e8dfbeULL},
+      {23751, 0, 513, 0x4fc085dc64207b19ULL}, {23751, 1, 513, 0x82b7dd09fc30c531ULL},
+      {23751, 2, 513, 0x59c5a0d00df3c647ULL}, {23970, 0, 513, 0x6f162be46563e7baULL},
+      {23970, 1, 513, 0x918525fa2f73e147ULL}, {23970, 2, 513, 0x56bd035c7c001b65ULL},
+      {32768, 0, 513, 0x4a6755c8832bc810ULL}, {32768, 1, 513, 0xfc8fa51b1686af54ULL},
+      {32768, 2, 513, 0xb32c96f9ad5ad3d2ULL}, {33252, 0, 513, 0xd8e847852ea17272ULL},
+      {33252, 1, 513, 0x5387097a42fe7071ULL}, {33252, 2, 513, 0xf9341bfb1db3befeULL},
+      {33558, 0, 513, 0xae4b6e5de8194d06ULL}, {33558, 1, 513, 0xcd979cfda6bd331fULL},
+      {33558, 2, 513, 0xfb666f32ffe5d6baULL}, {40960, 0, 489, 0x8b3f43aa241ab220ULL},
+      {40960, 1, 489, 0xa638d6576602519bULL}, {40960, 2, 489, 0x005b930f5751bc29ULL},
+      {41565, 0, 484, 0xd473618d02e8a4cfULL}, {41565, 1, 484, 0xdceaab8e47698d61ULL},
+      {41565, 2, 484, 0x2d9bb9ae6eee02d8ULL}, {41947, 0, 481, 0xceb07bbc10857201ULL},
+      {41947, 1, 481, 0x8f46b72c7b0a3394ULL}, {41947, 2, 481, 0xfde0cdf5a65cc532ULL},
+  };
+  for (const auto &fixture : fixtures) {
+    gameboy::AudioMixer mixer;
+    uint64_t digest = 0xcbf29ce484222325ULL;
+    unsigned frames = 0;
+    mixer.Reset(fixture.rate);
+    mixer.SetOutput([&](float left, float right) {
+      ++frames;
+      for (float sample : {left, right}) {
+        const auto value =
+            uint16_t(std::clamp<long>(std::lrint(double(sample) * 32768), -32768, 32767));
+        for (unsigned shift : {0u, 8u}) {
+          digest ^= uint8_t(value >> shift);
+          digest *= 0x100000001b3ULL;
+        }
+      }
+    });
+    for (unsigned index = 0; index < 512; ++index) {
+      if (index == 127 || index == 383)
+        mixer.SetHandheldRate(index == 127 ? fixture.rate : 32768);
+      int16_t left, right;
+      if (fixture.pattern == 0) {
+        left = (index & 1) ? -32768 : 32767;
+        right = int16_t(int((index * 7919) % 65536) - 32768);
+      } else if (fixture.pattern == 1) {
+        left = 32767;
+        right = -32768;
+      } else {
+        left = index == 8 ? 32767 : 0;
+        right = index == 12 ? -32768 : 0;
+      }
+      mixer.WriteHandheld(left, right);
+      if (index % 7 == 0)
+        mixer.WriteHandheld(int16_t(-right), left);
+      mixer.WriteConsole((index & 2) ? 24000 : -24000, (index & 4) ? 12000 : -12000);
+    }
+    Check(frames == fixture.frames && digest == fixture.digest,
+          "Stereo mixing retains interpolation, clipping and both kinds of stream restart");
+  }
+}
 } // namespace
 
 int main() {
@@ -238,6 +306,7 @@ int main() {
     ClockAndBattery();
     ConsoleExecutionAndFailedLoads();
     ConsoleClockBoundaries();
+    StereoAudioMix();
     std::puts("Super Game Boy cartridge mapping, execution, clocks and battery checks passed");
     return 0;
   } catch (const std::exception &error) {

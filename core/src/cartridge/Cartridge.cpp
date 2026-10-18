@@ -824,6 +824,16 @@ void Cartridge::SetGameBoyAudioOutput(GameBoyAudioSink output) {
     gameBoy_->SetAudioOutput(std::move(output));
 }
 
+void Cartridge::SetGameBoyMixedAudioOutput(std::function<void(float, float)> output) {
+  if (gameBoy_)
+    gameBoy_->SetMixedAudioOutput(std::move(output));
+}
+
+void Cartridge::WriteGameBoyConsoleAudio(int16_t left, int16_t right) {
+  if (gameBoy_)
+    gameBoy_->WriteConsoleAudio(left, right);
+}
+
 bool Cartridge::MapSpc7110(MemoryBus &bus, uint8_t slot) const {
   if (!spc7110_)
     return false;

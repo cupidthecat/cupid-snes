@@ -19,6 +19,7 @@
 #include "snes/core/Spc700.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 
 namespace snes::core {
 
@@ -67,6 +68,9 @@ public:
   // portWrite: CPU writes $2140+n → sets data for SMP to read from $F4+n
   uint8_t PortRead(uint8_t port) const;
   void PortWrite(uint8_t port, uint8_t data);
+  void SetCpuSynchronizationCallback(std::function<void()> callback) {
+    synchronizeCpu_ = std::move(callback);
+  }
 
   // Timer stepping - call after each SMP bus cycle to advance timers
   // 'clocks' is the number of ideal timer ticks for this bus operation.
@@ -91,6 +95,8 @@ public:
 
   // A bus cycle can pause at its midpoint to sample the CPU input ports.
   void RunUntilHardwareClock(uint64_t targetClocks);
+  // Resume through the next communication handoff after this console clock.
+  void SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency);
   uint64_t HardwareClockCount() const noexcept {
     return hardwareClocks_;
   }
@@ -175,9 +181,15 @@ private:
     uint8_t timerTicks = 0;
     uint8_t readData = 0;
     bool sampled = false;
+    bool deferred = false;
   } busWait_{};
 
   uint64_t hardwareClocks_ = 0;
+  uint64_t synchronizationTarget_ = 0;
+  uint32_t synchronizationPhase_ = 0, synchronizationFrequency_ = 1;
+  bool synchronizingCpu_ = false, yieldedCpu_ = false;
+  std::function<void()> synchronizeCpu_;
+  int64_t CpuClockLead() const;
 
   bool ExecuteBusCycle(const PendingCycle &cycle) override;
   bool ClockBusCycle(const PendingCycle &cycle, BusWait &wait);

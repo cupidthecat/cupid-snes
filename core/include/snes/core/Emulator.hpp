@@ -188,7 +188,7 @@ private:
                                  const CartridgeFirmware *firmware, std::string *error);
   void ResetHardware(bool warm);
   void AdvanceClocks(uint32_t clocks);
-  void SynchronizeDevices();
+  void SynchronizeDevices(bool communication = false);
   void SynchronizeCoprocessors();
   void StopFrameExecution();
   uint32_t ResumeCpuInstruction();

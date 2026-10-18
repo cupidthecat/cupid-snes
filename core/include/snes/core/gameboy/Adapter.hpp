@@ -1,6 +1,7 @@
 // Cartridge bus, oscillator, and lifecycle for the handheld adapter.
 #pragma once
 
+#include "snes/core/gameboy/AudioMixer.hpp"
 #include "snes/core/gameboy/Peripherals.hpp"
 
 namespace snes::core {
@@ -30,12 +31,19 @@ public:
   void SetAudioOutput(AudioSink output) {
     audioOutput_ = std::move(output);
   }
+  void SetMixedAudioOutput(AudioMixer::Output output) {
+    mixer_.SetOutput(std::move(output));
+  }
+  void WriteConsoleAudio(int16_t left, int16_t right) {
+    mixer_.WriteConsole(left, right);
+  }
 
 private:
   bool secondModel_ = false, loaded_ = false;
   uint32_t masterHz_ = 21'477'272;
   int64_t clockCredit_ = 0;
   AudioSink audioOutput_;
+  AudioMixer mixer_;
   Host host_{[this] { ResetHandheld(); }};
   Peripherals devices_{host_, *this};
   Machine machine_{host_, devices_};

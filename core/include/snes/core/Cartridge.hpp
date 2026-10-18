@@ -195,6 +195,8 @@ public:
   bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
   bool MapGameBoy(MemoryBus &bus, uint8_t slot) const;
   void SetGameBoyAudioOutput(GameBoyAudioSink output);
+  void SetGameBoyMixedAudioOutput(std::function<void(float left, float right)> output);
+  void WriteGameBoyConsoleAudio(int16_t left, int16_t right);
 
   bool BoardConnected() const noexcept {
     return boardConnected_;
