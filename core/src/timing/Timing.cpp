@@ -2,11 +2,14 @@
 
 #include "snes/core/Timing.hpp"
 
+#include <algorithm>
+
 namespace snes::core {
 
 // Construction & Reset
 
-Timing::Timing(Region region) : region_(region) {
+Timing::Timing(Region region, uint8_t cpuRevision)
+    : region_(region), cpuRevision_(std::clamp<uint8_t>(cpuRevision, 1, 2)) {
   Reset();
 }
 
@@ -25,8 +28,8 @@ void Timing::Reset() {
 
   masterClocksElapsed_ = 0;
   frameCount_ = 0;
-  dramRefreshPosition_ = kDramRefreshPos;
-  hdmaSetupPosition_ = 12;
+  dramRefreshPosition_ = cpuRevision_ == 1 ? 530 : kDramRefreshPos;
+  hdmaSetupPosition_ = cpuRevision_ == 1 ? 20 : 12;
   hdmaSetupFired_ = false;
   halfClockPending_ = false;
 
@@ -187,7 +190,8 @@ void Timing::tickScanline() {
     vcounter_ = 0;
     field_ = !field_;
     frameCount_++;
-    hdmaSetupPosition_ = uint16_t(12 + (masterClocksElapsed_ & 7));
+    const auto divider = masterClocksElapsed_ & 7;
+    hdmaSetupPosition_ = uint16_t(cpuRevision_ == 1 ? 20 - divider : 12 + divider);
     hdmaSetupFired_ = false;
 
     // Recalculate vperiod for the new frame.
@@ -200,7 +204,8 @@ void Timing::tickScanline() {
 
   // Update H period for the new scanline (short/long line logic).
   updateHPeriod();
-  dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
+  if (cpuRevision_ == 2)
+    dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
 
   // Reset per-scanline event flags.
   dramRefreshFired_ = false;

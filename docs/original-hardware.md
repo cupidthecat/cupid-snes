@@ -12,6 +12,8 @@ The progressive video path retains WRAM, APURAM and VRAM on warm reset. It clear
 
 `Emulator::Config::ppu` selects PPU2 revision 1, 2 or 3 and a VRAM capacity of 65,536 or 131,072 bytes. Revision 3 and 64 KiB are the defaults. The status register reports the selected revision. VRAM register addresses retain the upper address bit; the memory interface applies the capacity mask. At 64 KiB the two banks alias, while 128 KiB exposes both banks to CPU ports, backgrounds and objects.
 
+`Emulator::Config::cpuRevision` selects CPU revision 1 or 2, with revision 2 as the default. Values outside that range select the nearest supported revision. Revision 1 refresh starts at horizontal clock 530 on every scanline. Revision 2 follows the DMA divider, starting at clock 538 or 534. HDMA setup also follows the selected revision: revision 1 uses clock 20 minus the divider phase, while revision 2 uses clock 12 plus that phase. The `$4210` version nibble and warm reset retain the selected CPU hardware.
+
 For example, a deterministic 128 KiB console with PPU2 revision 2 uses:
 
 ```cpp

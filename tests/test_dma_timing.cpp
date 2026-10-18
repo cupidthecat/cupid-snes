@@ -297,6 +297,139 @@ void TimingBatchInvariance() {
         "A short line preserves the refresh divider phase");
 }
 
+void CpuRevisionTiming() {
+  for (uint8_t revision : {1, 2}) {
+    const std::vector<uint64_t> expected = revision == 1 ? std::vector<uint64_t>{530, 1894, 3258}
+                                                         : std::vector<uint64_t>{538, 1898, 3266};
+    for (unsigned batch : {1, 2, 7, 4092}) {
+      Timing timing(Region::NTSC, revision);
+      std::vector<uint64_t> refresh;
+      unsigned setup = 0;
+      timing.onDramRefresh = [&]() { refresh.push_back(timing.MasterClocksElapsed()); };
+      timing.onHdmaSetup = [&]() {
+        Check(timing.HCounter() == (revision == 1 ? 20 : 12),
+              "CPU revision selects the initial HDMA setup edge");
+        ++setup;
+      };
+      for (unsigned elapsed = 0; elapsed < 4092;) {
+        const unsigned clocks = std::min(batch, 4092 - elapsed);
+        timing.Tick(clocks);
+        elapsed += clocks;
+      }
+      Check(refresh == expected && setup == 1,
+            "CPU revision selects refresh timing across odd and even clock batches");
+      timing.Reset();
+      Check(timing.CpuRevision() == revision &&
+                timing.DramRefreshPosition() == (revision == 1 ? 530 : 538) &&
+                timing.HdmaSetupPosition() == (revision == 1 ? 20 : 12),
+            "Timing reset preserves the selected CPU hardware");
+    }
+  }
+}
+
+std::vector<uint8_t> RefreshProgram(unsigned nops, bool pal) {
+  std::vector<uint8_t> rom(0x8000, 0xea);
+  unsigned position = nops;
+  for (uint8_t byte :
+       {0xadu, 0x37u, 0x21u, 0xadu, 0x3cu, 0x21u, 0x8fu, 0u,    1u,    0x7eu, 0xadu, 0x3cu, 0x21u,
+        0x29u, 1u,    0x8fu, 1u,    1u,    0x7eu, 0xa9u, 0xa5u, 0x8fu, 15u,   1u,    0x7eu, 0xdbu})
+    rom[position++] = byte;
+  std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+  rom[0x7fc0] = 'T';
+  rom[0x7fd5] = 0x20;
+  rom[0x7fd6] = 0;
+  rom[0x7fd7] = 5;
+  rom[0x7fd8] = 0;
+  rom[0x7fd9] = pal ? 2 : 1;
+  rom[0x7fdc] = rom[0x7fdd] = 0xff;
+  rom[0x7fde] = rom[0x7fdf] = 0;
+  rom[0x7ffc] = 0;
+  rom[0x7ffd] = 0x80;
+  return rom;
+}
+
+void CpuRevisionBusTiming() {
+  // Only the 23-NOP program samples the first refresh boundary differently.
+  constexpr std::array<uint8_t, 16> expected{116, 119, 123, 126, 130, 133, 147, 150,
+                                             154, 157, 161, 164, 168, 171, 175, 178};
+  for (uint8_t requested : {0, 1, 2, 3, 255}) {
+    const uint8_t revision = requested < 1 ? 1 : requested > 2 ? 2 : requested;
+    for (bool pal : {false, true}) {
+      for (unsigned index = 0; index < expected.size(); ++index) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.cpuRevision = requested;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(RefreshProgram(index + 18, pal)),
+              "CPU revision timing program loads");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(machine->Reset(), "CPU revision console resets");
+          Check(machine->GetTiming().CpuRevision() == revision &&
+                    (machine->GetBus().Read(0x4210) & 15) == revision,
+                "Configured CPU hardware and version readback agree after power and reset");
+          machine->StepFrame();
+          const auto *data = machine->GetBus().WramData() + 0x100;
+          const uint8_t h = revision == 1 && index == 5 ? 143 : expected[index];
+          Check(data[0] == h && data[1] == 0 && data[15] == 0xa5,
+                "CPU revision changes actual bus timing at the refresh boundary");
+        }
+      }
+    }
+  }
+}
+
+void CpuRevisionFieldTiming() {
+  struct Profile {
+    bool pal, interlace;
+    std::array<uint16_t, 9> setup1, setup2, refresh2;
+  };
+  constexpr std::array profiles{Profile{false,
+                                        false,
+                                        {20, 20, 20, 16, 16, 20, 20, 16, 16},
+                                        {12, 12, 12, 16, 16, 12, 12, 16, 16},
+                                        {538, 534, 534, 538, 538, 534, 534, 538, 538}},
+                                Profile{false,
+                                        true,
+                                        {20, 20, 20, 20, 16, 16, 20, 20, 16},
+                                        {12, 12, 12, 12, 16, 16, 12, 12, 16},
+                                        {538, 534, 534, 534, 538, 538, 534, 534, 538}},
+                                Profile{true,
+                                        false,
+                                        {20, 20, 20, 20, 20, 20, 20, 20, 20},
+                                        {12, 12, 12, 12, 12, 12, 12, 12, 12},
+                                        {538, 534, 534, 534, 534, 534, 534, 534, 534}},
+                                Profile{true,
+                                        true,
+                                        {20, 20, 20, 16, 20, 16, 20, 16, 20},
+                                        {12, 12, 12, 16, 12, 16, 12, 16, 12},
+                                        {538, 534, 534, 538, 534, 538, 534, 538, 534}}};
+  for (const auto &profile : profiles) {
+    auto rom = RefreshProgram(0, profile.pal);
+    const std::array<uint8_t, 11> code{
+        0xa9, 0x80, 0x8d, 0, 0x21, 0xa9, uint8_t(profile.interlace), 0x8d, 0x33, 0x21, 0xdb};
+    std::copy(code.begin(), code.end(), rom.begin());
+    for (uint8_t revision : {1, 2}) {
+      auto config = snes::tests::DeterministicConsoleConfig();
+      config.cpuRevision = revision;
+      auto machine = std::make_unique<Emulator>(config);
+      Check(machine->LoadCartridge(rom), "CPU field timing program loads");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(machine->Reset(), "CPU field timing program resets");
+        for (unsigned frame = 0; frame < profile.setup1.size(); ++frame) {
+          if (frame)
+            machine->StepFrame();
+          const auto &timing = machine->GetTiming();
+          Check(timing.DramRefreshPosition() == (revision == 1 ? 530 : profile.refresh2[frame]) &&
+                    timing.HdmaSetupPosition() ==
+                        (revision == 1 ? profile.setup1[frame] : profile.setup2[frame]),
+                "CPU revision retains refresh and HDMA phase across short and long fields");
+        }
+      }
+    }
+  }
+}
+
 struct Video : IVideoOutput {
   VideoFrame frame;
   void Present(const VideoFrame &value) override {
@@ -344,6 +477,9 @@ int main() {
     LongDmaAudio();
     DividerAlignment();
     TimingBatchInvariance();
+    CpuRevisionTiming();
+    CpuRevisionBusTiming();
+    CpuRevisionFieldTiming();
     FieldTimingAndPresentation();
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

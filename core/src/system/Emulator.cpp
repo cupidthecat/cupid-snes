@@ -64,7 +64,8 @@ std::optional<const char *> UnsupportedChipName(EnhancementChip chip) {
 
 Emulator::Emulator() : Emulator(Config{}) {}
 
-Emulator::Emulator(Config config) : config_(std::move(config)), ppu_(config_.ppu) {
+Emulator::Emulator(Config config)
+    : config_(std::move(config)), ppu_(config_.ppu), timing_(Region::NTSC, config_.cpuRevision) {
   Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
 }
 
@@ -565,6 +566,7 @@ void Emulator::ResetHardware(bool warm) {
   smp_.Power(warm);
   ppu_.Power(startup, warm);
   cpuIo_.Reset();
+  cpuIo_.setCpuVersion(timing_.CpuRevision());
   dma_.Reset();
   irq_.Reset();
   autoJoypad_.Reset();
