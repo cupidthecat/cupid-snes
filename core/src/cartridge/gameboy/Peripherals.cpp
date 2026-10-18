@@ -21,12 +21,18 @@ uint8_t Peripherals::Read(uint16_t address, Machine::Access access) {
 }
 
 uint8_t Peripherals::Write(uint16_t address, uint8_t value, Machine::Access access) {
+  if (address >= 0xff10 && address < 0xff40)
+    return WriteCpu(address, value, 0);
+  return video_.Write(address, value, access == Machine::Access::Dma);
+}
+
+uint8_t Peripherals::WriteCpu(uint16_t address, uint8_t value, uint16_t programCounter) {
   if (address >= 0xff10 && address < 0xff40) {
     audio_.AdvanceTo(clocks_);
-    audio_.Write(address, value);
+    audio_.Write(address, value, programCounter);
     return 0;
   }
-  return video_.Write(address, value, access == Machine::Access::Dma);
+  return video_.Write(address, value, false);
 }
 
 uint8_t Peripherals::Advance(unsigned clocks) {

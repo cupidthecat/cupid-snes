@@ -72,9 +72,9 @@ uint8_t Audio::Read(uint16_t address) {
   return channels_.Read(address);
 }
 
-void Audio::Write(uint16_t address, uint8_t value) {
+void Audio::Write(uint16_t address, uint8_t value, uint16_t programCounter) {
   FlushSound(clock_);
-  channels_.Write(address, value);
+  channels_.Write(address, value, programCounter);
 }
 
 void Audio::Dac(uint64_t clock, unsigned channel, SoundChannels::Signal signal, int phaseOffset) {
@@ -140,10 +140,10 @@ void Audio::AdvancePhase(uint64_t clock) {
   phaseClock_ = clock;
 }
 
-void Audio::FlushSound(uint64_t clock) {
+void Audio::FlushSound(uint64_t clock, bool deferTrigger) {
   if (clock > phaseClock_ && !stopped_ && resumeClocks_ == 0)
     renderedClocks_ += unsigned(clock - phaseClock_);
-  channels_.AdvanceTo(clock);
+  channels_.AdvanceTo(clock, deferTrigger);
   AdvancePhase(clock);
 }
 
@@ -221,12 +221,13 @@ void Audio::CommitSamples() {
         const auto trigger = channels_.PendingTriggerClock();
         if (trigger > phaseClock_)
           end = std::min(end, trigger);
-        FlushSound(end);
+        FlushSound(end, due && trigger == end);
       }
     }
     if (due) {
       sampleCycles_ -= clockRate_;
       Render();
+      channels_.CommitPendingTrigger();
     }
   }
 }
@@ -236,9 +237,13 @@ void Audio::DividerEdge(bool rising, uint64_t clock) {
     AdvanceTo((clock - 1) & ~uint64_t(3));
   FlushSound(clock > renderClock_ ? renderClock_ : clock);
   const bool deferred = channels_.PendingTriggerClock() && clock > phaseClock_;
+  const auto phaseBefore = phaseClock_;
   channels_.DividerEdge(rising, clock);
-  if (!deferred)
+  if (!deferred) {
+    if (clock > phaseBefore && !stopped_ && resumeClocks_ == 0)
+      renderedClocks_ += unsigned(clock - phaseBefore);
     AdvancePhase(clock);
+  }
   AdvanceTo(clock);
 }
 

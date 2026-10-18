@@ -27,9 +27,11 @@ public:
   explicit SoundChannels(Output &output) : output_(output) {}
   void Reset(bool secondModel = false, bool notifyOutput = true);
   uint8_t Read(uint16_t address) const;
-  void Write(uint16_t address, uint8_t value);
+  void Write(uint16_t address, uint8_t value, uint16_t programCounter = 0);
   void Advance(unsigned clocks);
-  void AdvanceTo(uint64_t clock);
+  void AdvanceTo(uint64_t clock, bool deferTrigger = false);
+  // Commit a trigger held at a sample boundary after that sample is rendered.
+  void CommitPendingTrigger();
   void DividerEdge(bool rising, uint64_t clock);
   void Stop(bool stopped) noexcept {
     stopped_ = stopped;
@@ -51,7 +53,7 @@ private:
     uint16_t frequency = 0;
     uint8_t position = 0, volume = 0, envelope = 0, amplitude = 0;
     bool enabled = false, envelopeRunning = false, high = false, squareStarted = false;
-    bool envelopeClock = false, envelopeLimit = false, squareReloaded = false;
+    bool envelopeClock = false, envelopeLimit = false, squareReloaded = false, squareTicked = false;
   };
 
   Output &output_;
@@ -71,6 +73,7 @@ private:
   bool noiseReloaded_ = false;
   bool sweepStarting_ = false;
   bool stopped_ = false;
+  bool deferTrigger_ = false;
 
   void Power(bool enabled);
   void Tick();

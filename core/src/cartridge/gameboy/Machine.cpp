@@ -243,7 +243,8 @@ void Machine::WriteData(uint16_t address, uint8_t value, Access access) {
              dmaPosition_ != 0xa1) {
     devices_.BlockedOamAccess(address, true);
   } else {
-    flags_ |= devices_.Write(address, value, access);
+    flags_ |= access == Access::Cpu ? devices_.WriteCpu(address, value, cpu_.GetState().pc)
+                                    : devices_.Write(address, value, access);
   }
 }
 

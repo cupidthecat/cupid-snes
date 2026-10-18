@@ -29,6 +29,7 @@ void SoundChannels::Reset(bool secondModel, bool notifyOutput) {
   powered_ = dividerHigh_ = sweepEnabled_ = sweepNegated_ = false;
   noisePending_ = waveAccess_ = false;
   stopped_ = false;
+  deferTrigger_ = false;
   secondModel_ = secondModel;
   if (notifyOutput) {
     for (unsigned i = 0; i < 4; ++i)
@@ -247,6 +248,7 @@ void SoundChannels::Trigger(unsigned channel) {
   if (channel != 2)
     state.volume = registers_[Base[channel] + 2] >> 4;
   if (channel < 2) {
+    state.squareTicked = false;
     if (!wasEnabled)
       state.squareStarted = false;
     state.timer = int(4 * (2048 - Frequency(channel)) + (wasEnabled ? 4 : 8));
@@ -309,7 +311,7 @@ void SoundChannels::SetControl(unsigned channel, uint8_t previous, uint8_t value
   }
 }
 
-void SoundChannels::Write(uint16_t address, uint8_t value) {
+void SoundChannels::Write(uint16_t address, uint8_t value, uint16_t programCounter) {
   if (address >= 0xff30 && address <= 0xff3f) {
     if (!channels_[2].enabled)
       wave_[address & 15] = value;
@@ -382,8 +384,8 @@ void SoundChannels::Write(uint16_t address, uint8_t value) {
     if (reg != 19) {
       auto &state = channels_[reg / 5];
       auto &frequency = state.frequency;
-      if (reg != 14 && state.squareReloaded && !(value & 0x80) && (previous & 7) == 7 &&
-          (value & 7) != 7)
+      if (reg != 14 && state.enabled && state.squareTicked && !(value & 0x80) &&
+          (previous & 7) == 7 && (value & 7) != 7 && state.timer == int(4 * (2048 - frequency)))
         state.position = uint8_t((state.position + 7) & 7);
       frequency = uint16_t((frequency & 0xff) | ((value & 7) << 8));
       if (reg != 14 && state.squareReloaded)
@@ -404,8 +406,15 @@ void SoundChannels::Write(uint16_t address, uint8_t value) {
   }
   case 10:
     registers_[reg] &= 0x80;
-    if (!DacEnabled(2))
+    if (!DacEnabled(2)) {
+      if (channels_[2].enabled) {
+        if (channels_[2].timer == 2)
+          waveLatch_ = wave_[programCounter & 15];
+        else if (waveAccess_ && audioClock_ - waveRead_ < 2)
+          waveLatch_ = wave_[address & 15];
+      }
       Disable(2, false);
+    }
     break;
   case 12:
     registers_[reg] &= 0x60;
@@ -565,7 +574,7 @@ void SoundChannels::Tick() {
       Envelopes(true);
     }
     ClockNoise();
-    if (noisePending_ && end >= noiseStart_) {
+    if (noisePending_ && end >= noiseStart_ && !deferTrigger_) {
       noisePending_ = false;
       Trigger(3);
     }
@@ -580,6 +589,7 @@ void SoundChannels::Tick() {
         const auto edge = uint64_t(int64_t(end) + state.timer);
         if (i < 2) {
           state.squareReloaded = true;
+          state.squareTicked = true;
           state.timer += int(4 * (2048 - Frequency(i)));
           state.position = uint8_t((state.position + 1) & 7);
           state.squareStarted = true;
@@ -602,11 +612,23 @@ void SoundChannels::Advance(unsigned clocks) {
   AdvanceTo(clocks_ + clocks);
 }
 
-void SoundChannels::AdvanceTo(uint64_t clock) {
+void SoundChannels::AdvanceTo(uint64_t clock, bool deferTrigger) {
+  if (!deferTrigger)
+    CommitPendingTrigger();
+  deferTrigger_ = deferTrigger;
   clocks_ = std::max(clocks_, clock);
   while (audioClock_ + 4 <= clocks_) {
     audioClock_ += 4;
     Tick();
+  }
+  deferTrigger_ = false;
+}
+
+void SoundChannels::CommitPendingTrigger() {
+  if (noisePending_ && audioClock_ >= noiseStart_) {
+    noisePending_ = false;
+    Trigger(3);
+    Emit(audioClock_);
   }
 }
 

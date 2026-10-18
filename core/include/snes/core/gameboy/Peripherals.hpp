@@ -14,6 +14,7 @@ public:
   void Reset(bool secondModel, bool preserveAudio) override;
   uint8_t Read(uint16_t address, Machine::Access access) override;
   uint8_t Write(uint16_t address, uint8_t value, Machine::Access access) override;
+  uint8_t WriteCpu(uint16_t address, uint8_t value, uint16_t programCounter) override;
   uint8_t Advance(unsigned clocks) override;
   void FinishAdvance() override;
   void AudioDividerEdge(bool rising, uint64_t clock) override;

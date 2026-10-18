@@ -303,6 +303,72 @@ void DelayedNoiseSampleBoundaries() {
         }
   }
 }
+
+void NoiseActivationAtSampleBoundary() {
+  constexpr std::array<std::array<uint64_t, 8>, 2> expected{
+      {{0x0b3a45a4f23995ddull, 0xb3b9d93edcb98d3dull, 0x0b3a45a4f23995ddull, 0xb6c5f6c70ad59c29ull,
+        0xa0bf19515d7a33d1ull, 0xc3d45afd8e82f7f5ull, 0xff4d47073d831131ull, 0xb66dd5f092b5fc9dull},
+       {0xcaaf7b24306b7091ull, 0x08f18a2b10ff0b25ull, 0xcaaf7b24306b7091ull, 0x8b0d13c8d0847de9ull,
+        0x8d016f5f333914a5ull, 0x9715f8ea559ee395ull, 0x36612af7deab92fdull,
+        0xfb6dec34718e5d19ull}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned phase = 0; phase < 8; ++phase) {
+      System system(model != 0);
+      system.audio.Write(0xff26, 0);
+      system.divider.Write(0xff04, 0);
+      system.audio.Write(0xff26, 0x80);
+      system.audio.Write(0xff24, 0x77);
+      system.audio.Write(0xff25, 0x88);
+      system.audio.Write(0xff21, 0x61);
+      system.audio.Write(0xff22, 0x22);
+      system.Step(996 + phase * 4);
+      system.audio.Write(0xff23, 0x80);
+      system.Step(16384);
+      Check(system.samples.size() == (model == 1 && phase == 7 ? 136u : 135u) &&
+                system.Digest() == expected[model][phase],
+            "A due sample precedes delayed noise activation at a split sound boundary");
+    }
+}
+
+void DividerClocksRemainInBatchBudget() {
+  constexpr std::array<std::array<uint64_t, 4>, 2> expected{
+      {{0x4f342472524f7919ull, 0x629b1c3da5e10e9dull, 0x7b9f7bc2a27723b5ull, 0x953d29e9d445c10dull},
+       {0xe52fc243ac09ea39ull, 0xad020738f7e27f49ull, 0xe52fc243ac09ea39ull,
+        0xad020738f7e27f49ull}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned phase = 0; phase < 2; ++phase)
+      for (unsigned active = 0; active < 2; ++active) {
+        System system(model != 0);
+        system.audio.Write(0xff26, 0);
+        system.divider.Write(0xff04, 0);
+        for (const auto [address, value] : std::array<std::array<uint16_t, 2>, 6>{{{0xff26, 0x80},
+                                                                                   {0xff24, 0x77},
+                                                                                   {0xff25, 0x88},
+                                                                                   {0xff21, 0x61},
+                                                                                   {0xff22, 0x22},
+                                                                                   {0xff23, 0x80}}})
+          system.audio.Write(address, uint8_t(value));
+        system.StepBatched(2048 + 4 * ((model ? 3 : 4) + phase));
+        system.audio.Reset(model != 0, true);
+        system.divider.Reset();
+        system.clock = 0;
+        system.samples.clear();
+        system.audio.Write(0xff26, 0);
+        for (const auto [address, value] : std::array<std::array<uint16_t, 2>, 5>{
+                 {{0xff26, 0x80}, {0xff24, 0x77}, {0xff25, 0x88}, {0xff21, 0x61}, {0xff22, 0x22}}})
+          system.audio.Write(address, uint8_t(value));
+        if (active)
+          system.audio.Write(0xff23, 0x80);
+        system.StepBatched(131180);
+        system.audio.Write(0xff21, 0x71);
+        system.audio.Write(0xff22, 0x22);
+        system.audio.Write(0xff23, 0x80);
+        system.StepBatched(16384);
+        Check(system.samples.size() == 1152 &&
+                  system.Digest() == expected[model][phase * 2 + active],
+              "Divider-driven clocks remain in the sound batch budget across processor resets");
+      }
+}
 } // namespace
 
 int main() {
@@ -317,6 +383,8 @@ int main() {
     MixerBeforeTrigger();
     ProcessorResetKeepsOutput();
     DelayedNoiseSampleBoundaries();
+    NoiseActivationAtSampleBoundary();
+    DividerClocksRemainInBatchBudget();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {

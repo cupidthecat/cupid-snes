@@ -406,6 +406,51 @@ void SquareFrequencyWriteOnReload() {
               "The square duty phase advances after the updated countdown expires");
       }
 }
+
+void SquareFrequencyDropUsesCountdownPhase() {
+  for (bool secondModel : {false, true})
+    for (unsigned channel : {0u, 1u}) {
+      System system(secondModel);
+      const uint16_t base = uint16_t(0xff10 + channel * 5);
+      system.sound.Write(0xff26, 0x80);
+      system.sound.Write(uint16_t(base + 1), 0xc0);
+      system.sound.Write(uint16_t(base + 2), 0xf0);
+      system.sound.Write(uint16_t(base + 3), 0x58);
+      system.sound.Write(uint16_t(base + 4), 0x87);
+      system.Step(1048);
+      system.sound.Write(uint16_t(base + 3), 0xcd);
+      system.Step(100);
+      system.sound.Write(uint16_t(base + 4), 2);
+      system.Step(26824);
+      Check(system.sound.GetState().amplitudes[channel] == 15,
+            "A high frequency write uses the countdown phase after an earlier frequency change");
+      system.Step(5324);
+      Check(system.sound.GetState().amplitudes[channel] == 0,
+            "The adjusted duty phase advances with the retained countdown");
+    }
+}
+
+void WaveDisableAtFetchEdges() {
+  for (bool secondModel : {false, true})
+    for (uint16_t frequency : {uint16_t{2045}, uint16_t{2046}})
+      for (uint16_t pc : {uint16_t{0}, uint16_t{5}, uint16_t{10}, uint16_t{15}}) {
+        System system(secondModel);
+        for (unsigned i = 0; i < 16; ++i)
+          system.sound.Write(uint16_t(0xff30 + i), uint8_t((i << 4) | 15));
+        system.sound.Write(0xff26, 0x80);
+        system.sound.Write(0xff1a, 0x80);
+        system.sound.Write(0xff1c, 0x20);
+        system.sound.Write(0xff1d, uint8_t(frequency));
+        const uint8_t trigger = uint8_t(0x80 | (frequency >> 8));
+        system.sound.Write(0xff1e, trigger);
+        system.Step(frequency == 2045 ? 12 : 16);
+        system.sound.Write(0xff1a, 0, pc);
+        system.sound.Write(0xff1a, 0x80);
+        system.sound.Write(0xff1e, trigger);
+        Check(system.sound.GetState().amplitudes[2] == (frequency == 2045 ? 10 : pc),
+              "Wave DAC disable retains the byte selected at the fetch edge for the next trigger");
+      }
+}
 } // namespace
 
 int main() {
@@ -423,6 +468,8 @@ int main() {
     PowerOnDuringHighDivider();
     DelayedNoiseTriggerAcrossDivider();
     SquareFrequencyWriteOnReload();
+    SquareFrequencyDropUsesCountdownPhase();
+    WaveDisableAtFetchEdges();
     std::puts("Handheld sound register, oscillator and divider checks passed");
     return 0;
   } catch (const std::exception &error) {

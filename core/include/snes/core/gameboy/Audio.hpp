@@ -19,7 +19,7 @@ public:
   // Processor resets can retain the sample clock and analog output history.
   void Reset(bool secondModel = false, bool preserveOutput = false);
   uint8_t Read(uint16_t address);
-  void Write(uint16_t address, uint8_t value);
+  void Write(uint16_t address, uint8_t value, uint16_t programCounter = 0);
   void Advance(unsigned clocks);
   // Complete an elapsed bus timing batch, including any sample due in it.
   void AdvanceTo(uint64_t clock);
@@ -57,7 +57,7 @@ private:
   void Power(uint64_t clock, bool enabled) override;
   void Change(uint64_t clock, unsigned channel, unsigned level, int phaseOffset);
   void AdvancePhase(uint64_t clock);
-  void FlushSound(uint64_t clock);
+  void FlushSound(uint64_t clock, bool deferTrigger = false);
   void CommitSamples();
   void Render();
 };

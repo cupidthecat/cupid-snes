@@ -725,10 +725,48 @@ void HostVideoAndReset() {
   Check(system.machine.ReadMemory(0xff26) == 0x70 && system.machine.ReadMemory(0xff40) == 0,
         "Reset clears sound and display register state together");
 }
+
+void WaveFetchUsesProgramCounter() {
+  constexpr std::array<uint64_t, 2> fetched{0x13b5f4f41fbd740dull, 0xa82415712345469dull};
+  constexpr std::array<std::array<uint64_t, 4>, 2> pending{
+      {{0x899ec0f184946b0dull, 0xf48e3bcca60bc1c5ull, 0xb2f6e9b185478229ull, 0x8cd4223071513a99ull},
+       {0x506eed363d604c51ull, 0x52044b8365759361ull, 0x799a8777dace2bc5ull,
+        0x3a40ed10eb459499ull}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned index = 0; index < 4; ++index)
+      for (uint16_t frequency : {uint16_t{2045}, uint16_t{2046}}) {
+        System system;
+        system.Load(model != 0, {0x18, 0xfe});
+        auto state = system.machine.CpuState();
+        state.pc = uint16_t(0x200 + index * 5);
+        system.machine.SetCpuState(state);
+        for (unsigned i = 0; i < 16; ++i)
+          system.machine.WriteMemory(uint16_t(0xff30 + i), uint8_t((i << 4) | 15));
+        for (const auto &[address, value] : std::array<Write, 6>{{{0xff26, 0x80},
+                                                                  {0xff24, 0x77},
+                                                                  {0xff25, 0x44},
+                                                                  {0xff1a, 0x80},
+                                                                  {0xff1c, 0x20},
+                                                                  {0xff1d, uint8_t(frequency)}}})
+          system.machine.WriteMemory(address, value);
+        const uint8_t trigger = uint8_t(0x80 | (frequency >> 8));
+        system.machine.WriteMemory(0xff1e, trigger);
+        system.machine.AdvanceHardware(frequency == 2045 ? 12 : 16);
+        system.machine.WriteMemory(0xff1a, 0);
+        system.machine.WriteMemory(0xff1a, 0x80);
+        system.machine.WriteMemory(0xff1e, trigger);
+        for (unsigned clocks = 0; clocks < 32768; clocks += 4)
+          system.machine.AdvanceHardware(4);
+        Check(system.samples == 256 &&
+                  system.digest == (frequency == 2045 ? fetched[model] : pending[model][index]),
+              "CPU context selects the retained wave byte and its reconstructed stereo waveform");
+      }
+}
 } // namespace
 
 int main() {
   try {
+    WaveFetchUsesProgramCounter();
     StopAndWake();
     InfraredExecution();
     ClockCommandExecution();
