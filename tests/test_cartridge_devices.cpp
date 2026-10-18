@@ -24,6 +24,14 @@ void Check(bool value, const char *label) {
   }
 }
 
+std::shared_ptr<CartridgeFirmware> DetectionFirmware() {
+  auto firmware = std::make_shared<CartridgeFirmware>();
+  for (auto kind : {FirmwareKind::Dsp3, FirmwareKind::St011, FirmwareKind::St018})
+    Check(firmware->Set(kind, std::vector<uint8_t>(CartridgeFirmware::Size(kind))),
+          "Header fixtures provide complete zero-operation processor images");
+  return firmware;
+}
+
 std::vector<uint8_t> Rom(size_t size = 0x100000, uint8_t mode = 0x20, uint8_t type = 0) {
   std::vector<uint8_t> bytes(size, 0xea);
   const size_t header = mode == 0x35 || mode == 0x25     ? 0x40ffc0
@@ -270,7 +278,8 @@ void HeaderRamDeclarations() {
   image[0x7fd8] = 3;
   image[0] = 0x78;
   image[0x123] = 0x45;
-  auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+  const auto firmware = DetectionFirmware();
+  auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, firmware.get());
   Check(cart && cart->Read(0x400000) == 0x78 && cart->Read(0xc00000) == 0x78 &&
             cart->Read(0x600123) == 0x45 && cart->Read(0xe00123) == 0x45,
         "The ARM cartridge retains its lower-half ROM windows");
@@ -309,6 +318,7 @@ void BootHeaderRanking() {
 }
 
 void DeviceFamilyHeaders() {
+  const auto firmware = DetectionFirmware();
   for (const auto [mode, type, chip] :
        {std::tuple{uint8_t(0x22), uint8_t(0x45), EnhancementChip::Sdd1},
         std::tuple{uint8_t(0x33), uint8_t(0x35), EnhancementChip::Sa1},
@@ -326,14 +336,14 @@ void DeviceFamilyHeaders() {
   Check(controller && controller->Header().chip == EnhancementChip::Spc7110 &&
             controller->Header().mapping == MappingType::Spc7110,
         "A device family's controller takes priority over a conflicting mapping mode");
-  const auto identified = [](std::string_view title, uint8_t mode, uint8_t type, uint8_t subtype,
-                             uint8_t maker) {
+  const auto identified = [&](std::string_view title, uint8_t mode, uint8_t type, uint8_t subtype,
+                              uint8_t maker) {
     auto image = Rom(0x100000, mode, type);
     std::fill_n(image.begin() + 0x7fc0, 21, ' ');
     std::copy(title.begin(), title.end(), image.begin() + 0x7fc0);
     image[0x7fbf] = subtype;
     image[0x7fda] = maker;
-    return Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+    return Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, firmware.get());
   };
   auto dsp1 = identified("PILOTWINGS", 0x20, 5, 0, 0);
   auto dsp2 = identified("DUNGEON MASTER", 0x30, 5, 0, 0);
@@ -373,6 +383,9 @@ void DeviceFamilyHeaders() {
 }
 
 void DetectionAndReload() {
+  const auto firmware = DetectionFirmware();
+  Emulator::Config config;
+  config.cartridgeFirmware = firmware;
   struct Fixture {
     uint8_t mode, type, maker;
     EnhancementChip chip;
@@ -410,10 +423,11 @@ void DetectionAndReload() {
                         : f.chip == EnhancementChip::St018 ? 2
                         : f.chip == EnhancementChip::St010 ? 1
                                                            : 0;
-    auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr, firmware.get());
     Check(cart && cart->Header().chip == f.chip,
           "Chip detection uses device family, subtype and title");
-    auto emu = Load(Rom());
+    auto emu = std::make_unique<Emulator>(config);
+    Check(emu->LoadCartridge(Rom()), "The reload fixture starts with an ordinary cartridge");
     emu->GetBus().Write(0x7e0123, 0x5a);
     std::string error;
     Check(emu->LoadCartridge(bytes, &error) == f.supported,
@@ -430,7 +444,7 @@ void DetectionAndReload() {
   auto st011 = Rom(0x100000, 0x30, 0xf6);
   st011[0x7fbf] = 1;
   std::copy_n("2DAN MORITA SHOUGI", 18, st011.begin() + 0x7fc0);
-  Check(Cartridge::FromRomImage(st011, nullptr, nullptr, nullptr)->Header().chip ==
+  Check(Cartridge::FromRomImage(st011, nullptr, nullptr, nullptr, firmware.get())->Header().chip ==
             EnhancementChip::St011,
         "ST011 detection uses its identifying title");
   auto emu = Load(Rom());

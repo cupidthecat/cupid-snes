@@ -154,6 +154,116 @@ void EmbeddedImages() {
           "Embedded cartridge firmware takes precedence over external files");
   }
 }
+
+std::vector<uint8_t> RequiredRom(FirmwareKind kind) {
+  auto rom = Rom();
+  rom.resize(0x80000);
+  rom[0x7fd5] = 0x30;
+  rom[0x7fd7] = 9;
+  if (kind == FirmwareKind::Dsp3) {
+    rom[0x7fd6] = 5;
+    rom[0x7fda] = 0xb2;
+    std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+    const std::string title = "SD\xb6\xde\xdd\xc0\xde\xd1GX";
+    std::copy(title.begin(), title.end(), rom.begin() + 0x7fc0);
+  } else if (kind == FirmwareKind::St011) {
+    rom[0x7fd6] = 0xf6;
+    rom[0x7fbf] = 1;
+    std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+    const std::string title = "2DAN MORITA SHOUGI";
+    std::copy(title.begin(), title.end(), rom.begin() + 0x7fc0);
+  } else {
+    rom[0x7fd6] = 0xf5;
+    rom[0x7fbf] = 2;
+    rom[0x7fd8] = 3;
+  }
+  return rom;
+}
+
+std::vector<uint8_t> RequiredFirmware(FirmwareKind kind, uint8_t value) {
+  if (kind != FirmwareKind::St018)
+    return Firmware(kind, value);
+  std::vector<uint8_t> bytes(CartridgeFirmware::Size(kind));
+  const uint32_t program[]{0xe3a00101, 0xe3a01000 | value, 0xe5801000, 0xeafffffe};
+  for (unsigned i = 0; i < std::size(program); ++i)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      bytes[i * 4 + byte] = uint8_t(program[i] >> (byte * 8));
+  return bytes;
+}
+
+void RequiredFirmwareLoads() {
+  for (auto kind : {FirmwareKind::Dsp3, FirmwareKind::St011, FirmwareKind::St018}) {
+    const auto rom = RequiredRom(kind);
+    Files files;
+    const auto path = files.directory / "game.sfc";
+    files.Write(path, rom);
+    auto unrelated = std::make_shared<CartridgeFirmware>();
+    Check(unrelated->Set(FirmwareKind::Dsp1, Firmware(FirmwareKind::Dsp1, 0x18)),
+          "The catalog contains firmware for a different processor");
+    Emulator::Config config;
+    config.cartridgeFirmware = unrelated;
+    auto machine = std::make_unique<Emulator>(config);
+    auto ordinary = Rom();
+    ordinary[0x7fd6] = 2;
+    ordinary[0x7fd8] = 3;
+    Check(machine->LoadCartridge(ordinary), "An ordinary cartridge needs no processor firmware");
+    machine->StepFrame();
+    auto &bus = machine->GetBus();
+    bus.Write(0x7e1234, 0x5a);
+    bus.Write(0x700123, 0x6b);
+    const auto frame = machine->CurrentFrame();
+    const auto clocks = machine->CurrentMasterCycles();
+    const auto crc = machine->LoadedCartridge()->RomCrc32();
+    std::string error;
+    Check(!Cartridge::FromRomImage(rom, nullptr, nullptr, &error),
+          "A processor without a complete command model requires cartridge firmware");
+    Check(error.find(CartridgeFirmware::FileName(kind)) != std::string::npos,
+          "The missing-firmware error names the required file");
+    for (bool fromFile : {false, true}) {
+      error.clear();
+      const bool loaded = fromFile ? machine->LoadCartridgeFromFile(path.string(), &error)
+                                   : machine->LoadCartridge(rom, &error);
+      Check(!loaded && error.find(CartridgeFirmware::FileName(kind)) != std::string::npos,
+            "Memory and file loaders report missing firmware even with an unrelated catalog");
+      Check(machine->CurrentFrame() == frame && machine->CurrentMasterCycles() == clocks &&
+                machine->LoadedCartridge()->RomCrc32() == crc && bus.Read(0x7e1234) == 0x5a &&
+                bus.Read(0x700123) == 0x6b,
+            "Missing firmware preserves the running cartridge, clocks, work RAM, and save RAM");
+    }
+
+    auto catalog = std::make_shared<CartridgeFirmware>();
+    Check(catalog->Set(kind, RequiredFirmware(kind, 0x18)),
+          "Generated firmware enters the catalog");
+    auto external = Cartridge::FromRomImage(rom, nullptr, nullptr, &error, catalog.get());
+    Check(external && (kind == FirmwareKind::St018 ? external->HasArmProcessor()
+                                                   : external->HasSignalProcessor()),
+          "Supplied firmware selects the cartridge processor");
+    external->AdvanceHardware(70000);
+    const uint32_t port = kind == FirmwareKind::Dsp3    ? 0x308000
+                          : kind == FirmwareKind::St011 ? 0x600000
+                                                        : 0x3800;
+    Check(external->Read(port) == 0x18, "The selected processor executes supplied firmware");
+
+    auto embedded = rom;
+    const auto program = RequiredFirmware(kind, 0x6a);
+    embedded.insert(embedded.end(), program.begin(), program.end());
+    auto combined = Cartridge::FromRomImage(embedded, nullptr, nullptr, &error, catalog.get());
+    Check(combined && combined->RomData().size() == rom.size() &&
+              combined->RomCrc32() == external->RomCrc32(),
+          "Required embedded firmware is separated from the cartridge ROM and checksum");
+    combined->AdvanceHardware(70000);
+    Check(combined->Read(port) == 0x6a,
+          "Required embedded firmware takes precedence over the catalog");
+
+    files.Write(files.Folder("firmware") / CartridgeFirmware::FileName(kind), program);
+    auto adjacent = std::make_unique<Emulator>();
+    Check(adjacent->LoadCartridgeFromFile(path.string(), &error),
+          "The file loader discovers required firmware beside the game");
+    adjacent->StepFrame();
+    Check(adjacent->GetBus().Read(port) == 0x6a,
+          "Adjacent required firmware runs through the console bus");
+  }
+}
 } // namespace
 
 int main() {
@@ -161,6 +271,7 @@ int main() {
     CatalogValidation();
     AdjacentFiles();
     EmbeddedImages();
+    RequiredFirmwareLoads();
     std::puts("Cartridge firmware asset tests passed");
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

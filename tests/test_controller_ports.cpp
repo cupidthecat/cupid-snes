@@ -119,6 +119,46 @@ void PadsAndPolling() {
         "Legacy single-player providers do not duplicate input on port two");
 }
 
+void GamepadLatchEdges() {
+  Input input;
+  auto emu = Machine(input);
+  auto &bus = emu->GetBus();
+  bus.Write(0x4016, 1);
+  input.pads[0].b = input.pads[1].b = true;
+  Check((bus.Read(0x4016) & 1) && (bus.Read(0x4017) & 1),
+        "Both gamepads report a new B press while latch remains high");
+  input.pads[0].b = false;
+  Check(!(bus.Read(0x4016) & 1) && (bus.Read(0x4017) & 1),
+        "Latch-high B reads follow independent button releases");
+  input.pads[0].y = input.pads[0].a = true;
+  input.pads[1] = {};
+  input.pads[1].start = input.pads[1].r = true;
+  bus.Write(0x4016, 0);
+  input.pads = {};
+  Check(Packet(bus, 0, 16) == 0x4080 && Packet(bus, 1, 16) == 0x1010,
+        "Packets capture buttons on latch falling and retain them after release");
+
+  emu->GetAutoJoypad().Ports().Configure(1, ControllerDevice::Multitap, {1, 2, 3, 4});
+  bus.Write(0x4016, 1);
+  input.pads[1].y = true;
+  bus.Write(0x4016, 0);
+  input.pads[1] = {};
+  Check(Packet(bus, 1, 16) == 0x4000,
+        "Multitap pads capture button changes on the same falling latch edge");
+
+  auto &poller = emu->GetAutoJoypad();
+  poller.Reset();
+  bus.Write(0x4200, 1);
+  poller.Tick128(256, 225, 225, true);
+  input.pads[0].b = input.pads[0].y = true;
+  poller.Tick128(512, 226, 225, true);
+  input.pads[0] = {};
+  for (unsigned phase = 2; phase <= 33; ++phase)
+    poller.Tick128(512, 226, 225, true);
+  Check(poller.Joy1() == 0xc000,
+        "Automatic polling samples button changes during its latch interval");
+}
+
 void Mouse() {
   Input input;
   auto emu = Machine(input);
@@ -194,6 +234,7 @@ void Multitap() {
 int main() {
   try {
     PadsAndPolling();
+    GamepadLatchEdges();
     Mouse();
     Multitap();
     std::printf("%u controller checks passed\n", checks);

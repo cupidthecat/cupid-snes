@@ -57,6 +57,10 @@ void RetainedSave(Cartridge &cart, uint8_t coldValue) {
         "Oversized saves truncate without changing the storage allocation");
 }
 void BoardDefaults() {
+  CartridgeFirmware firmware;
+  Check(firmware.Set(FirmwareKind::St018,
+                     std::vector<uint8_t>(CartridgeFirmware::Size(FirmwareKind::St018))),
+        "The ARM storage fixture provides a complete zero-operation firmware image");
   struct Board {
     uint8_t mode, type;
     size_t size, ram;
@@ -69,7 +73,7 @@ void BoardDefaults() {
                            Board{0x35, 0x55, 0x500000, 8192}, Board{0x3a, 0xf5, 0x300000, 8192},
                            Board{0x30, 0x25, 0x100000, 8192}}) {
     auto cart = Cartridge::FromRomImage(Image(board.mode, board.type, board.size), nullptr, nullptr,
-                                        nullptr);
+                                        nullptr, &firmware);
     Check(cart && cart->SramData().size() == board.ram, "The board exposes its physical RAM size");
     if (board.ram)
       RetainedSave(*cart, 255);

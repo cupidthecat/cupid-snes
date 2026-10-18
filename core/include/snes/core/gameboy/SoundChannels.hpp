@@ -76,7 +76,7 @@ private:
   bool deferTrigger_ = false;
 
   void Power(bool enabled);
-  void Tick();
+  void Tick(uint64_t windowBegin, uint64_t windowEnd);
   void Trigger(unsigned channel);
   void SetControl(unsigned channel, uint8_t previous, uint8_t value);
   void ClockFrame(int phaseOffset = 0);

@@ -93,25 +93,32 @@ void Dsp1StatusBytes() {
 }
 
 void CommandBuses() {
-  auto machine = std::make_unique<Emulator>();
+  auto firmware = std::make_shared<CartridgeFirmware>();
+  std::vector<uint8_t> bytes(CartridgeFirmware::Size(FirmwareKind::Dsp3));
+  const uint32_t instructions[]{
+      0xc00000 | (0x400 << 6) | 7,        0xc00000 | (0x34 << 6) | 6,
+      0x800000 | (0xbe << 13) | (2 << 2), 9 << 4 | 3,
+      0xc00000 | (0xa5 << 6) | 6,         0x800000 | (0x100 << 13) | (5 << 2)};
+  for (unsigned i = 0; i < std::size(instructions); ++i)
+    for (unsigned byte = 0; byte < 3; ++byte)
+      bytes[i * 3 + byte] = uint8_t(instructions[i] >> (byte * 8));
+  Check(firmware->Set(FirmwareKind::Dsp3, bytes), "Generated DSP-3 handshake firmware loads");
+  Emulator::Config config;
+  config.cartridgeFirmware = firmware;
+  auto machine = std::make_unique<Emulator>(config);
   Program hex;
   hex.Read(0x20c000, 0);
-  hex.Write(0x208000, 6);
-  hex.PortWord(0xa08000, 0x1010);
-  hex.Write(0xbf8000, 3);
-  hex.PortWord(0x208000, 0x0304);
   hex.Read(0xa08000, 1);
-  hex.Read(0x3f8000, 2);
-  hex.Read(0xbfc000, 3);
+  hex.Read(0xbfc000, 2);
+  hex.Read(0x3f8000, 3);
   auto hexBoard = Rom(0x30, 5, 0xb2);
   hexBoard[0x7fd8] = 5;
   hex.Run(*machine, std::move(hexBoard));
   auto &bus = machine->GetBus();
-  Check(bus.Read(0) == 0x84 && bus.Read(1) == 52 && bus.Read(2) == 0 && bus.Read(3) == 0x84,
-        "DSP-3 consumes mirrored command bytes and returns the hex-grid index through the console "
-        "bus");
+  Check(bus.Read(0) == 0x84 && bus.Read(1) == 0x34 && bus.Read(2) == 0x84 && bus.Read(3) == 0xa5,
+        "DSP-3 firmware resumes after CPU acknowledgement across mirrored host ports");
   bus.Write(0x7e1000, 0x5a);
-  Check(bus.Read(0x409000) == 0x5a && bus.Read(0x208000) == 0x80,
+  Check(bus.Read(0x409000) == 0x5a && bus.Read(0x208000) == 0xa5,
         "DSP-3 mapping retains open bus in unused full banks");
 
   Program road;

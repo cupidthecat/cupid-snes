@@ -32,11 +32,11 @@ A directory may contain any subset of these files. A present file with an incorr
 
 The loader selects DSP-1 for Pilotwings and DSP-1B for other DSP-1 cartridges. Cartridge header fields select the other families. A combined ROM image may append its processor firmware after the game bytes. The loader separates that trailer before calculating the cartridge CRC. Embedded firmware takes precedence over external files.
 
-Without the selected firmware, the existing command models remain available. Their behavior and limits are described in [cartridge devices](cartridge-devices.md), [original hardware support](original-hardware.md), and [ST010 support](st010.md). Supplying firmware enables instruction execution and timed host handshakes instead of immediate command completion.
+DSP-3, ST011, and ST018 require firmware. If it is missing, loading stops with the required filename and preserves the running game. DSP-1, DSP-2, DSP-4, and ST010 retain their command models without firmware. Their behavior and limits are described in [cartridge devices](cartridge-devices.md), [original hardware support](original-hardware.md), and [ST010 support](st010.md). Supplying firmware enables instruction execution and timed host handshakes instead of immediate command completion.
 
 ## Board addressing
 
-DSP-1 through DSP-4 use the same physical board layout in firmware and command modes. The table also lists the clocked ST010, ST011, and ST018 layouts:
+DSP-1 through DSP-4 share the physical board layouts below. DSP-1, DSP-2, and DSP-4 use those layouts in both firmware and command modes. The table also lists the clocked ST010, ST011, and ST018 layouts:
 
 | Board | Data and status ports | Battery or work RAM |
 | --- | --- | --- |

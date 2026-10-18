@@ -103,17 +103,22 @@ void ControllerPorts::BeamPosition(uint16_t h, uint16_t v, uint16_t visibleLines
 }
 
 void ControllerPorts::SetLatch(bool high) {
-  if (high && !latch_) {
-    PollLightGuns();
+  if (high != latch_) {
+    if (high)
+      PollLightGuns();
     for (unsigned index = 0; index < ports_.size(); ++index) {
       auto &port = ports_[index];
       port.positions = {};
       if (port.device == ControllerDevice::Gamepad || port.device == ControllerDevice::Multitap) {
+        if (high)
+          continue;
         for (unsigned pad = 0; pad < (port.device == ControllerDevice::Multitap ? 4u : 1u); ++pad) {
           port.pads[pad] = port.players[pad] >= 0 && padInput_
                                ? AutoJoypad::InputStateToSnesFormat(padInput_(port.players[pad]))
                                : 0;
         }
+      } else if (!high) {
+        continue;
       } else if (port.device == ControllerDevice::SuperScope) {
         const auto &gun = port.guns[0];
         if (port.scopePending & 0x80)
@@ -176,7 +181,8 @@ uint8_t ControllerPorts::Read(unsigned index) {
           (port.mousePacket & ~uint32_t(0x00300000)) | (uint32_t(port.sensitivity) << 20);
       return 0;
     }
-    return (port.pads[0] >> 15) & 1;
+    const auto player = port.players[0];
+    return player >= 0 && padInput_ && padInput_(player).b;
   }
 
   const unsigned pair =

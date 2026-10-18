@@ -49,9 +49,9 @@ struct System final : Audio::Output, ClockedIo::Bus {
       audio.AdvanceTo(clock);
     }
   }
-  void StepBatched(unsigned clocks) {
+  void StepBatched(unsigned clocks, unsigned batchClocks = 64) {
     while (clocks) {
-      const auto count = std::min(clocks, 64u);
+      const auto count = std::min(clocks, batchClocks);
       for (unsigned i = 0; i < count; ++i) {
         ++clock;
         divider.Advance(1);
@@ -369,6 +369,31 @@ void DividerClocksRemainInBatchBudget() {
               "Divider-driven clocks remain in the sound batch budget across processor resets");
       }
 }
+void SweepOverflowAcrossBusBatches() {
+  constexpr std::array<std::array<uint64_t, 2>, 2> expected{
+      {{0x7d3dfafd92777019ull, 0x8cbb79a6a039f819ull},
+       {0x40f8542faafbf3f5ull, 0x570720aaa1cbbc29ull}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned phase = 0; phase < 2; ++phase) {
+      System system(model != 0);
+      system.audio.Write(0xff26, 0);
+      system.divider.Write(0xff04, 0);
+      system.StepBatched(phase * 4, 8);
+      for (const auto [address, value] : std::array<std::array<uint16_t, 2>, 8>{{{0xff26, 0x80},
+                                                                                 {0xff24, 0x77},
+                                                                                 {0xff25, 0x55},
+                                                                                 {0xff10, 0x26},
+                                                                                 {0xff11, 0xc0},
+                                                                                 {0xff12, 0xc2},
+                                                                                 {0xff13, 0x80},
+                                                                                 {0xff14, 0x86}}})
+        system.audio.Write(address, uint8_t(value));
+      system.StepBatched(1048576, 8);
+      Check(system.samples.size() == (model ? 8192u : 8191u) &&
+                system.Digest() == expected[model][phase],
+            "Sweep overflow retains its filter phase across an eight-clock bus step");
+    }
+}
 } // namespace
 
 int main() {
@@ -385,6 +410,7 @@ int main() {
     DelayedNoiseSampleBoundaries();
     NoiseActivationAtSampleBoundary();
     DividerClocksRemainInBatchBudget();
+    SweepOverflowAcrossBusBatches();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {

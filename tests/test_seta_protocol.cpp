@@ -102,31 +102,50 @@ std::vector<uint8_t> Image(uint8_t type) {
 }
 
 void CartridgeMaps() {
-  auto machine = std::make_unique<Emulator>();
-  Check(machine->LoadCartridge(Image(0xf6)), "ST011 image loads its supported command interface");
+  auto firmware = std::make_shared<CartridgeFirmware>();
+  std::vector<uint8_t> dsp(CartridgeFirmware::Size(FirmwareKind::St011));
+  const uint32_t instructions[]{0xc00000 | (0x400 << 6) | 7, 0xc00000 | (0x6a << 6) | 6};
+  for (unsigned i = 0; i < std::size(instructions); ++i)
+    for (unsigned byte = 0; byte < 3; ++byte)
+      dsp[i * 3 + byte] = uint8_t(instructions[i] >> (byte * 8));
+  std::vector<uint8_t> arm(CartridgeFirmware::Size(FirmwareKind::St018));
+  const uint32_t program[]{0xe3a00101, 0xe3a0102a, 0xe5801000, 0xe5801010, 0xeafffffe};
+  for (unsigned i = 0; i < std::size(program); ++i)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      arm[i * 4 + byte] = uint8_t(program[i] >> (byte * 8));
+  Check(firmware->Set(FirmwareKind::St011, dsp) && firmware->Set(FirmwareKind::St018, arm),
+        "Generated programs supply both cartridge processors");
+  Emulator::Config config;
+  config.cartridgeFirmware = firmware;
+  auto machine = std::make_unique<Emulator>(config);
+  auto image = Image(0xf6);
+  image[0] = 0xdb;
+  Check(machine->LoadCartridge(image), "ST011 loads its clocked processor interface");
   auto &bus = machine->GetBus();
   Check(machine->LoadedCartridge()->Header().chip == EnhancementChip::St011 &&
             machine->LoadedCartridge()->Header().mapping == MappingType::St011,
         "ST011 keeps a distinct board type");
   bus.Write(0x68012c, 0x21);
-  bus.Write(0x600000, 4);
-  Check(bus.Read(0x680001) == 0xff && bus.Read(0x70012c) == 0,
-        "ST011 command and RAM windows share cartridge storage");
-  bus.Write(0x700002, 0x64);
+  Check(bus.Read(0xe8012c) == 0x21 && bus.Read(0x68112c) == 0x21,
+        "ST011 processor RAM shares its physical byte across CPU mirrors");
+  bus.Write(0x680002, 0x64);
   bus.Write(0x601002, 0x31);
-  Check(bus.Read(0x700002) == 0x64 && bus.Read(0x681002) == 0x31,
-        "ST011 extra work RAM is separate from ordinary SRAM mirrors");
+  Check(bus.Read(0x680002) == 0x64, "ST011 host data writes do not alias processor RAM");
+  machine->StepFrame();
+  Check(bus.Read(0x600001) == 0x84 && bus.Read(0xe00000) == 0x6a,
+        "Firmware controls the mirrored ST011 status and data ports");
   Check(machine->LoadedCartridge()->SramData().size() == 4096,
-        "Only the board's 4 KiB battery storage is persisted");
-  Check(machine->LoadCartridge(Image(0xf5)), "ST018 image loads its supported startup interface");
+        "ST011 persists its physical 4 KiB processor RAM");
+  image = Image(0xf5);
+  image[0] = 0xdb;
+  Check(machine->LoadCartridge(image), "ST018 loads its clocked ARM interface");
   bus.Write(0x700802, 0x76);
-  bus.Write(0x803804, 0);
-  bus.Write(0x003804, 1);
-  bus.Write(0xbf3804, 0);
-  Check(bus.Read(0x003804) == 0x81 && bus.Read(0xbf3800) == 0,
-        "ST018 status and data ports mirror through system banks");
+  Check(bus.Read(0x003804) == 0, "The ST018 processor starts before its boot delay");
+  machine->StepFrame();
+  Check(bus.Read(0x803804) == 0x85 && bus.Read(0xbf3800) == 0x2a,
+        "ST018 firmware status and data ports mirror through system banks");
   bus.Write(0x003802, 0);
-  Check(bus.Read(0x700802) == 0x76 && bus.Read(0x008000) == 0xea,
+  Check(bus.Read(0x700802) == 0x76 && bus.Read(0x008001) == 0xea,
         "ST018 port writes preserve saved data and LoROM mapping");
 }
 } // namespace
@@ -139,6 +158,5 @@ int main() {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }
-  std::puts(
-      "ST011 packet and ST018 startup protocol checks passed; internal processors are not covered");
+  std::puts("SETA command fixtures and clocked cartridge mapping checks passed");
 }

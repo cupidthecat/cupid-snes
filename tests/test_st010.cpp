@@ -191,15 +191,18 @@ void CartridgeMapping() {
   Check(cart->Read(0x680123) == 0x69 && cart->Read(0x700010) == 42,
         "Save restoration shares device RAM");
   Check(cart->Read(0x680020) == 0, "Save loading does not enable command registers");
-  const auto sibling = Rom(9);
+  auto sibling = Rom(9);
   std::string error;
   Check(!emu->LoadCartridge(std::span<const uint8_t>(image).first(4096), &error),
         "Truncated cartridge is rejected");
   Check(bus.Read(0x680123) == 0x69, "Rejected cartridge preserves the loaded machine");
+  Check(!emu->LoadCartridge(sibling, &error) && error.find("st011.rom") != std::string::npos,
+        "The ST011 sibling requires its own firmware instead of using ST010 commands");
+  sibling.resize(sibling.size() + CartridgeFirmware::Size(FirmwareKind::St011), 0);
   Check(emu->LoadCartridge(sibling) &&
             emu->LoadedCartridge()->Header().chip == EnhancementChip::St011 &&
-            bus.Read(0x600001) == 0xff,
-        "Sibling board selects its distinct ST011 packet interface");
+            emu->LoadedCartridge()->HasSignalProcessor() && bus.Read(0x600001) == 0,
+        "Sibling firmware selects the ST011 processor interface");
   Check(emu->LoadCartridge(image), "Reload ST010");
   bus.Write(0x680020, 6);
   bus.Write(0x680021, 0x80);

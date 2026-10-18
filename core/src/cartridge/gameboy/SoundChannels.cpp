@@ -546,7 +546,7 @@ void SoundChannels::DividerEdge(bool rising, uint64_t clock) {
   }
 }
 
-void SoundChannels::Tick() {
+void SoundChannels::Tick(uint64_t windowBegin, uint64_t windowEnd) {
   if (stopped_) {
     if (noisePending_)
       noiseStart_ += 4;
@@ -563,7 +563,8 @@ void SoundChannels::Tick() {
     if (sweepStop_ && end >= sweepStop_) {
       Disable(0);
       sweepStop_ = 0;
-      Emit(end, -8);
+      // Keep the filter phase independent of the tick that detects completion.
+      Emit(end, -int(end - windowBegin) - int(windowEnd - windowBegin));
     }
     if (dividerEvent_ && end >= dividerEvent_) {
       dividerEvent_ = 0;
@@ -616,10 +617,11 @@ void SoundChannels::AdvanceTo(uint64_t clock, bool deferTrigger) {
   if (!deferTrigger)
     CommitPendingTrigger();
   deferTrigger_ = deferTrigger;
+  const auto begin = clocks_;
   clocks_ = std::max(clocks_, clock);
   while (audioClock_ + 4 <= clocks_) {
     audioClock_ += 4;
-    Tick();
+    Tick(begin, clocks_);
   }
   deferTrigger_ = false;
 }

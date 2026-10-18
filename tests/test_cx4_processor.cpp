@@ -189,6 +189,9 @@ void FirmwareSelectionAndFastRom() {
   std::fill_n(image.begin() + 0x7fc0, 21, ' ');
   constexpr char title[] = "2DAN MORITA SHOUGI";
   std::copy(std::begin(title), std::end(title) - 1, image.begin() + 0x7fc0);
+  for (auto kind : {FirmwareKind::St011, FirmwareKind::St018})
+    Check(firmware.Set(kind, std::vector<uint8_t>(CartridgeFirmware::Size(kind))),
+          "Other processor subtypes provide their own complete firmware images");
   auto shogi = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, &firmware);
   Check(shogi && shogi->Header().chip == EnhancementChip::St011,
         "The shogi cartridge selects the correct extended signal-processor revision");

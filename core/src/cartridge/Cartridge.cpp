@@ -408,6 +408,14 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
                              : firmwareKind && firmware ? firmware->Find(*firmwareKind)
                                                         : std::span<const uint8_t>{};
+  if (firmwareBytes.empty() &&
+      (firmwareKind == FirmwareKind::Dsp3 || firmwareKind == FirmwareKind::St011 ||
+       firmwareKind == FirmwareKind::St018)) {
+    if (error)
+      *error = std::string("Missing cartridge firmware for ") + ChipName(cart.header_.chip) + ": " +
+               CartridgeFirmware::FileName(*firmwareKind);
+    return std::nullopt;
+  }
   const bool seta =
       cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
   const auto board = seta                                         ? NecDsp::Board::Seta
