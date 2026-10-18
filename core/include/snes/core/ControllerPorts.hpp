@@ -64,9 +64,8 @@ private:
     std::array<int, 4> players{};
     std::array<uint16_t, 4> pads{};
     std::array<unsigned, 2> positions{};
-    uint32_t mousePacket = 0;
+    uint32_t mousePacket = 0x00010000;
     uint8_t sensitivity = 0;
-    int64_t pendingX = 0, pendingY = 0;
     std::array<LightGunState, 2> guns{};
     uint8_t scopePending = 0, scopePacket = 0;
     uint8_t justifierPacket = 0;

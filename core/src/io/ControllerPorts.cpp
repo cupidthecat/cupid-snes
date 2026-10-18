@@ -2,6 +2,7 @@
 #include "snes/core/AutoJoypad.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace snes::core {
@@ -117,6 +118,21 @@ void ControllerPorts::SetLatch(bool high) {
                                ? AutoJoypad::InputStateToSnesFormat(padInput_(port.players[pad]))
                                : 0;
         }
+      } else if (port.device == ControllerDevice::Mouse) {
+        const auto state = mouseInput_ ? mouseInput_(index) : MouseState{};
+        const auto movement = [&](int32_t delta) {
+          const auto magnitude =
+              std::min<int64_t>(127, std::abs(int64_t(delta)) * (2 + port.sensitivity) / 2);
+          return uint8_t(magnitude | (delta < 0 ? 0x80 : 0));
+        };
+        const uint8_t buttons =
+            1 | (port.sensitivity << 4) | (state.left ? 0x40 : 0) | (state.right ? 0x80 : 0);
+        port.mousePacket =
+            (uint32_t(buttons) << 16) | (uint32_t(movement(state.dy)) << 8) | movement(state.dx);
+      } else if (port.device == ControllerDevice::Justifier ||
+                 port.device == ControllerDevice::Justifiers) {
+        if (!high)
+          port.selectSecond = !port.selectSecond;
       } else if (!high) {
         continue;
       } else if (port.device == ControllerDevice::SuperScope) {
@@ -127,29 +143,6 @@ void ControllerPorts::SetLatch(bool high) {
           port.scopePending = uint8_t((port.scopePending & ~2) | (gun.offscreen ? 2 : 0));
         port.scopePacket = port.scopePending;
         port.scopePending &= uint8_t(~(gun.turbo ? 0x10 : 0xd0));
-      } else if (port.device == ControllerDevice::Justifier ||
-                 port.device == ControllerDevice::Justifiers) {
-        port.selectSecond = !port.selectSecond;
-        const auto &first = port.guns[0];
-        const auto &second = port.guns[1];
-        port.justifierPacket = uint8_t((first.trigger ? 0x80 : 0) | (first.start ? 0x20 : 0) |
-                                       (port.selectSecond ? 8 : 0));
-        if (port.device == ControllerDevice::Justifiers)
-          port.justifierPacket |= uint8_t((second.trigger ? 0x40 : 0) | (second.start ? 0x10 : 0));
-      } else if (port.device == ControllerDevice::Mouse) {
-        const auto state = mouseInput_ ? mouseInput_(index) : MouseState{};
-        port.pendingX += state.dx;
-        port.pendingY += state.dy;
-        const auto movement = [](int64_t &pending) {
-          const int delta = static_cast<int>(std::clamp(pending, int64_t(-127), int64_t(127)));
-          pending -= delta;
-          return static_cast<uint8_t>(delta < 0 ? 0x80 | -delta : delta);
-        };
-        const auto x = movement(port.pendingX);
-        const auto y = movement(port.pendingY);
-        const uint8_t buttons =
-            1 | (port.sensitivity << 4) | (state.left ? 0x40 : 0) | (state.right ? 0x80 : 0);
-        port.mousePacket = (uint32_t(buttons) << 16) | (uint32_t(y) << 8) | x;
       }
     }
   }
@@ -171,8 +164,6 @@ uint8_t ControllerPorts::Read(unsigned index) {
   if (latch_) {
     if (port.device == ControllerDevice::SuperScope)
       return port.scopePacket >> 7;
-    if (port.device == ControllerDevice::Justifier || port.device == ControllerDevice::Justifiers)
-      return 0;
     if (port.device == ControllerDevice::Multitap)
       return 2;
     if (port.device == ControllerDevice::Mouse) {
@@ -181,8 +172,10 @@ uint8_t ControllerPorts::Read(unsigned index) {
           (port.mousePacket & ~uint32_t(0x00300000)) | (uint32_t(port.sensitivity) << 20);
       return 0;
     }
-    const auto player = port.players[0];
-    return player >= 0 && padInput_ && padInput_(player).b;
+    if (port.device == ControllerDevice::Gamepad) {
+      const auto player = port.players[0];
+      return player >= 0 && padInput_ && padInput_(player).b;
+    }
   }
 
   const unsigned pair =
@@ -193,6 +186,15 @@ uint8_t ControllerPorts::Read(unsigned index) {
     data = position < 8 ? (port.scopePacket >> (7 - position)) & 1 : 1;
   } else if (port.device == ControllerDevice::Justifier ||
              port.device == ControllerDevice::Justifiers) {
+    if (position == 0) {
+      const auto first = gunInput_ ? gunInput_(index, 0) : LightGunState{};
+      port.justifierPacket = uint8_t((first.trigger ? 0x80 : 0) | (first.start ? 0x20 : 0) |
+                                     (port.selectSecond ? 8 : 0));
+      if (port.device == ControllerDevice::Justifiers) {
+        const auto second = gunInput_ ? gunInput_(index, 1) : LightGunState{};
+        port.justifierPacket |= uint8_t((second.trigger ? 0x40 : 0) | (second.start ? 0x10 : 0));
+      }
+    }
     const uint32_t packet = 0x000e5500 | port.justifierPacket;
     data = position < 32 ? (packet >> (31 - position)) & 1 : 1;
   } else if (port.device == ControllerDevice::Mouse) {

@@ -29,7 +29,7 @@ Aiming follows the centered picture when the window resizes. Letterbox borders c
 
 Scope packets contain eight button/status bits followed by ones. Normal fire, cursor, and pause are reported once per press. Turbo repeats fire and cursor while held; pause remains a single event. A high strobe holds the first packet bit.
 
-Justifier packets contain the identification prefix, separate trigger and Start bits, and a selection bit that alternates on each rising strobe. A pair shares one serial port, with only the selected gun providing beam coordinates. Selecting the absent second gun in single-gun mode produces no beam latch. Reads after the 32-bit packet return one. The rifle exposes its live trigger level without a shift register.
+Justifier packets contain the identification prefix, separate trigger and Start bits, and a selection bit that alternates on each falling strobe. Both strobe transitions restart the serial packet. Its first read captures the buttons, and reads advance even while the strobe stays high. A pair shares one serial port, with only the selected gun providing beam coordinates. Selecting the absent second gun in single-gun mode produces no beam latch. Reads after the 32-bit packet return one. The rifle exposes its live trigger level without a shift register.
 
 Manual reads and automatic joypad polling share the same packets and positions. Gun hits pull RDIO bit 7 low at the beam position and latch the PPU counters when WRIO bit 7 allows input. Only console port two has this PPU connection. Scope shots arm the beam independently of packet consumption, so reading a shot before the beam arrives does not discard its position. Offscreen positions do not latch.
 

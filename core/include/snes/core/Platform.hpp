@@ -75,7 +75,7 @@ public:
   virtual InputState PollController(int player, uint64_t frameIndex) {
     return player == 0 ? Poll(frameIndex) : InputState{};
   }
-  // Relative movement is consumed once when the console latches the mouse.
+  // Return the current movement snapshot, sampled on both mouse latch transitions.
   virtual MouseState PollMouse(int /*port*/, uint64_t /*frameIndex*/) {
     return {};
   }

@@ -72,7 +72,10 @@ snes::core::InputState SdlInputProvider::PollController(int player, uint64_t fra
   return state;
 }
 
-snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t /*frameIndex*/) {
+snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameIndex) {
+  if (lastMouseFrame_ == frameIndex)
+    return mouseState_;
+  lastMouseFrame_ = frameIndex;
   float x = 0, y = 0;
   const auto buttons = SDL_GetRelativeMouseState(&x, &y);
   mouseFractionX_ += x;
@@ -84,7 +87,8 @@ snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t /*fram
       static_cast<int32_t>(std::clamp(std::trunc(mouseFractionY_), -1000000.0f, 1000000.0f));
   mouseFractionX_ -= dx;
   mouseFractionY_ -= dy;
-  return {dx, dy, (buttons & SDL_BUTTON_LMASK) != 0, (buttons & SDL_BUTTON_RMASK) != 0};
+  mouseState_ = {dx, dy, (buttons & SDL_BUTTON_LMASK) != 0, (buttons & SDL_BUTTON_RMASK) != 0};
+  return mouseState_;
 }
 
 snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {

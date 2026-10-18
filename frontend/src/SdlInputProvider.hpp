@@ -96,6 +96,8 @@ private:
   void RefreshGamepads(uint64_t frameIndex);
   uint64_t lastDeviceFrame_ = uint64_t(-1);
   float mouseFractionX_ = 0, mouseFractionY_ = 0;
+  snes::core::MouseState mouseState_;
+  uint64_t lastMouseFrame_ = uint64_t(-1);
   VideoViewport gunViewport_;
   bool gunFocused_ = false;
   bool scopeTurbo_ = false, turboKeyDown_ = false;

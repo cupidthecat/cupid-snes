@@ -96,6 +96,33 @@ void JustifierPackets() {
   }
 }
 
+void JustifierReadBoundaries() {
+  for (bool paired : {false, true}) {
+    ControllerPorts ports;
+    std::array<LightGunState, 2> input;
+    ports.Configure(1, paired ? ControllerDevice::Justifiers : ControllerDevice::Justifier);
+    ports.SetGunCallback([&](int, int gun) { return input[gun]; });
+    ports.SetLatch(true);
+    Check(ports.Read(1) == 0, "First Justifier bit captures released buttons");
+    for (auto &gun : input)
+      gun.trigger = gun.start = true;
+    Check(
+        Packet(ports, 31) == 0x000e5500,
+        "Justifier shifts its full packet while latch is high and retains its first-read buttons");
+    Check(ports.Read(1) == 1, "Justifier latch-high reads saturate after the packet");
+
+    ports.SetLatch(false);
+    Check(
+        Packet(ports, 32) == (paired ? 0x000e55f8u : 0x000e55a8u),
+        "Justifier falling latch selects the next gun and its first read samples current buttons");
+    ports.SetLatch(true);
+    for (auto &gun : input)
+      gun.trigger = gun.start = false;
+    Check(Packet(ports, 32) == 0x000e5508,
+          "Justifier rising latch resets the packet without changing gun selection");
+  }
+}
+
 void RiflePackets() {
   ControllerPorts ports;
   LightGunState input;
@@ -279,6 +306,7 @@ int main() {
   try {
     ScopePackets();
     JustifierPackets();
+    JustifierReadBoundaries();
     RiflePackets();
     BeamLatches();
     GunSelectionAndPorts();
