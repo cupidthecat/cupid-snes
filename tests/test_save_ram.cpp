@@ -4,6 +4,7 @@
 #include "snes/core/BsMemory.hpp"
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Timing.hpp"
+#include "snes/core/gameboy/Cartridge.hpp"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <cstdio>
@@ -52,6 +53,42 @@ int main() {
     }
     check(rejected, "Reject a save with the wrong size");
     check(SaveRamFile(path).Load(data.size()) == data, "Rejecting a save preserves its contents");
+    std::vector<uint8_t> handheldImage(32768);
+    handheldImage[0x147] = 0x10;
+    handheldImage[0x149] = 2;
+    snes::core::gameboy::Cartridge handheld;
+    handheld.SetTimeSource([] { return 1700000000; });
+    check(handheld.Load(handheldImage), "The handheld clock cartridge loads");
+    handheld.Write(0, 0x0a);
+    handheld.Write(0xa123, 0x63);
+    const auto handheldData = handheld.SaveBattery();
+    for (unsigned clockBytes : {0, 13, 44, 48}) {
+      std::vector<uint8_t> legacy(handheldData.begin(), handheldData.begin() + 8192);
+      legacy.resize(8192 + clockBytes);
+      if (clockBytes == 13) {
+        for (unsigned digit = 0; digit < 5; ++digit)
+          legacy[8192 + digit] = handheldData[8192 + digit * 4];
+        std::copy_n(handheldData.begin() + 8192 + 40, 8, legacy.begin() + 8192 + 5);
+      } else if (clockBytes)
+        std::copy_n(handheldData.begin() + 8192, clockBytes, legacy.begin() + 8192);
+      const auto handheldPath = directory / ("handheld-" + std::to_string(clockBytes) + ".sav");
+      SaveRamFile handheldSave(handheldPath);
+      handheldSave.Flush(legacy);
+      const auto loaded = handheldSave.LoadUpTo(handheldData.size());
+      check(loaded == legacy, "Supported handheld battery layouts retain their original bytes");
+      snes::core::gameboy::Cartridge restored;
+      restored.SetTimeSource([] { return 1700000000; });
+      check(restored.Load(handheldImage), "The handheld restore cartridge loads");
+      restored.LoadBattery(loaded);
+      const auto updated = restored.SaveBattery();
+      check(updated.size() == handheldData.size() && updated[0x123] == 0x63,
+            "Legacy handheld saves retain RAM when their clock trailer is upgraded");
+      if (clockBytes)
+        check(updated == handheldData, "Legacy clock layouts retain the full calendar state");
+      handheldSave.Flush(updated);
+      check(SaveRamFile(handheldPath).Load(updated.size()) == updated,
+            "An upgraded handheld battery replaces its earlier file atomically");
+    }
     int64_t now = 1700000000;
     snes::core::Srtc clock([&] { return now; });
     clock.Write(14);

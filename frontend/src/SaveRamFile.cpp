@@ -14,7 +14,20 @@ std::vector<uint8_t> SaveRamFile::Load(size_t expectedSize) {
     return {};
   if (std::filesystem::file_size(path_) != expectedSize)
     throw std::runtime_error("Save RAM file has the wrong size: " + path_.string());
-  std::vector<uint8_t> data(expectedSize);
+  return Read(expectedSize);
+}
+
+std::vector<uint8_t> SaveRamFile::LoadUpTo(size_t maximumSize) {
+  if (maximumSize == 0 || !std::filesystem::exists(path_))
+    return {};
+  const auto size = std::filesystem::file_size(path_);
+  if (size > maximumSize)
+    throw std::runtime_error("Battery save file is too large: " + path_.string());
+  return Read(static_cast<size_t>(size));
+}
+
+std::vector<uint8_t> SaveRamFile::Read(size_t size) {
+  std::vector<uint8_t> data(size);
   std::ifstream file(path_, std::ios::binary);
   if (!file.read(reinterpret_cast<char *>(data.data()), static_cast<std::streamsize>(data.size())))
     throw std::runtime_error("Cannot read save RAM: " + path_.string());
