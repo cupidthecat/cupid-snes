@@ -70,6 +70,7 @@ public:
     uint32_t entropySequence = 0;
     uint8_t cpuRevision = 2;
     Ppu::Config ppu;
+    bool gameCompatibilityFixes = true;
   };
 
   explicit Emulator();
@@ -196,7 +197,7 @@ private:
   void ResetHardware(bool warm);
   void AdvanceClocks(uint32_t clocks);
   void SynchronizeDevices(bool communication = false);
-  void ConfigureExpansionAudio();
+  void ConfigureAudioStreams();
   void AttachMsu1(const std::string &path);
   void SynchronizeExpansionAudio(uint64_t elapsed);
   void SynchronizeCoprocessors();
@@ -238,15 +239,13 @@ private:
   std::unique_ptr<Dsp2> dsp2_;
   std::unique_ptr<Srtc> srtc_;
   std::unique_ptr<Msu1> msu1_;
-  audio::StreamMixer expansionMixer_;
+  audio::StreamMixer audioMixer_;
   uint64_t msuSamplesClocked_ = 0;
 
   // Audio output buffer (stereo interleaved int16_t, enough for 1+ frames)
   static constexpr int kAudioBufSamples = 2048;
   std::array<int16_t, kAudioBufSamples * 2> audioBuf_{};
-  std::vector<int16_t> audioOverflow_;
   bool collectingAudio_ = false;
-  uint64_t nextSmpMasterClock_ = 0;
   uint64_t coprocessorsSyncedClock_ = 0;
   uint64_t coprocessorClockTarget_ = 0;
   uint64_t coprocessorCompletedClock_ = 0;

@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "audio/SoundClockExpectations.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -132,10 +133,10 @@ void RetainedMemoryAndRegisters() {
       machine->StepFrame();
     Check(output.frames == 3 && output.blocks == 3,
           "Reset retains output attachments across repeated fields");
-    const auto clocks = machine->CurrentMasterCycles() * Smp::kHardwareClockFrequency /
-                        machine->GetTiming().MasterClockHz();
-    Check(smp.HardwareClockCount() == clocks && output.samples == (clocks / 2 + 4) / 32,
-          "Sound restarts at the console deadline without sample drift");
+    const auto clocks = smp.HardwareClockCount();
+    Check(output.samples > 0 && output.samples == sound_clock_test::UnityStreamFrames(clocks) &&
+              dsp.Phase() == sound_clock_test::DspClocks(clocks) % 32,
+          "Sound reset restarts stream priming and the DSP half-cycle phase");
     Check(machine->GetTiming().MasterClockHz() ==
               (pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz),
           "Reset retains the cartridge region");

@@ -87,6 +87,18 @@ public:
   static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
   static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
 
+  // Select the audio oscillator before power or reset. DSP phase still uses
+  // 32 complete-cycle clocks per stereo frame.
+  void SetSampleRate(uint32_t rate) noexcept {
+    sampleRate_ = rate ? rate : AudioTiming::SampleRate;
+  }
+  uint32_t SampleRate() const noexcept {
+    return sampleRate_;
+  }
+  uint64_t HardwareClockFrequency() const noexcept {
+    return uint64_t(sampleRate_) * kDspSampleInterval * 2;
+  }
+
   // Batch execution - run SMP through exactly targetCycles.
   // Instructions may pause within stretched bus cycles at the deadline; Step()
   // remains available for callers that intentionally want a full instruction.
@@ -185,6 +197,7 @@ private:
   } busWait_{};
 
   uint64_t hardwareClocks_ = 0;
+  uint32_t sampleRate_ = AudioTiming::SampleRate;
   uint64_t synchronizationTarget_ = 0;
   uint32_t synchronizationPhase_ = 0, synchronizationFrequency_ = 1;
   bool synchronizingCpu_ = false, yieldedCpu_ = false;

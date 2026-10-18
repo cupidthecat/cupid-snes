@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "audio/SoundClockExpectations.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -207,23 +208,24 @@ void LongDmaAudio() {
   bool audible = false;
   for (unsigned frame = 0; frame < 15; ++frame) {
     emu->StepFrame();
-    const auto generated = (emu->GetSmp().CycleCount() + 4) / 32;
+    const auto generated = sound_clock_test::UnityStreamFrames(emu->GetSmp().HardwareClockCount());
     Check(output.calls == frame + 1 && output.last.sampleRate == AudioTiming::SampleRate &&
               output.last.interleavedStereo.size() == (generated - delivered) * 2 &&
               generated - delivered < 700,
           "A suspended DMA delivers every DSP sample in its own field");
     audible |=
         std::any_of(output.last.interleavedStereo.begin(), output.last.interleavedStereo.end(),
-                    [](float sample) { return sample != 0.0f; });
+                    [](float sample) { return sample > 1.0f / 32768 || sample < -1.0f / 32768; });
     delivered = generated;
   }
-  const auto before = emu->GetSmp().CycleCount();
+  const auto before = emu->GetSmp().HardwareClockCount();
   // Output occurs at phase 27, followed by one output every 32 SMP clocks.
-  const auto generated = (before + 4) / 32;
+  const auto generated = sound_clock_test::UnityStreamFrames(before);
   Check(!dma.AnyDmaEnabled() && generated > 2048 && audible,
         "Long DMA completes with audible samples preserved across its fields");
   emu->StepFrame();
-  const auto next = (emu->GetSmp().CycleCount() + 4) / 32 - generated;
+  const auto next =
+      sound_clock_test::UnityStreamFrames(emu->GetSmp().HardwareClockCount()) - generated;
   Check(output.calls == 16 && output.last.interleavedStereo.size() == next * 2 && next < 700,
         "The next frame contains only newly generated samples, with no stale overflow");
 }

@@ -230,21 +230,24 @@ void ClockedPrograms() {
   // Cold and warm PCM signatures include stream priming and the complete tail.
   constexpr std::array<std::array<std::array<uint64_t, 2>, 8>, 2> expected{
       {{{{0x4e3ef690b7abd1d5ull, 0x4e3ef690b7abd1d5ull},
-         {0xed86cdecf0b03fbdull, 0xed86cdecf0b03fbdull},
-         {0xde635dd03ebf9c56ull, 0xde635dd03ebf9c56ull},
-         {0x36f6be7442a981d3ull, 0x36f6be7442a981d3ull},
-         {0xa2ec8fe52ab5d223ull, 0xa2ec8fe52ab5d223ull},
-         {0xb3ee972dccfe248cull, 0xb3ee972dccfe248cull},
-         {0x0f71b37a16736cc4ull, 0x0f71b37a16736cc4ull},
-         {0xeafa5768144e47cfull, 0xeafa5768144e47cfull}}},
+         {0xdccec114ee9c321full, 0xdccec114ee9c321full},
+         {0xb585547aeec5a824ull, 0xb585547aeec5a824ull},
+         {0xc6823c52f339e45eull, 0xc6823c52f339e45eull},
+         {0xaa9079ab7ff28fbeull, 0xaa9079ab7ff28fbeull},
+         {0xfdb10ab5cc0e6c9dull, 0xfdb10ab5cc0e6c9dull},
+         {0x88151fc6d848fadfull, 0x88151fc6d848fadfull},
+         {0x80cff6c265f36ec9ull, 0x80cff6c265f36ec9ull}}},
        {{{0x0fc64e1d41598775ull, 0x0fc64e1d41598775ull},
-         {0xc587c1ec1c5eef74ull, 0xc587c1ec1c5eef74ull},
-         {0x8964ccf40ddf34eaull, 0x8964ccf40ddf34eaull},
-         {0x036b612ea35ec0a1ull, 0x036b612ea35ec0a1ull},
-         {0xdcf9869be6406a6aull, 0xdcf9869be6406a6aull},
-         {0x47209800efaf218cull, 0x47209800efaf218cull},
-         {0xea20e3dd37c94f12ull, 0xea20e3dd37c94f12ull},
-         {0x14139294d95950bfull, 0x14139294d95950bfull}}}}};
+         {0xd9dbc155d9af5619ull, 0xd9dbc155d9af5619ull},
+         {0x5691b97eab8e2b16ull, 0x5691b97eab8e2b16ull},
+         {0x25286a1a0e3bb9e3ull, 0x25286a1a0e3bb9e3ull},
+         {0xe57c2fda73e35c8aull, 0xe57c2fda73e35c8aull},
+         {0x4ee30e648613b509ull, 0x4ee30e648613b509ull},
+         {0x43d58e3760b8e359ull, 0x43d58e3760b8e359ull},
+         {0x4533c71669bc4069ull, 0x4533c71669bc4069ull}}}}};
+  constexpr std::array<std::array<size_t, 8>, 2> expectedFrames{
+      {{{8455u, 8455u, 8456u, 8455u, 8455u, 8455u, 8455u, 8455u}},
+       {{10073u, 10074u, 10073u, 10074u, 10074u, 10074u, 10074u, 10074u}}}};
   const std::array<std::vector<uint8_t>, 8> statuses{
       {{10, 2},
        {10, 2, 2, 2, 2, 2},
@@ -273,7 +276,7 @@ void ClockedPrograms() {
           if (!warm && frame == 7)
             hiddenPrefix = audio.samples.size();
         }
-        Check(audio.samples.size() == (pal ? 10073u : 8455u) * 2,
+        Check(audio.samples.size() == expectedFrames[pal][scene] * 2,
               "The independent input clocks deliver the complete regional stream");
         if (Digest(audio.samples) != expected[pal][scene][warm])
           throw std::runtime_error("MSU PCM signature differs for scene " + std::to_string(scene) +

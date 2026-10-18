@@ -181,9 +181,10 @@ int64_t Smp::CpuClockLead() const {
 
 void Smp::SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency) {
   synchronizationFrequency_ = masterFrequency;
-  const auto fraction = (masterClocks % masterFrequency) * kHardwareClockFrequency;
+  const auto hardwareHz = HardwareClockFrequency();
+  const auto fraction = (masterClocks % masterFrequency) * hardwareHz;
   synchronizationTarget_ =
-      (masterClocks / masterFrequency) * kHardwareClockFrequency + fraction / masterFrequency;
+      (masterClocks / masterFrequency) * hardwareHz + fraction / masterFrequency;
   synchronizationPhase_ = uint32_t(fraction % masterFrequency);
   if (CpuClockLead() >= 0)
     return;
@@ -228,7 +229,8 @@ bool Smp::ClockBusCycle(const PendingCycle &cycle, BusWait &wait) {
     cycles_ = hardwareClocks_ / 2;
     const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
     StepTimers(nextTicks - previousTicks);
-    if ((hardwareClocks_ & 1) == 0)
+    // The DSP starts on the first half-cycle, then clocks on alternate edges.
+    if (hardwareClocks_ & 1)
       tickDsp();
   }
 

@@ -73,12 +73,16 @@ void WordAccessesAdvanceHardware() {
     Check(moments == absoluteExpected, "Word I/O uses each byte's read or write phase");
     Check(machine->GetTiming().MasterClocksElapsed() == startedAt + 36,
           "CPU clocks reach the scheduler exactly once");
-    Check(machine->GetSmp().CycleCount() > 0, "SMP advances during CPU bus cycles");
+    Check(machine->GetSmp().CycleCount() == 0,
+          "Ordinary CPU accesses retain sound clock debt before the first handoff");
     if (write)
       Check(bytes == std::vector<uint8_t>{0x34, 0x12},
             "Word writes preserve low then high ordering");
     else
       Check(cpu.regs().a == 0x1234, "Word reads preserve low and high bytes");
+    cpu.read(0x2140);
+    Check(machine->GetSmp().CycleCount() > 0,
+          "An audio-port access synchronizes the sound processor");
   }
 }
 
@@ -135,7 +139,7 @@ void SoundPortDeadlines() {
         sound.Power();
         sound.IoState().iplRomEnable = false;
         sound.r.pc = 0x200;
-        // Four NOPs occupy the eight sound clocks elapsed during CPU reset.
+        // Four NOPs place the transfer after sixteen sound hardware clocks.
         sound.Ram()[0x204] = 0x8f; // MOV port,#$A5: store on absolute sound clock 13.
         sound.Ram()[0x205] = 0xa5;
         sound.Ram()[0x206] = uint8_t(0xf4 + port);
@@ -147,10 +151,11 @@ void SoundPortDeadlines() {
               sampledAt * Smp::kClockFrequency / reader->GetTiming().MasterClockHz();
           Check(reader->GetCpu()->regs().a == (soundAtSample < 13 ? 0 : 0xa5),
                 "Console reads cannot observe a sound-port store before its cycle");
-          const auto target = reader->GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
-                              reader->GetTiming().MasterClockHz();
-          Check(sound.CycleCount() == target,
-                "SMP follows the region clock ratio without overshoot");
+          const int64_t lead =
+              int64_t(sound.HardwareClockCount() * reader->GetTiming().MasterClockHz()) -
+              int64_t(sampledAt * sound.HardwareClockFrequency());
+          Check(lead >= 0 && lead <= 442'368'000'000ll + 20ll * reader->GetTiming().MasterClockHz(),
+                "A sound handoff catches the CPU up within the bounded execution lead");
         }
 
         auto writer = Machine({0x8d, cpuPort, 0x21}, false);
@@ -205,13 +210,13 @@ void SlowSoundPortDeadline() {
     sound.Ram()[0x205] = 0xa5;
     sound.Ram()[0x206] = 0xf4;
     machine->GetCpu()->Step();
+    sound.RunUntilHardwareClock(16);
     sound.IoState().internalWaitStates = 2;
-    while (sound.CycleCount() < 21) {
+    uint64_t target = 0;
+    while (target <= 22) {
       machine->GetCpu()->idle();
-      const auto target = machine->GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
-                          machine->GetTiming().MasterClockHz();
-      Check(sound.CycleCount() == target,
-            "SMP wait states stop exactly at the console clock deadline");
+      target = machine->GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
+               machine->GetTiming().MasterClockHz();
       Check(sound.PortRead(0) == (target < 21 ? 0 : 0xa5),
             "Console synchronization preserves a stretched port-store deadline");
     }

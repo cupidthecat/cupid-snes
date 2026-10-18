@@ -197,6 +197,7 @@ public:
   void SetGameBoyAudioOutput(GameBoyAudioSink output);
   void SetGameBoyMixedAudioOutput(std::function<void(float left, float right)> output);
   void WriteGameBoyConsoleAudio(int16_t left, int16_t right);
+  void SetGameBoyConsoleAudioRate(uint32_t rate);
   void SetGameBoyExpansionAudioRate(uint32_t rate);
   void WriteGameBoyExpansionAudio(float left, float right);
 

@@ -14,6 +14,7 @@ public:
   void SetHandheldRate(uint32_t rate);
   void WriteHandheld(int16_t left, int16_t right);
   void WriteConsole(int16_t left, int16_t right);
+  void SetConsoleRate(uint32_t rate);
   void SetExpansionRate(uint32_t rate);
   void WriteExpansion(float left, float right);
 

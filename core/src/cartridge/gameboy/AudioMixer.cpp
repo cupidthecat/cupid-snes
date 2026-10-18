@@ -29,6 +29,10 @@ void AudioMixer::WriteConsole(int16_t left, int16_t right) {
   mixer_.Write(Input::Console, double(left) / 32768, double(right) / 32768);
 }
 
+void AudioMixer::SetConsoleRate(uint32_t rate) {
+  mixer_.SetRate(Input::Console, rate);
+}
+
 void AudioMixer::SetExpansionRate(uint32_t rate) {
   mixer_.SetRate(Input::Expansion, rate);
 }

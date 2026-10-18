@@ -842,6 +842,11 @@ void Cartridge::WriteGameBoyConsoleAudio(int16_t left, int16_t right) {
     gameBoy_->WriteConsoleAudio(left, right);
 }
 
+void Cartridge::SetGameBoyConsoleAudioRate(uint32_t rate) {
+  if (gameBoy_)
+    gameBoy_->SetConsoleAudioRate(rate);
+}
+
 void Cartridge::SetGameBoyExpansionAudioRate(uint32_t rate) {
   if (gameBoy_)
     gameBoy_->SetExpansionAudioRate(rate);

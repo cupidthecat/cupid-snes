@@ -37,6 +37,9 @@ public:
   void WriteConsoleAudio(int16_t left, int16_t right) {
     mixer_.WriteConsole(left, right);
   }
+  void SetConsoleAudioRate(uint32_t rate) {
+    mixer_.SetConsoleRate(rate);
+  }
   void SetExpansionAudioRate(uint32_t rate) {
     mixer_.SetExpansionRate(rate);
   }

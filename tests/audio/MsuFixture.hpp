@@ -64,9 +64,12 @@ public:
                                                               {0x6c, 0x3f},
                                                               {0x4c, 1}})
         setup.insert(setup.end(), {0x8f, reg, 0xf2, 0x8f, value, 0xf3});
+      setup.insert(setup.end(), {0x8f, 0x6c, 0xf2});
       setup.insert(setup.end(), sound.begin() + 6, sound.end());
       sound = std::move(setup);
     }
+    // Wait for a console command instead of passing the IPL transfer counter to FLG.
+    sound[sound.size() - 9] = uint8_t(sound.size() + 1);
     Wait(0x2140, 0xaa);
     Wait(0x2141, 0xbb);
     Store(0x2141, 1);

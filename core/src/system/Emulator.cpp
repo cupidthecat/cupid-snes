@@ -11,11 +11,29 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace snes::core {
 
 namespace {
+struct GameCompatibility {
+  bool initializeWram = false;
+  bool initializeDsp = false;
+  uint32_t sampleRate = AudioTiming::SampleRate;
+};
+
+GameCompatibility SelectCompatibility(std::string_view title, bool enabled) {
+  GameCompatibility settings;
+  if (enabled) {
+    settings.initializeWram = title == "DIRT RACER";
+    settings.initializeDsp = title == "MAGICAL DROP";
+    if (title == "RENDERING RANGER R2")
+      settings.sampleRate = 32000;
+  }
+  return settings;
+}
+
 std::optional<std::vector<uint8_t>> ReadImage(const std::string &path, std::string *error) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
@@ -178,7 +196,7 @@ void Emulator::AttachMsu1(const std::string &path) {
         });
     bus_.MapRange(0x00, 0x3f, 0x2000, 0x2007, slot);
     bus_.MapRange(0x80, 0xbf, 0x2000, 0x2007, slot);
-    ConfigureExpansionAudio();
+    ConfigureAudioStreams();
     Logger::Instance().Write(LogLevel::Info, "MSU-1 data and PCM playback enabled");
   }
 }
@@ -464,8 +482,7 @@ void Emulator::InitSubsystems() {
 
   // New scanline
   timing_.onScanline = [this](uint16_t v) {
-    if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy || msu1_)
-      SynchronizeDevices(true);
+    SynchronizeDevices(true);
     SynchronizeExpansionAudio(coprocessorCompletedClock_);
     SynchronizeCoprocessors();
     ppu_.SetCurrentLine(v);
@@ -562,10 +579,15 @@ bool Emulator::Reset() {
 }
 
 void Emulator::ResetHardware(bool warm) {
+  const auto compatibility =
+      SelectCompatibility(cartridge_->Header().title, config_.gameCompatibilityFixes);
+  smp_.SetSampleRate(compatibility.sampleRate);
   const uint32_t seed = config_.entropySeed ? *config_.entropySeed : uint32_t(std::clock());
   PowerOnState startup(config_.entropyMode, seed, config_.entropySequence);
   if (!warm)
     startup.Fill({bus_.WramData(), MemoryBus::WramSize});
+  if (compatibility.initializeWram)
+    std::fill_n(bus_.WramData(), MemoryBus::WramSize, uint8_t{0xff});
   if (warm) {
     bus_.ResetRegisters();
     cartridge_->Reset();
@@ -581,6 +603,9 @@ void Emulator::ResetHardware(bool warm) {
   } else {
     dsp_.Power();
   }
+  if (compatibility.initializeDsp)
+    for (unsigned reg = 0; reg < Dsp::RegisterCount; ++reg)
+      dsp_.Write(uint8_t(reg), 0xff);
   smp_.Power(warm);
   ppu_.Power(startup, warm);
   cpuIo_.Reset();
@@ -601,7 +626,7 @@ void Emulator::ResetHardware(bool warm) {
       audioOutputBuffer_.interleavedStereo.push_back(right);
     }
   });
-  ConfigureExpansionAudio();
+  ConfigureAudioStreams();
   if (srtc_)
     srtc_->SetPal(pal);
   ppu_.SetPal(pal);
@@ -612,10 +637,8 @@ void Emulator::ResetHardware(bool warm) {
   pendingHdmaRun_ = false;
   servicingHdma_ = false;
   dmaArmed_ = false;
-  audioOverflow_.clear();
   collectingAudio_ = false;
   audioOutputBuffer_.interleavedStereo.clear();
-  nextSmpMasterClock_ = 0;
   coprocessorsSyncedClock_ = 0;
   coprocessorClockTarget_ = 0;
   coprocessorCompletedClock_ = 0;
@@ -690,7 +713,6 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   const auto input = inputProvider_ ? inputProvider_->PollController(0, frameIndex_) : InputState{};
 
   // Prepare DSP audio buffer for this frame
-  audioOverflow_.clear();
   audioOutputBuffer_.interleavedStereo.clear();
   collectingAudio_ = audioOutput_ != nullptr;
   dsp_.ResetSamplesWritten();
@@ -719,19 +741,10 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   // The previous duplicate call consumed V=1 from the next frame, causing
   // alternating 1-line / 223-line renders and incorrect scroll values.
 
-  // Submit audio (convert int16_t Ã¢â€ â€™ float)
+  // Submit the aligned stereo stream.
   if (audioOutput_) {
     auto &audio = audioOutputBuffer_;
     audio.sampleRate = AudioTiming::SampleRate;
-    if (cartridge_->Header().chip != EnhancementChip::SuperGameBoy && !msu1_) {
-      audio.interleavedStereo.clear();
-      const int samples = dsp_.SamplesWritten();
-      audio.interleavedStereo.reserve(audioOverflow_.size() + static_cast<size_t>(samples) * 2);
-      for (int16_t value : audioOverflow_)
-        audio.interleavedStereo.push_back(static_cast<float>(value) / 32768.0f);
-      for (int i = 0; i < samples * 2; ++i)
-        audio.interleavedStereo.push_back(static_cast<float>(audioBuf_[i]) / 32768.0f);
-    }
     audioOutput_->Submit(audio);
   }
 
@@ -807,17 +820,18 @@ void Emulator::SynchronizeCoprocessors() {
     srtc_->Advance(static_cast<uint32_t>(delta));
 }
 
-void Emulator::ConfigureExpansionAudio() {
+void Emulator::ConfigureAudioStreams() {
   msuSamplesClocked_ = 0;
-  expansionMixer_.SetOutput([this](float left, float right) {
+  audioMixer_.SetOutput([this](float left, float right) {
     if (collectingAudio_) {
       audioOutputBuffer_.interleavedStereo.push_back(left);
       audioOutputBuffer_.interleavedStereo.push_back(right);
     }
   });
-  expansionMixer_.Reset();
-  expansionMixer_.SetRate(audio::StreamMixer::Input::Console, msu1_ ? AudioTiming::SampleRate : 0);
-  expansionMixer_.SetRate(audio::StreamMixer::Input::Expansion, msu1_ ? Msu1::SampleRate : 0);
+  audioMixer_.Reset();
+  audioMixer_.SetRate(audio::StreamMixer::Input::Console, smp_.SampleRate());
+  audioMixer_.SetRate(audio::StreamMixer::Input::Expansion, msu1_ ? Msu1::SampleRate : 0);
+  cartridge_->SetGameBoyConsoleAudioRate(smp_.SampleRate());
   cartridge_->SetGameBoyExpansionAudioRate(msu1_ ? Msu1::SampleRate : 0);
 }
 
@@ -835,49 +849,31 @@ void Emulator::SynchronizeExpansionAudio(uint64_t elapsed) {
     if (adapter)
       cartridge_->WriteGameBoyExpansionAudio(frame[0], frame[1]);
     else
-      expansionMixer_.Write(audio::StreamMixer::Input::Expansion, frame[0], frame[1]);
+      audioMixer_.Write(audio::StreamMixer::Input::Expansion, frame[0], frame[1]);
   }
 }
 
 void Emulator::SynchronizeDevices(bool communication) {
-  const bool adapter = cartridge_->Header().chip == EnhancementChip::SuperGameBoy;
-  if (adapter && !communication)
+  if (!communication)
     return;
-  const auto elapsed =
-      adapter || msu1_ ? coprocessorCompletedClock_ : timing_.MasterClocksElapsed();
-  // Expansion audio uses communication and scanline handoffs for the sound
-  // processor. Ordinary cartridges can skip repeated work within one clock.
-  if ((adapter || !msu1_ || communication) && (adapter || elapsed >= nextSmpMasterClock_)) {
-    const uint64_t masterHz = timing_.MasterClockHz();
-    constexpr uint64_t soundHz = Smp::kHardwareClockFrequency;
-    // Split whole seconds from the remainder so long sessions cannot overflow
-    // an elapsed-master-clocks times sound-frequency product.
-    const auto fractionalClocks = (elapsed % masterHz) * soundHz;
-    const auto smpTarget = (elapsed / masterHz) * soundHz + fractionalClocks / masterHz;
-    const auto phase = fractionalClocks % masterHz;
-    nextSmpMasterClock_ = elapsed + (masterHz - phase + soundHz - 1) / soundHz;
-    const int firstSample = dsp_.SamplesWritten();
-    if (adapter || msu1_)
-      smp_.SynchronizeCpu(elapsed, uint32_t(masterHz));
+  const bool adapter = cartridge_->Header().chip == EnhancementChip::SuperGameBoy;
+  const int firstSample = dsp_.SamplesWritten();
+  // Exchange with the sound processor at scanlines and communication accesses.
+  // A handoff can finish the current sound bus phase beyond the console deadline.
+  smp_.SynchronizeCpu(coprocessorCompletedClock_, timing_.MasterClockHz());
+  for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
+    const auto left = audioBuf_[sample * 2];
+    const auto right = audioBuf_[sample * 2 + 1];
+    if (adapter)
+      cartridge_->WriteGameBoyConsoleAudio(left, right);
     else
-      smp_.RunUntilHardwareClock(smpTarget);
-    for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
-      const auto left = audioBuf_[sample * 2];
-      const auto right = audioBuf_[sample * 2 + 1];
-      if (adapter)
-        cartridge_->WriteGameBoyConsoleAudio(left, right);
-      else if (msu1_)
-        expansionMixer_.Write(audio::StreamMixer::Input::Console, double(left) / 32768,
-                              double(right) / 32768);
-    }
-    // Explicit debugger operations can cross several fields. Drain complete
-    // blocks during their bus phases so a long operation retains all audio.
-    if (dsp_.SamplesWritten() == kAudioBufSamples) {
-      if (collectingAudio_)
-        audioOverflow_.insert(audioOverflow_.end(), audioBuf_.begin(), audioBuf_.end());
-      dsp_.ResetSamplesWritten();
-    }
+      audioMixer_.Write(audio::StreamMixer::Input::Console, double(left) / 32768,
+                        double(right) / 32768);
   }
+  // The mixed stream already owns every published sample, including headless
+  // execution and debugger operations spanning several video fields.
+  if (dsp_.SamplesWritten() == kAudioBufSamples)
+    dsp_.ResetSamplesWritten();
 }
 
 void Emulator::SuspendFrame() {
