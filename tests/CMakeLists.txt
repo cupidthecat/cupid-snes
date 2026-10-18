@@ -44,6 +44,10 @@ add_executable(snes_gameboy_machine_tests test_gameboy_machine.cpp)
 target_link_libraries(snes_gameboy_machine_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_machine_tests COMMAND snes_gameboy_machine_tests)
 
+add_executable(snes_gameboy_video_tests test_gameboy_video.cpp)
+target_link_libraries(snes_gameboy_video_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_video_tests COMMAND snes_gameboy_video_tests)
+
 add_executable(snes_frame_execution_tests test_frame_execution.cpp)
 target_link_libraries(snes_frame_execution_tests PRIVATE snes_core)
 add_test(NAME snes_frame_execution_tests COMMAND snes_frame_execution_tests)
