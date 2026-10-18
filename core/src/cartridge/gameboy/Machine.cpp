@@ -9,7 +9,9 @@ bool VideoBus(uint16_t address) noexcept {
 }
 } // namespace
 
-Machine::Machine(Host &host, Devices &devices) : host_(host), devices_(devices) {}
+Machine::Machine(Host &host, Devices &devices) : host_(host), devices_(devices) {
+  devices_.SetDmaSynchronizer([this] { SynchronizeDma(true); });
+}
 
 bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
                    std::string *error) {
@@ -26,7 +28,7 @@ bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot
 }
 
 void Machine::Reset(bool secondModel) {
-  cpuClock_ = deviceClock_ = 0;
+  cpuClock_ = deviceClock_ = dmaClock_ = 0;
   cpu_.Reset();
   timer_.Reset();
   cartridge_.Reset();
@@ -82,7 +84,10 @@ void Machine::Flush(uint64_t target) {
     const unsigned clocks =
         unsigned(std::min(target > deviceClock_ ? target - deviceClock_ : 0, uint64_t(64)));
     const auto end = deviceClock_ + clocks;
-    cartridge_.AdvanceCamera(clocks, cpu_.GetState().halted || cpu_.GetState().stopped);
+    const bool sleeping = cpu_.GetState().halted || cpu_.GetState().stopped;
+    dmaClock_ = deviceClock_;
+    devices_.SetCpuSleeping(sleeping);
+    cartridge_.AdvanceCamera(clocks, sleeping);
     while (deviceClock_ < end) {
       ++deviceClock_;
       if (decay_) {
@@ -94,8 +99,7 @@ void Machine::Flush(uint64_t target) {
       flags_ |= devices_.Advance(1);
     }
     devices_.FinishAdvance();
-    if (clocks)
-      RunDma(clocks);
+    SynchronizeDma();
     cartridge_.AdvanceClock(clocks);
   } while (deviceClock_ < target);
 }
@@ -158,6 +162,7 @@ uint8_t Machine::ReadData(uint16_t address, Access access) {
     value = dmaRegister_;
   } else if (address >= 0xfe00 && address < 0xff00 && access == Access::Cpu &&
              dmaPosition_ != 0xa1 && (dmaPosition_ != 0 || dmaRestarting_)) {
+    devices_.BlockedOamAccess(address, false);
     value = 0xff;
   } else {
     value = devices_.Read(address, access);
@@ -234,8 +239,10 @@ void Machine::WriteData(uint16_t address, uint8_t value, Access access) {
     dmaPosition_ = 0xff;
     dmaClocks_ = 2;
     flags_ |= devices_.DmaStatus(dmaPosition_, dmaRestarting_);
-  } else if (!(address >= 0xfe00 && address < 0xff00 && access == Access::Cpu &&
-               dmaPosition_ != 0xa1)) {
+  } else if (address >= 0xfe00 && address < 0xff00 && access == Access::Cpu &&
+             dmaPosition_ != 0xa1) {
+    devices_.BlockedOamAccess(address, true);
+  } else {
     flags_ |= devices_.Write(address, value, access);
   }
 }
@@ -260,6 +267,17 @@ void Machine::RunDma(unsigned clocks, bool force) {
     }
     flags_ |= devices_.DmaStatus(dmaPosition_, dmaRestarting_);
   }
+}
+
+void Machine::SynchronizeDma(bool beforeRead) {
+  // A PPU fetch samples the bus before the current DMA clock completes.
+  const auto through = deviceClock_ - (beforeRead && deviceClock_ ? 1 : 0);
+  if (through <= dmaClock_)
+    return;
+  const auto clocks = unsigned(through - dmaClock_);
+  dmaClock_ = through;
+  if (clocks)
+    RunDma(clocks);
 }
 
 void Machine::AcknowledgeInterrupt(uint8_t mask) {

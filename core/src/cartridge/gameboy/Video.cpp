@@ -6,7 +6,7 @@ namespace snes::core::gameboy {
 
 void Video::Reset(bool secondModel) {
   vram_.fill(0);
-  oam_.fill(0);
+  oam_.Reset(secondModel);
   registers_.fill(0);
   registers_[8] = registers_[9] = 0xff;
   fifo_.fill(0);
@@ -29,15 +29,17 @@ void Video::Reset(bool secondModel) {
   windowReached_ = windowActive_ = windowUsed_ = lateWindow_ = false;
   windowWrite_ = windowChanged_ = false;
   secondModel_ = secondModel;
+  sleeping_ = false;
+  dmaPosition_ = 0xa1;
+  scanY_ = scanX_ = 0;
 }
 
-uint8_t Video::Read(uint16_t address, bool dma) const {
+uint8_t Video::Read(uint16_t address, bool dma) {
   if (address >= 0x8000 && address < 0xa000)
     return !dma && (blocked_ & 4) ? 0xff : vram_[address & 0x1fff];
   if (address >= 0xfe00 && address < 0xff00) {
-    if (!dma && (blocked_ & 3))
-      return 0xff;
-    return address < 0xfea0 ? oam_[address - 0xfe00] : 0;
+    return dma ? oam_.Read(uint8_t(address))
+               : oam_.ReadCpu(uint8_t(address), ScannerRow(), blocked_ & 3);
   }
   if (address == 0xff41)
     return uint8_t(0x80 | registers_[1] | (coincidence_ ? 4 : 0) | mode_);
@@ -54,11 +56,14 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
       vram_[address & 0x1fff] = value;
     return 0;
   }
-  if (address >= 0xfe00 && address < 0xfea0) {
-    if (dma || !(blocked_ & 2))
-      oam_[address - 0xfe00] = value;
+  if (address >= 0xfe00 && address < 0xff00) {
+    if (dma)
+      oam_.Write(uint8_t(address), value);
+    else
+      oam_.WriteCpu(uint8_t(address), value, ScannerRow(), (blocked_ & 2) != 0);
     return 0;
   }
+
   if (address < 0xff40 || address > 0xff4b || address == 0xff44 || address == 0xff46)
     return 0;
   const unsigned reg = address - 0xff40;
@@ -82,6 +87,37 @@ uint8_t Video::Write(uint16_t address, uint8_t value, bool dma) {
   if (reg == 11)
     windowChanged_ = windowWrite_ && previous != value;
   return UpdateInterrupt();
+}
+
+uint8_t Video::ScannerRow() const noexcept {
+  if (!(registers_[0] & 0x80) || warm_ || line_ >= 144 || dot_ >= 84)
+    return 0xff;
+  return dot_ < 6 ? 0 : uint8_t(((dot_ - 2) / 4) * 8);
+}
+
+void Video::AddressBus(uint16_t address, bool incremented) {
+  if (!incremented && address >= 0xfe00 && address < 0xff00)
+    oam_.AddressBus(ScannerRow());
+}
+
+void Video::BlockedOamAccess(uint16_t address, bool write) {
+  if (address < 0xfe00 || address >= 0xff00 || !(blocked_ & 2))
+    return;
+  if (write)
+    oam_.AddressBus(ScannerRow());
+  else
+    oam_.BlockedRead(ScannerRow());
+}
+
+uint8_t Video::ReadObject(uint8_t address) const noexcept {
+  if (dmaPosition_ > 0 && dmaPosition_ < 0xa0)
+    address = uint8_t((dmaPosition_ & 0xfe) | (address & 1));
+  return oam_.Read(address);
+}
+
+void Video::SynchronizeDma() {
+  if (dmaSynchronizer_)
+    dmaSynchronizer_();
 }
 
 void Video::CompareLine(int line) {
@@ -142,16 +178,21 @@ uint8_t Video::Tick() {
         mode_ = irqMode_ = 2;
         blocked_ = 3;
       }
-      if (dot_ >= 4 && dot_ < 84 && (dot_ & 1) == 0) {
-        const unsigned index = (dot_ - 4) / 2;
-        const unsigned row = uint8_t(line_ + 16 - oam_[index * 4]);
+      if (dot_ >= 6 && dot_ <= 84 && (dot_ & 1) == 0) {
+        const unsigned index = (dot_ - 6) / 2;
+        if (dmaPosition_ == 0xa1 || sleeping_) {
+          scanY_ = ReadObject(uint8_t(index * 4));
+          scanX_ = ReadObject(uint8_t(index * 4 + 1));
+        }
+        const unsigned row = uint8_t(line_ + 16 - scanY_);
         const unsigned height = registers_[0] & 4 ? 16 : 8;
-        if (row < height && objectCount_ < objects_.size()) {
+        if (!(dmaPosition_ != 0xa1 && sleeping_) && row < height &&
+            objectCount_ < objects_.size()) {
           auto &object = objects_[objectCount_++];
           object = {};
           object.index = uint8_t(index);
-          object.y = oam_[index * 4];
-          object.x = oam_[index * 4 + 1];
+          object.y = scanY_;
+          object.x = scanX_;
         }
       }
       if (dot_ == 80)
@@ -269,6 +310,7 @@ void Video::FetchBackground() {
   }
   ++fetchPhase_;
   if (fetchPhase_ == 2) {
+    SynchronizeDma();
     const unsigned y = windowActive_ ? windowLine_ : uint8_t(line_ + registers_[2]);
     const unsigned x = windowActive_ ? fetchX_
                                      : unsigned((int(registers_[3]) + int(fetchX_) * 8 -
@@ -277,10 +319,14 @@ void Video::FetchBackground() {
     const unsigned map = registers_[0] & (windowActive_ ? 0x40 : 8) ? 0x1c00 : 0x1800;
     tile_ = vram_[map + (y / 8) * 32 + (x & 31)];
   }
-  if (fetchPhase_ == 4)
+  if (fetchPhase_ == 4) {
+    SynchronizeDma();
     low_ = vram_[TileAddress()];
-  if (fetchPhase_ == 6)
+  }
+  if (fetchPhase_ == 6) {
+    SynchronizeDma();
     high_ = vram_[TileAddress() + 1];
+  }
   if (fetchPhase_ == 8 && fifoSize_ <= 8)
     push();
 }
@@ -342,10 +388,13 @@ bool Video::StartObject() {
 void Video::FetchObject() {
   auto &object = objects_[fetchingObject_];
   if (objectStall_ == 5) {
-    object.flags = oam_[object.index * 4 + 3];
-    object.address = uint16_t(oam_[object.index * 4 + 2] * 16);
+    SynchronizeDma();
+    scanY_ = ReadObject(uint8_t(object.index * 4 + 2));
+    object.flags = ReadObject(uint8_t(object.index * 4 + 3));
+    object.address = uint16_t(scanY_ * 16);
   }
   if (objectStall_ == 3 || objectStall_ == 1) {
+    SynchronizeDma();
     const unsigned height = registers_[0] & 4 ? 16 : 8;
     unsigned row = uint8_t(line_ + 16 - object.y) & (height - 1);
     if (object.flags & 0x40)

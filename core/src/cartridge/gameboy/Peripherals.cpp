@@ -51,4 +51,25 @@ void Peripherals::WindowWrite(bool active) {
   video_.WindowWrite(active);
 }
 
+void Peripherals::AddressBus(uint16_t address, bool incremented) {
+  video_.AddressBus(address, incremented);
+}
+
+void Peripherals::BlockedOamAccess(uint16_t address, bool write) {
+  video_.BlockedOamAccess(address, write);
+}
+
+void Peripherals::SetDmaSynchronizer(std::function<void()> synchronize) {
+  video_.SetDmaSynchronizer(std::move(synchronize));
+}
+
+void Peripherals::SetCpuSleeping(bool sleeping) {
+  video_.SetCpuSleeping(sleeping);
+}
+
+uint8_t Peripherals::DmaStatus(uint8_t position, bool) {
+  video_.DmaStatus(position);
+  return 0;
+}
+
 } // namespace snes::core::gameboy

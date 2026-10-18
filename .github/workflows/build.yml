@@ -95,8 +95,11 @@ jobs:
             tests/test_gameboy_machine.cpp -o gameboy-machine-tests
           ./gameboy-machine-tests
           c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
-            core/src/cartridge/gameboy/Video.cpp tests/test_gameboy_video.cpp -o gameboy-video-tests
+            core/src/cartridge/gameboy/Oam.cpp core/src/cartridge/gameboy/Video.cpp tests/test_gameboy_video.cpp -o gameboy-video-tests
           ./gameboy-video-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Oam.cpp tests/test_gameboy_oam.cpp -o gameboy-oam-tests
+          ./gameboy-oam-tests
           c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
             core/src/cartridge/gameboy/ClockedIo.cpp core/src/cartridge/gameboy/SoundChannels.cpp \
             tests/test_gameboy_sound_channels.cpp -o gameboy-sound-tests
@@ -106,7 +109,7 @@ jobs:
             core/src/cartridge/gameboy/Audio.cpp tests/test_gameboy_audio.cpp -o gameboy-audio-tests
           ./gameboy-audio-tests
           c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
-            core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom,Machine,Video,SoundChannels,Audio,Peripherals}.cpp \
+            core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom,Machine,Oam,Video,SoundChannels,Audio,Peripherals}.cpp \
             tests/test_gameboy_peripherals.cpp -o gameboy-peripheral-tests
           ./gameboy-peripheral-tests
   windows:
@@ -133,7 +136,7 @@ jobs:
           cmake --build out/build/ci --config Release --parallel 4 --target
           snes_frontend snes_rom_diagnostic snes_rom_smoke snes_trace_dump
           snes_gameboy_cpu_tests snes_gameboy_host_tests snes_gameboy_clocked_io_tests
-          snes_gameboy_cartridge_tests snes_gameboy_camera_tests snes_gameboy_tpp1_tests
+          snes_gameboy_cartridge_tests snes_gameboy_camera_tests snes_gameboy_tpp1_tests snes_gameboy_oam_tests
           snes_gameboy_machine_tests snes_gameboy_video_tests snes_gameboy_sound_channels_tests snes_gameboy_audio_tests snes_gameboy_peripherals_tests
           snes_frame_execution_tests snes_competition_cartridge_tests
           snes_sdl_audio_tests snes_sdl_video_tests snes_bsx_tests snes_cartridge_command_tests
@@ -143,4 +146,4 @@ jobs:
       - name: Test optimized console and SDL paths
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"

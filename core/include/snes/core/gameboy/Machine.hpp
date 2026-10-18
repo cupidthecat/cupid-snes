@@ -7,6 +7,7 @@
 #include "snes/core/gameboy/Host.hpp"
 
 #include <array>
+#include <functional>
 
 namespace snes::core::gameboy {
 
@@ -24,6 +25,9 @@ public:
     // Complete a CPU bus timing batch after its individual hardware clocks.
     virtual void FinishAdvance() {}
     virtual void AddressBus(uint16_t, bool) {}
+    virtual void BlockedOamAccess(uint16_t, bool) {}
+    virtual void SetDmaSynchronizer(std::function<void()>) {}
+    virtual void SetCpuSleeping(bool) {}
     virtual void Stop(bool) {}
     virtual void WindowWrite(bool) {}
     virtual uint8_t DmaStatus(uint8_t, bool) {
@@ -59,7 +63,7 @@ private:
   std::array<uint8_t, 8192> ram_{};
   std::array<uint8_t, 127> highRam_{};
   std::array<uint8_t, 256> boot_{};
-  uint64_t cpuClock_ = 0, deviceClock_ = 0;
+  uint64_t cpuClock_ = 0, deviceClock_ = 0, dmaClock_ = 0;
   uint16_t dmaSource_ = 0;
   uint8_t dmaPosition_ = 0xa1, dmaClocks_ = 0, dmaRegister_ = 0xff;
   uint8_t flags_ = 0, enable_ = 0, joypad_ = 0xcf, dataBus_ = 0, decay_ = 0;
@@ -90,6 +94,7 @@ private:
   void DriveData(uint16_t address, uint8_t value);
   bool DmaConflict(uint16_t address) const noexcept;
   void RunDma(unsigned clocks, bool force = false);
+  void SynchronizeDma(bool beforeRead = false);
 };
 
 } // namespace snes::core::gameboy

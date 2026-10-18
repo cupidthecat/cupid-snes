@@ -263,6 +263,42 @@ void ClockCommandExecution() {
   }
 }
 
+void ObjectMemoryExecution() {
+  constexpr std::array<std::pair<uint8_t, unsigned>, 8> instructions = {
+      {{0x7e, 1}, {0x77, 2}, {0x23, 3}, {0x2b, 4}, {0x2a, 6}, {0xc5, 9}, {0xc1, 10}, {0x34, 11}}};
+  constexpr std::array<unsigned, 7> phases = {0, 4, 28, 60, 72, 76, 80};
+  constexpr std::array<uint64_t, 2> expected = {0x6cea28654e586db6ull, 0x801262c97b09defbull};
+  for (unsigned model = 0; model < 2; ++model) {
+    uint64_t hash = 14695981039346656037ull;
+    for (const auto [opcode, index] : instructions)
+      for (const unsigned phase : phases) {
+        System system;
+        system.Load(model != 0, {opcode, 0, 0, 0});
+        auto state = system.machine.CpuState();
+        state.a = 0x5a;
+        state.b = state.d = state.h = 0xfe;
+        state.c = state.e = state.l = 0x20;
+        state.sp = 0xfe20;
+        system.machine.SetCpuState(state);
+        const unsigned fixture = model * 2295 + index * 153 + 51 + phase / 2;
+        for (unsigned i = 0; i < 160; ++i)
+          system.devices.Write(uint16_t(0xfe00 + i), uint8_t(i * 37 + (i / 8) * 11 + fixture * 17),
+                               Machine::Access::Dma);
+        for (const auto [address, value] :
+             std::array<Write, 4>{{{0xff47, 0xe4}, {0xff48, 0xe4}, {0xff49, 0xe4}, {0xff4b, 7}}})
+          system.machine.WriteMemory(address, value);
+        system.machine.WriteMemory(0xff40, 0x91);
+        system.machine.AdvanceHardware(456 + phase);
+        hash = (hash ^ system.machine.RunInstruction()) * 1099511628211ull;
+        for (unsigned i = 0; i < 160; ++i)
+          hash = (hash ^ system.devices.Read(uint16_t(0xfe00 + i), Machine::Access::Dma)) *
+                 1099511628211ull;
+      }
+    Check(hash == expected[model],
+          "CPU reads, writes, increments, stack accesses, and scanner timing retain object memory");
+  }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -285,6 +321,7 @@ int main() {
     StopAndWake();
     InfraredExecution();
     ClockCommandExecution();
+    ObjectMemoryExecution();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

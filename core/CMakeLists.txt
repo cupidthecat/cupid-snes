@@ -9,6 +9,7 @@ add_library(snes_core
   src/cartridge/gameboy/Infrared.cpp
   src/cartridge/gameboy/Host.cpp
   src/cartridge/gameboy/Machine.cpp
+  src/cartridge/gameboy/Oam.cpp
   src/cartridge/gameboy/Peripherals.cpp
   src/cartridge/gameboy/MotionEeprom.cpp
   src/cartridge/gameboy/SoundChannels.cpp

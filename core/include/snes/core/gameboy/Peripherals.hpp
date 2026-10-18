@@ -18,6 +18,11 @@ public:
   void AudioDividerEdge(bool rising, uint64_t clock) override;
   void Stop(bool stopped) override;
   void WindowWrite(bool active) override;
+  void AddressBus(uint16_t address, bool incremented) override;
+  void BlockedOamAccess(uint16_t address, bool write) override;
+  void SetDmaSynchronizer(std::function<void()> synchronize) override;
+  void SetCpuSleeping(bool sleeping) override;
+  uint8_t DmaStatus(uint8_t position, bool restarting) override;
 
 private:
   Video video_;

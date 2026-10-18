@@ -48,6 +48,10 @@ add_executable(snes_gameboy_tpp1_tests test_gameboy_tpp1.cpp)
 target_link_libraries(snes_gameboy_tpp1_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_tpp1_tests COMMAND snes_gameboy_tpp1_tests)
 
+add_executable(snes_gameboy_oam_tests test_gameboy_oam.cpp)
+target_link_libraries(snes_gameboy_oam_tests PRIVATE snes_core)
+add_test(NAME snes_gameboy_oam_tests COMMAND snes_gameboy_oam_tests)
+
 add_executable(snes_gameboy_machine_tests test_gameboy_machine.cpp)
 target_link_libraries(snes_gameboy_machine_tests PRIVATE snes_core)
 add_test(NAME snes_gameboy_machine_tests COMMAND snes_gameboy_machine_tests)

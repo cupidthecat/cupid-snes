@@ -1,8 +1,12 @@
 // Monochrome LCD timing, tile fetching, and object composition.
 #pragma once
 
+#include "snes/core/gameboy/Oam.hpp"
+
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace snes::core::gameboy {
 
@@ -17,9 +21,20 @@ public:
 
   explicit Video(Output &output) : output_(output) {}
   void Reset(bool secondModel = false);
-  uint8_t Read(uint16_t address, bool dma = false) const;
+  uint8_t Read(uint16_t address, bool dma = false);
   uint8_t Write(uint16_t address, uint8_t value, bool dma = false);
   uint8_t Advance(unsigned clocks);
+  void AddressBus(uint16_t address, bool incremented);
+  void BlockedOamAccess(uint16_t address, bool write);
+  void SetDmaSynchronizer(std::function<void()> synchronize) {
+    dmaSynchronizer_ = std::move(synchronize);
+  }
+  void SetCpuSleeping(bool sleeping) noexcept {
+    sleeping_ = sleeping;
+  }
+  void DmaStatus(uint8_t position) noexcept {
+    dmaPosition_ = position;
+  }
   void Stop(bool stopped) noexcept {
     stopped_ = stopped;
   }
@@ -42,7 +57,8 @@ private:
   };
   Output &output_;
   std::array<uint8_t, 8192> vram_{};
-  std::array<uint8_t, 160> oam_{};
+  Oam oam_;
+  std::function<void()> dmaSynchronizer_;
   std::array<uint8_t, 12> registers_{};
   std::array<uint8_t, 16> fifo_{};
   std::array<Object, 10> objects_{};
@@ -63,8 +79,13 @@ private:
   bool secondModel_ = false, windowReached_ = false, windowActive_ = false;
   bool windowUsed_ = false, lateWindow_ = false;
   bool windowWrite_ = false, windowChanged_ = false;
+  bool sleeping_ = false;
+  uint8_t dmaPosition_ = 0xa1, scanY_ = 0, scanX_ = 0;
 
   uint8_t Tick();
+  uint8_t ScannerRow() const noexcept;
+  uint8_t ReadObject(uint8_t address) const noexcept;
+  void SynchronizeDma();
   uint8_t UpdateInterrupt();
   void CompareLine(int line);
   void EndLine();
