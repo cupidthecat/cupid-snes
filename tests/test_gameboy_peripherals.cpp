@@ -224,6 +224,45 @@ void InfraredExecution() {
   }
 }
 
+void ClockCommandExecution() {
+  constexpr uint64_t now = 1789389296;
+  for (bool secondModel : {false, true}) {
+    System system;
+    system.machine.GameCartridge().SetTimeSource([] { return now; });
+    std::vector<uint8_t> program;
+    const auto store = [&](uint16_t address, uint8_t value) {
+      program.insert(program.end(), {0x3e, value, 0xea, uint8_t(address), uint8_t(address >> 8)});
+    };
+    store(0, 0xb);
+    store(0xa000, 0x40);
+    store(0xa000, 0x50);
+    for (uint8_t command : {0x3f, 0x39, 0x35, 0x3f, 0x3f, 0x3f, 0x3f})
+      store(0xa000, command);
+    store(0xa000, 0x40);
+    store(0xa000, 0x50);
+    store(0xa000, 0x10);
+    store(0, 0xc);
+    program.insert(program.end(), {0xfa, 0, 0xa0});
+    system.Load(secondModel, program, 0xfe);
+    for (unsigned i = 0; i < 20; ++i)
+      system.machine.RunInstruction();
+    Check(system.machine.Clocks() == 240, "Clock command writes retain normal CPU bus cycle costs");
+    system.machine.GameCartridge().SynchronizeRtc(now + 60);
+    for (unsigned i = 0; i < 9; ++i)
+      system.machine.RunInstruction();
+    const auto battery = system.machine.GameCartridge().SaveBattery();
+    Check(battery.size() == 17, "Clock cartridges retain the complete battery trailer");
+    uint64_t timestamp = 0;
+    for (unsigned i = 0; i < 8; ++i)
+      timestamp |= uint64_t(battery[i]) << (i * 8);
+    Check(system.machine.CpuState().a == 0 && system.machine.Clocks() == 352 &&
+              timestamp == now + 60 &&
+              std::all_of(battery.begin() + 8, battery.end(),
+                          [](uint8_t value) { return value == 0; }),
+          "Instruction-driven clock ports expose minute and day rollover in both adapter models");
+  }
+}
+
 void HostVideoAndReset() {
   System system;
   system.Load(true, {0x18, 0xfe});
@@ -245,6 +284,7 @@ int main() {
   try {
     StopAndWake();
     InfraredExecution();
+    ClockCommandExecution();
     HostVideoAndReset();
     std::puts("Handheld peripheral timing, wake-up, audio and host display checks passed");
     return 0;

@@ -4,6 +4,7 @@ add_library(snes_core
   src/cartridge/gameboy/Cartridge.cpp
   src/cartridge/gameboy/ClockedIo.cpp
   src/cartridge/gameboy/Cpu.cpp
+  src/cartridge/gameboy/Huc3Clock.cpp
   src/cartridge/gameboy/Infrared.cpp
   src/cartridge/gameboy/Host.cpp
   src/cartridge/gameboy/Machine.cpp

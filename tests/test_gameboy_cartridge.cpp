@@ -1,6 +1,7 @@
 #include "snes/core/gameboy/Cartridge.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -348,6 +349,158 @@ void InfraredTiming() {
         "Reset clears incoming light, outgoing light, and the sensor charge");
 }
 
+void Huc3Command(Cartridge &cartridge, uint8_t value) {
+  cartridge.Write(0, 0xb);
+  cartridge.Write(0xa000, value);
+}
+void Huc3Cursor(Cartridge &cartridge, uint8_t index) {
+  Huc3Command(cartridge, uint8_t(0x40 | (index & 15)));
+  Huc3Command(cartridge, uint8_t(0x50 | (index >> 4)));
+}
+uint8_t Huc3Read(Cartridge &cartridge) {
+  Huc3Command(cartridge, 0x10);
+  cartridge.Write(0, 0xc);
+  return cartridge.Read(0xa000).value();
+}
+std::vector<uint8_t> Huc3Payload(uint64_t timestamp, std::array<uint16_t, 4> words,
+                                 uint8_t alarm = 1) {
+  std::vector<uint8_t> bytes(17);
+  for (unsigned i = 0; i < 8; ++i)
+    bytes[i] = uint8_t(timestamp >> (i * 8));
+  for (unsigned i = 0; i < words.size(); ++i) {
+    bytes[8 + i * 2] = uint8_t(words[i]);
+    bytes[9 + i * 2] = uint8_t(words[i] >> 8);
+  }
+  bytes[16] = alarm;
+  return bytes;
+}
+
+void Huc3PortsAndBanks() {
+  Cartridge cartridge;
+  Check(cartridge.Load(Image(0xfe, 128, 3)),
+        "Load the generated cartridge with clock and infrared");
+  Check(cartridge.Read(0x4000) == 1 && cartridge.Read(0xa000) == 0xff,
+        "The reset bank is mapped before the zero-valued selectors are committed");
+  cartridge.Write(0x6000, 0xff);
+  Check(cartridge.Read(0x4000) == 0,
+        "An unused register write still commits the reset ROM selector");
+  cartridge.Write(0x2000, 0xff);
+  Check(cartridge.Read(0x4000) == 127, "Seven ROM bank bits select the upper ROM window");
+  cartridge.Write(0, 0x1a);
+  for (unsigned bank = 0; bank < 8; ++bank) {
+    cartridge.Write(0x4000, uint8_t(bank));
+    cartridge.Write(0xa000, uint8_t(0x40 + bank));
+  }
+  for (unsigned bank = 8; bank < 16; ++bank) {
+    cartridge.Write(0x4000, uint8_t(bank));
+    const auto before = cartridge.Read(0xa000);
+    cartridge.Write(0xa000, 0x90);
+    Check(before == 0x44 + (bank & 3) && cartridge.Read(0xa000) == before,
+          "Upper RAM bank selections remain readable while ignoring writes");
+  }
+  cartridge.Write(0x4000, 0);
+  cartridge.Write(0, 0);
+  cartridge.Write(0xa000, 0x80);
+  Check(cartridge.Read(0xa000) == 0x44, "Mode zero exposes read-only cartridge RAM");
+  for (uint8_t mode : {uint8_t(1), uint8_t(0xb), uint8_t(0xd), uint8_t(0xf)}) {
+    cartridge.Write(0, mode);
+    Check(cartridge.Read(0xbfff) == 1, "Status and unsupported read modes return the idle value");
+  }
+  cartridge.Write(0, 0xe);
+  cartridge.SetInfraredInput(true);
+  cartridge.Advance(10070);
+  Check(cartridge.Read(0xa000) == 1,
+        "Clock cartridges expose the filtered infrared bit without a status prefix");
+}
+
+void Huc3CommandsAndSaves() {
+  constexpr uint64_t now = 1789389296;
+  Cartridge cartridge;
+  cartridge.SetTimeSource([] { return now; });
+  Check(cartridge.Load(Image(0xfe, 2, 0)), "Clock command ports operate without cartridge RAM");
+  Huc3Cursor(cartridge, 0);
+  for (uint8_t nibble : {12, 11, 10, 1, 2, 3, 4})
+    Huc3Command(cartridge, uint8_t(0x30 | nibble));
+  Huc3Cursor(cartridge, 0);
+  Check(Huc3Read(cartridge) == 12 && Huc3Read(cartridge) == 11 && Huc3Read(cartridge) == 10,
+        "Read and write commands stream minute nibbles through an incrementing cursor");
+  Huc3Command(cartridge, 0x62);
+  cartridge.Write(0, 0xc);
+  Check(cartridge.Read(0xa000) == 1, "Access flag two overrides the read latch with ready status");
+  Huc3Command(cartridge, 0x60);
+  Huc3Cursor(cartridge, 0x58);
+  Huc3Command(cartridge, 0x10);
+  cartridge.Write(0, 0xc);
+  Check(cartridge.Read(0xa000) == 10, "Unsupported clock reads preserve the previous data latch");
+  Huc3Cursor(cartridge, 0xff);
+  Check(Huc3Read(cartridge) == 10 && Huc3Read(cartridge) == 12,
+        "The byte-sized command cursor wraps from an unsupported register to minute zero");
+  Huc3Cursor(cartridge, 0);
+  Huc3Command(cartridge, 0x2e);
+  Check(Huc3Read(cartridge) == 14, "Command two writes a nibble without advancing the cursor");
+  Huc3Cursor(cartridge, 0x58);
+  for (uint8_t nibble : {9, 8, 7, 13, 12, 11, 10, 1})
+    Huc3Command(cartridge, uint8_t(0x30 | nibble));
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {0xabe, 0x4321, 0x789, 0xabcd}),
+        "Clock saves contain a timestamp, four little-endian words, and the alarm enable byte");
+  cartridge.LoadBattery(Huc3Payload(now, {0xfabc, 123, 789, 234}, 7));
+  Huc3Cursor(cartridge, 0);
+  Huc3Command(cartridge, 0x2e);
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {0xfabe, 123, 789, 234}),
+        "Nibble writes retain unaddressed minute bits and saves normalize the alarm flag");
+  Huc3Cursor(cartridge, 0x5f);
+  Huc3Command(cartridge, 0x62);
+  cartridge.Reset();
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {0, 0, 0, 0}, 0),
+        "Processor reset clears clock words, command latches, and alarm state");
+  cartridge.Write(0, 0xc);
+  Check(cartridge.Read(0xa000) == 0, "Reset clears the read latch and access flags");
+  Huc3Command(cartridge, 0x2f);
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {15, 0, 0, 0}, 0),
+        "Reset returns the nibble cursor to the minute register");
+}
+
+void Huc3ClockBoundaries() {
+  constexpr uint64_t now = 1789389296;
+  Cartridge cartridge;
+  cartridge.SetTimeSource([] { return now; });
+  Check(cartridge.Load(Image(0xfe, 2, 0)),
+        "Load the generated clock image for elapsed-time checks");
+  cartridge.SetClockRate(4295454);
+  cartridge.LoadBattery(Huc3Payload(now - 86401, {123, 456, 789, 234}));
+  Check(cartridge.SaveBattery() == Huc3Payload(now - 86401, {123, 456, 789, 234}),
+        "Loading past clock data waits for the next host polling interval");
+  cartridge.AdvanceRtc(134232);
+  Check(cartridge.SaveBattery() == Huc3Payload(now - 86401, {123, 456, 789, 234}),
+        "Clock polling retains the fractional interval of the first adapter model");
+  cartridge.AdvanceRtc(1);
+  Check(cartridge.SaveBattery() == Huc3Payload(now - 1, {123, 457, 789, 234}),
+        "The first poll advances whole-minute boundaries while retaining the timestamp remainder");
+  cartridge.Reset();
+  cartridge.LoadBattery(Huc3Payload(0, {123, 456, 789, 234}));
+  cartridge.AdvanceRtc(134233);
+  Check(cartridge.SaveBattery() == Huc3Payload(1789389240, {877, 21166, 789, 234}),
+        "An epoch-zero clock advances across long elapsed periods at its first poll");
+  cartridge.LoadBattery(Huc3Payload(now, {1440, 0xffff, 789, 234}));
+  cartridge.SynchronizeRtc(now + 60);
+  Check(cartridge.SaveBattery() == Huc3Payload(now + 60, {1441, 0xffff, 789, 234}),
+        "A programmed minute value beyond the day boundary retains its full word");
+  cartridge.SynchronizeRtc(now + 65536 * 60);
+  const auto wrapped = Huc3Payload(now + 65536 * 60, {0, 0, 789, 234});
+  Check(cartridge.SaveBattery() == wrapped,
+        "Minute and day words wrap through their counter widths");
+  cartridge.SynchronizeRtc(now);
+  Check(cartridge.SaveBattery() == wrapped,
+        "A backward host clock preserves the stored clock state");
+  cartridge.LoadBattery(Huc3Payload(now + 3600, {123, 456, 789, 234}));
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {0xfff, 0xffff, 789, 234}, 0),
+        "A future saved timestamp invalidates the clock while retaining alarm time words");
+  cartridge.Reset();
+  cartridge.LoadBattery(std::array<uint8_t, 16>{});
+  Check(cartridge.SaveBattery() == Huc3Payload(now, {0xfff, 0xffff, 0, 0}, 0),
+        "A truncated clock payload restores the unknown-time markers");
+}
+
 void ClockPollingPhase() {
   unsigned polls = 0;
   Cartridge cartridge;
@@ -379,6 +532,9 @@ int main() {
     MotionAndEeprom();
     InfraredBankingAndBattery();
     InfraredTiming();
+    Huc3PortsAndBanks();
+    Huc3CommandsAndSaves();
+    Huc3ClockBoundaries();
     ClockPollingPhase();
     std::puts("Handheld cartridge banking, RAM, RTC and battery checks passed");
     return 0;

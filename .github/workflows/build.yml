@@ -77,12 +77,12 @@ jobs:
             core/src/cartridge/gameboy/ClockedIo.cpp tests/test_gameboy_clocked_io.cpp -o gameboy-clock-tests
           ./gameboy-clock-tests
           c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
-            core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp core/src/cartridge/gameboy/MotionEeprom.cpp \
+            core/src/cartridge/gameboy/Huc3Clock.cpp core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp core/src/cartridge/gameboy/MotionEeprom.cpp \
             tests/test_gameboy_cartridge.cpp -o gameboy-cartridge-tests
           ./gameboy-cartridge-tests
           c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
             core/src/cartridge/gameboy/Cpu.cpp core/src/cartridge/gameboy/ClockedIo.cpp \
-            core/src/cartridge/gameboy/Host.cpp core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp \
+            core/src/cartridge/gameboy/Host.cpp core/src/cartridge/gameboy/Huc3Clock.cpp core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp \
             core/src/cartridge/gameboy/MotionEeprom.cpp core/src/cartridge/gameboy/Machine.cpp \
             tests/test_gameboy_machine.cpp -o gameboy-machine-tests
           ./gameboy-machine-tests
@@ -98,7 +98,7 @@ jobs:
             core/src/cartridge/gameboy/Audio.cpp tests/test_gameboy_audio.cpp -o gameboy-audio-tests
           ./gameboy-audio-tests
           c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
-            core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Infrared,Cartridge,MotionEeprom,Machine,Video,SoundChannels,Audio,Peripherals}.cpp \
+            core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Huc3Clock,Infrared,Cartridge,MotionEeprom,Machine,Video,SoundChannels,Audio,Peripherals}.cpp \
             tests/test_gameboy_peripherals.cpp -o gameboy-peripheral-tests
           ./gameboy-peripheral-tests
   windows:
