@@ -8,11 +8,16 @@ namespace snes::core::gameboy {
 
 class SoundChannels {
 public:
+  struct Signal {
+    uint8_t level = 0;
+    bool dacEnabled = false, channelEnabled = false;
+  };
   struct Output {
     virtual ~Output() = default;
-    virtual void Dac(uint64_t clock, unsigned channel, uint8_t level, bool dacEnabled,
-                     bool channelEnabled) = 0;
+    // Offsets select a filter phase in CPU clocks; delivery clocks stay ordered.
+    virtual void Dac(uint64_t clock, unsigned channel, Signal signal, int phaseOffset) = 0;
     virtual void Mixer(uint64_t clock, uint8_t volume, uint8_t routing) = 0;
+    virtual void Power(uint64_t clock, bool enabled) = 0;
   };
   struct State {
     std::array<uint8_t, 4> amplitudes{}, volumes{};
@@ -58,12 +63,13 @@ private:
   void Tick();
   void Trigger(unsigned channel);
   void SetControl(unsigned channel, uint8_t previous, uint8_t value);
-  void ClockFrame();
+  void ClockFrame(int phaseOffset = 0);
   void Lengths();
   void Envelopes();
   void Sweep();
   int SweepResult();
-  void Emit(uint64_t clock);
+  void Emit(uint64_t clock, int phaseOffset = 0);
+  void Disable(unsigned channel, bool clearSignal = true);
   bool DacEnabled(unsigned channel) const noexcept;
   bool LengthEnabled(unsigned channel) const noexcept;
   uint16_t Frequency(unsigned channel) const noexcept;

@@ -29,7 +29,7 @@ void SoundChannels::Reset(bool secondModel) {
   noisePending_ = waveAccess_ = false;
   secondModel_ = secondModel;
   for (unsigned i = 0; i < 4; ++i)
-    output_.Dac(0, i, 0, false, false);
+    output_.Dac(0, i, {}, 0);
   output_.Mixer(0, 0, 0);
 }
 
@@ -79,9 +79,9 @@ uint8_t SoundChannels::Read(uint16_t address) const {
   return registers_[reg] | ReadMask[reg];
 }
 
-void SoundChannels::Emit(uint64_t clock) {
+void SoundChannels::Emit(uint64_t clock, int phaseOffset) {
   for (unsigned i = 0; i < 4; ++i) {
-    const uint8_t value = channels_[i].enabled ? channels_[i].amplitude : 0;
+    const uint8_t value = channels_[i].amplitude;
     const uint8_t mask = uint8_t(1u << i);
     const bool dac = DacEnabled(i);
     const bool active = channels_[i].enabled;
@@ -91,8 +91,14 @@ void SoundChannels::Emit(uint64_t clock) {
     emitted_[i] = value;
     emittedDacs_ = uint8_t((emittedDacs_ & ~mask) | (dac ? mask : 0));
     emittedChannels_ = uint8_t((emittedChannels_ & ~mask) | (active ? mask : 0));
-    output_.Dac(clock, i, value, dac, active);
+    output_.Dac(clock, i, {value, dac, active}, phaseOffset);
   }
+}
+
+void SoundChannels::Disable(unsigned channel, bool clearSignal) {
+  channels_[channel].enabled = false;
+  if (clearSignal)
+    channels_[channel].amplitude = 0;
 }
 
 void SoundChannels::Power(bool enabled) {
@@ -118,7 +124,7 @@ void SoundChannels::Power(bool enabled) {
   sweepStarting_ = false;
   sweepEnabled_ = sweepNegated_ = noisePending_ = waveAccess_ = false;
   Emit(audioClock_);
-  output_.Mixer(audioClock_, 0, 0);
+  output_.Power(audioClock_, enabled);
 }
 
 bool SoundChannels::Duty(unsigned channel) const noexcept {
@@ -200,6 +206,8 @@ void SoundChannels::Trigger(unsigned channel) {
   auto &state = channels_[channel];
   const bool wasEnabled = state.enabled;
   state.enabled = DacEnabled(channel);
+  if (!wasEnabled && channel != 2)
+    state.high = false;
   if (state.length == 0) {
     state.length = channel == 2 ? 256 : 64;
     if (LengthEnabled(channel) && (phase_ & 1))
@@ -254,11 +262,11 @@ void SoundChannels::SetControl(unsigned channel, uint8_t previous, uint8_t value
   auto &state = channels_[channel];
   if (!(previous & 0x40) && (value & 0x40) && (phase_ & 1) && state.length != 0) {
     if (--state.length == 0)
-      state.enabled = false;
+      Disable(channel);
   }
   if (!(value & 0x80))
     return;
-  if (channel == 3 && ((audioClock_ >> 2) & 1)) {
+  if (channel == 3 && (noiseAlignment_ & 3)) {
     noisePending_ = true;
     noiseStart_ = audioClock_ + 12;
   } else {
@@ -293,7 +301,7 @@ void SoundChannels::Write(uint16_t address, uint8_t value) {
   case 0:
     registers_[reg] &= 0x7f;
     if ((previous & 8) && !(value & 8) && sweepNegated_)
-      channels_[0].enabled = false;
+      Disable(0);
     if (sweepStarting_ && !sweepEnabled_ && (value & 0x70)) {
       if (value & 7)
         channels_[0].frequency = uint16_t(value & 8 ? 1 : 0);
@@ -311,7 +319,7 @@ void SoundChannels::Write(uint16_t address, uint8_t value) {
     const unsigned channel = reg == 2 ? 0 : reg == 7 ? 1 : 3;
     auto &state = channels_[channel];
     if (!DacEnabled(channel)) {
-      state.enabled = false;
+      Disable(channel, false);
     } else if (state.enabled) {
       unsigned volume = state.volume;
       if (!(previous & 7) && state.envelopeRunning)
@@ -347,7 +355,7 @@ void SoundChannels::Write(uint16_t address, uint8_t value) {
   case 10:
     registers_[reg] &= 0x80;
     if (!DacEnabled(2))
-      channels_[2].enabled = false;
+      Disable(2, false);
     break;
   case 12:
     registers_[reg] &= 0x60;
@@ -378,7 +386,7 @@ void SoundChannels::Lengths() {
   for (unsigned i = 0; i < 4; ++i) {
     auto &state = channels_[i];
     if (LengthEnabled(i) && state.length && --state.length == 0)
-      state.enabled = false;
+      Disable(i);
   }
 }
 
@@ -421,7 +429,7 @@ void SoundChannels::Sweep() {
     sweepStop_ = audioClock_ + 4 + 4 * shift;
 }
 
-void SoundChannels::ClockFrame() {
+void SoundChannels::ClockFrame(int phaseOffset) {
   if (!powered_)
     return;
   if ((phase_ & 1) == 0)
@@ -431,7 +439,7 @@ void SoundChannels::ClockFrame() {
   if (phase_ == 7)
     Envelopes();
   phase_ = uint8_t((phase_ + 1) & 7);
-  Emit(audioClock_);
+  Emit(audioClock_, phaseOffset);
 }
 
 void SoundChannels::DividerEdge(bool rising, uint64_t clock) {
@@ -450,12 +458,13 @@ void SoundChannels::Tick() {
   for (unsigned half = 0; half < 2; ++half) {
     const uint64_t end = audioClock_ - 2 + half * 2;
     if (sweepStop_ && end >= sweepStop_) {
-      channels_[0].enabled = false;
+      Disable(0);
       sweepStop_ = 0;
+      Emit(end, -8);
     }
     if (dividerEvent_ && end >= dividerEvent_) {
       dividerEvent_ = 0;
-      ClockFrame();
+      ClockFrame(-4);
     }
     ClockNoise();
     if (noisePending_ && end >= noiseStart_) {

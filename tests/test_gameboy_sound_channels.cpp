@@ -19,6 +19,7 @@ struct System final : SoundChannels::Output, ClockedIo::Bus {
     unsigned channel;
     uint8_t level;
     bool dacEnabled, channelEnabled;
+    int phaseOffset;
     bool operator==(const Edge &) const = default;
   };
   SoundChannels sound{*this};
@@ -30,14 +31,18 @@ struct System final : SoundChannels::Output, ClockedIo::Bus {
     sound.Reset(secondModel);
     divider.Reset();
   }
-  void Dac(uint64_t time, unsigned channel, uint8_t level, bool dacEnabled,
-           bool channelEnabled) override {
+  void Dac(uint64_t time, unsigned channel, SoundChannels::Signal signal,
+           int phaseOffset) override {
     Check(edges.empty() || time >= edges.back().clock, "DAC events retain clock order");
-    edges.push_back({time, channel, level, dacEnabled, channelEnabled});
+    edges.push_back(
+        {time, channel, signal.level, signal.dacEnabled, signal.channelEnabled, phaseOffset});
   }
   void Mixer(uint64_t, uint8_t value, uint8_t outputs) override {
     volume = value;
     routing = outputs;
+  }
+  void Power(uint64_t, bool) override {
+    volume = routing = 0;
   }
   void RequestInterrupt(uint8_t) override {}
   void AudioDividerEdge(bool rising) override {
