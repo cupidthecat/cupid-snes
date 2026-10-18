@@ -112,9 +112,18 @@ jobs:
             core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom,Machine,Oam,Video,SoundChannels,Audio,Peripherals}.cpp \
             tests/test_gameboy_peripherals.cpp -o gameboy-peripheral-tests
           ./gameboy-peripheral-tests
-  windows:
+  windows-build:
+    name: windows (${{ matrix.mode }})
     runs-on: windows-2022
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: regular
+            lto: "OFF"
+          - mode: optimized
+            lto: "ON"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cache SDL build
@@ -124,14 +133,15 @@ jobs:
           key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('cmake/SDL3.cmake') }}
           restore-keys: sdl-${{ runner.os }}-vs2022-
       - name: Configure
-        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=OFF
+        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=${{ matrix.lto }}
       - name: Build
+        if: matrix.mode == 'regular'
         run: cmake --build out/build/ci --config Release --parallel 4
       - name: Test
+        if: matrix.mode == 'regular'
         run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-      - name: Configure optimized Release
-        run: cmake -S . -B out/build/ci -DSNES_ENABLE_LTO=ON
       - name: Build optimized executables
+        if: matrix.mode == 'optimized'
         run: >-
           cmake --build out/build/ci --config Release --parallel 4 --target
           snes_frontend snes_rom_diagnostic snes_rom_smoke snes_trace_dump
@@ -150,6 +160,17 @@ jobs:
           snes_cartridge_device_tests
           snes_superfx_tests snes_cartridge_processor_tests snes_cx4_processor_tests snes_sa1_tests
       - name: Test optimized console and SDL paths
+        if: matrix.mode == 'optimized'
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
           -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|super_game_boy|msu1|msu1_integration|cartridge_compatibility|bus_scheduling|sound_clocking|power_on_state|ppu_background|ppu_object|ppu_port|dma_timing|controller|light_gun|frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+  windows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: windows-build
+    if: ${{ always() }}
+    steps:
+      - name: Require both Windows configurations
+        env:
+          WINDOWS_RESULT: ${{ needs.windows-build.result }}
+        run: test "$WINDOWS_RESULT" = "success"
