@@ -519,6 +519,11 @@ uint32_t Cartridge::RomCrc32() const noexcept {
   return romCrc32_;
 }
 
+void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
+  if (armDsp_)
+    armDsp_->Power(state);
+}
+
 void Cartridge::Reset() {
   if (gameBoy_)
     gameBoy_->Reset();

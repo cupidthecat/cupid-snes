@@ -608,6 +608,7 @@ void Emulator::ResetHardware(bool warm) {
       dsp_.Write(uint8_t(reg), 0xff);
   smp_.Power(warm);
   ppu_.Power(startup, warm);
+  cartridge_->InitializePowerOnMemory(startup);
   cpuIo_.Reset();
   cpuIo_.setCpuVersion(timing_.CpuRevision());
   dma_.Reset();

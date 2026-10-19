@@ -1,4 +1,5 @@
 #include "snes/core/St018Processor.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
 
@@ -25,9 +26,14 @@ void St018Processor::Restart() {
 }
 
 void St018Processor::Reset() {
+  PowerOnState state(EntropyMode::None, 0);
+  Power(state);
+}
+
+void St018Processor::Power(PowerOnState &state) {
   reset_ = false;
   Restart();
-  ram_.fill(0);
+  state.Fill(ram_);
 }
 
 void St018Processor::SetPal(bool pal) {

@@ -6,9 +6,11 @@ Existing LoROM, HiROM, extended and special boards, DSP-1/2, OBC1, S-RTC, S-DD1,
 
 ## Console startup and video hardware
 
-`Emulator::Config::entropyMode` selects deterministic startup (`None`), a correlated memory pattern with sparse bit changes (`Low`), or independent byte generation (`High`). The default is `Low`. `entropySeed` and `entropySequence` make startup reproducible; an omitted seed uses the process CPU clock. WRAM and progressive video memory and registers consume one shared stream in startup order.
+`Emulator::Config::entropyMode` selects deterministic startup (`None`), a correlated memory pattern with sparse bit changes (`Low`), or independent byte generation (`High`). The default is `Low`. `entropySeed` and `entropySequence` make startup reproducible; an omitted seed uses the process CPU clock. WRAM, progressive video memory and registers, and ST018 work RAM consume one shared stream in startup order.
 
 The progressive video path retains WRAM, APURAM and VRAM on warm reset. It clears OAM and initializes palette memory and register latches through a fresh startup stream. Deterministic mode clears palette memory and retains defined fallback bits, including the PPU bus values and VRAM increment selection. Reset preserves the selected video hardware configuration.
+
+ST018 initializes its 16 KiB work RAM after video startup on cold and warm console resets. Deterministic mode clears it. Reset through the cartridge bridge retains work RAM and firmware writes. Battery RAM remains separate and survives both resets.
 
 `Emulator::Config::gameCompatibilityFixes` enables three cartridge rules by default. The complete header title `DIRT RACER` fills WRAM with `$FF` after normal startup initialization, including on warm reset. `MAGICAL DROP` writes `$FF` to every DSP register after power or reset; the ENDX register still clears on a write. `RENDERING RANGER R2` selects a 32,000 Hz DSP input clock. Output remains at 32,040 stereo frames per second through cubic conversion. Disabling the setting uses ordinary startup and the 32,040 Hz input clock for all three titles. Loading another cartridge restores its own settings.
 

@@ -133,7 +133,7 @@ void ConsoleMailboxExchange() {
   Check(machine->GetBus().Read(0x003804) == 0x80,
         "Both processors consume their mailboxes during the console-driven exchange");
 }
-void WorkRamReset() {
+std::vector<uint8_t> CounterImage() {
   auto image = Image();
   image[0] = 0x80;
   image[1] = 0xfe;
@@ -143,6 +143,10 @@ void WorkRamReset() {
   for (unsigned i = 0; i < std::size(firmware); ++i)
     for (unsigned byte = 0; byte < 4; ++byte)
       image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+  return image;
+}
+void WorkRamReset() {
+  auto image = CounterImage();
   auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The work RAM counter firmware loads");
   auto &bus = machine->GetBus();
@@ -159,6 +163,42 @@ void WorkRamReset() {
   Check(bus.Read(0x3800) == 1 && bus.Read(0x700123) == 0x63,
         "Console reset clears ST018 work RAM while retaining battery RAM");
 }
+
+void WorkRamEntropy() {
+  constexpr uint32_t seeds[]{0, 1, 0x12345678};
+  constexpr uint8_t expected[3][3][2]{{{0, 0}, {0, 0}, {0, 0}},
+                                      {{127, 77}, {242, 244}, {235, 56}},
+                                      {{213, 114}, {72, 61}, {126, 199}}};
+  for (unsigned mode = 0; mode < 3; ++mode)
+    for (unsigned seed = 0; seed < 3; ++seed)
+      for (unsigned bytes : {65536u, 131072u}) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.entropyMode = EntropyMode(mode);
+        config.entropySeed = seeds[seed];
+        config.ppu.revision2 = uint8_t(seed + 1);
+        config.ppu.vramBytes = bytes;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(CounterImage()), "The entropy counter firmware loads");
+        auto &bus = machine->GetBus();
+        machine->StepFrame();
+        Check(
+            bus.Read(0x3800) == uint8_t(expected[mode][seed][0] + 1),
+            "Firmware reads cartridge work RAM from the startup stream after video initialization");
+        bus.Write(0x3804, 1);
+        machine->StepFrame();
+        bus.Write(0x3804, 0);
+        machine->StepFrame();
+        Check(bus.Read(0x3800) == uint8_t(expected[mode][seed][0] + 2),
+              "Bridge reset retains initialized work RAM and firmware writes");
+        bus.Write(0x700123, 0x63);
+        Check(machine->Reset(), "The entropy-configured console resets");
+        machine->StepFrame();
+        Check(bus.Read(0x3800) == uint8_t(expected[mode][seed][1] + 1) &&
+                  bus.Read(0x700123) == 0x63,
+              "Console reset reinitializes cartridge work RAM after video while retaining battery "
+              "RAM");
+      }
+}
 } // namespace
 int main() {
   try {
@@ -169,6 +209,7 @@ int main() {
     MappedFirmwarePorts();
     ConsoleMailboxExchange();
     WorkRamReset();
+    WorkRamEntropy();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

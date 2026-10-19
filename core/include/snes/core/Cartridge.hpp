@@ -32,6 +32,7 @@
 #include <vector>
 
 namespace snes::core {
+class PowerOnState;
 namespace gameboy {
 class Adapter;
 }
@@ -164,6 +165,7 @@ public:
   // Reset device controls and internal work RAM as required. Retain battery RAM
   // and clock data.
   void Reset();
+  void InitializePowerOnMemory(PowerOnState &state);
 
   void SetMemselFast(bool enabled) noexcept;
   bool MemselFast() const noexcept;
