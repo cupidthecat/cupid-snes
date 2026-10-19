@@ -418,6 +418,28 @@ void ResetDividerSampleBoundaries() {
             "Processor reset retains sample timing across divider edges within a bus batch");
     }
 }
+
+void LateSampleConsumesPendingSound() {
+  constexpr std::array<uint64_t, 2> expected{0x4eb1f448469a6519ull, 0xb53b4c9c13a98b7dull};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned batch : {4u, 8u, 32u, 64u}) {
+      System system(model != 0);
+      system.StepBatched(1252, batch);
+      system.audio.Write(0xff26, 0x80);
+      system.StepBatched(332, batch);
+      system.audio.Write(0xff23, 0x80);
+      system.StepBatched(1076, batch);
+      system.audio.Write(0xff21, 0x71);
+      system.StepBatched(692, batch);
+      system.audio.Write(0xff25, 0x88);
+      system.StepBatched(248, batch);
+      system.audio.Write(0xff23, 0x80);
+      system.StepBatched(8192, batch);
+      Check(
+          system.samples.size() == 92 && system.Digest() == expected[model],
+          "A late sample consumes pending sound after delayed activation exceeds the batch budget");
+    }
+}
 } // namespace
 
 int main() {
@@ -436,6 +458,7 @@ int main() {
     DividerClocksRemainInBatchBudget();
     SweepOverflowAcrossBusBatches();
     ResetDividerSampleBoundaries();
+    LateSampleConsumesPendingSound();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {

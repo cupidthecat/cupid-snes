@@ -220,7 +220,8 @@ void Audio::CommitSamples() {
       if (!due && !channels_.NeedsStep() && pending + renderedClocks_ < batchClocks_)
         break;
       const auto capacity = batchClocks_ > renderedClocks_ ? batchClocks_ - renderedClocks_ : 0;
-      if (capacity || !due) {
+      // Finish pending sound before a late sample when activation exceeded the budget.
+      if (capacity || !due || renderedClocks_ > batchClocks_) {
         auto end = phaseClock_ + std::min(pending, capacity ? uint64_t(capacity) : pending);
         const auto trigger = channels_.PendingTriggerClock();
         if (trigger > phaseClock_)
