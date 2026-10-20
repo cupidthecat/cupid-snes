@@ -520,6 +520,37 @@ void ClockPollingPhase() {
   cartridge.AdvanceRtc(1);
   Check(polls == 2, "Two RTC polling intervals retain the exact oscillator ratio");
 }
+
+void ClockResetPhase() {
+  for (uint32_t rate : {4194304u, 4295454u})
+    for (uint8_t type : {uint8_t(0x0f), uint8_t(0xfe), uint8_t(0xbc)}) {
+      uint64_t now = 1789389296;
+      unsigned polls = 0;
+      Cartridge cartridge;
+      cartridge.SetTimeSource([&] {
+        ++polls;
+        return now;
+      });
+      auto image = Image(type, 2, 0);
+      if (type == 0xbc) {
+        image[0x149] = 0xc1;
+        image[0x14a] = 0x65;
+        image[0x152] = 0;
+        image[0x153] = 8;
+      }
+      Check(cartridge.Load(image), "Load a battery clock for reset timing checks");
+      cartridge.SetClockRate(rate);
+      cartridge.AdvanceRtc(1000);
+      cartridge.Reset();
+      now += 60;
+      polls = 0;
+      const unsigned remaining = (rate / 16 + 1) / 2 - 1000;
+      cartridge.AdvanceRtc(remaining - 1);
+      Check(polls == 0, "Reset retains the incomplete battery clock polling interval");
+      cartridge.AdvanceRtc(1);
+      Check(polls == 1, "Reset preserves the next battery clock polling edge");
+    }
+}
 } // namespace
 
 int main() {
@@ -536,6 +567,7 @@ int main() {
     Huc3CommandsAndSaves();
     Huc3ClockBoundaries();
     ClockPollingPhase();
+    ClockResetPhase();
     std::puts("Handheld cartridge banking, RAM, RTC and battery checks passed");
     return 0;
   } catch (const std::exception &error) {

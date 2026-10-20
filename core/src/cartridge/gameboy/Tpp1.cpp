@@ -20,7 +20,6 @@ uint64_t AdvanceCounter(uint8_t &value, unsigned limit, unsigned modulus, uint64
 
 void Tpp1::Reset(uint64_t timestamp) noexcept {
   timestamp_ = timestamp;
-  phase_ = 0;
   romBank_ = 0;
   ramBank_ = mode_ = rumble_ = 0;
   bankWritten_ = false;

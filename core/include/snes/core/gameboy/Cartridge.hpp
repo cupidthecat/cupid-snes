@@ -21,6 +21,7 @@ class Cartridge {
 public:
   using TimeSource = std::function<uint64_t()>;
   bool Load(std::span<const uint8_t> image, std::string *error = nullptr);
+  // Reset mapper controls while retaining the battery clock polling phase.
   void Reset();
   std::optional<uint8_t> Read(uint16_t address);
   void Write(uint16_t address, uint8_t value);

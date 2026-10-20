@@ -342,6 +342,40 @@ void CameraSleepAndDma() {
             "batch");
   }
 }
+void ClockResetPhase() {
+  for (unsigned model = 0; model < 2; ++model)
+    for (uint8_t type : {uint8_t(0x0f), uint8_t(0xfe), uint8_t(0xbc)}) {
+      System system;
+      system.rom[0x147] = type;
+      if (type == 0xbc) {
+        system.rom[0x149] = 0xc1;
+        system.rom[0x14a] = 0x65;
+        system.rom[0x153] = 8;
+      }
+      uint64_t now = 1789389296;
+      unsigned polls = 0;
+      system.machine.GameCartridge().SetTimeSource([&] {
+        ++polls;
+        return now;
+      });
+      system.Load({0x00, 0xc3, 0, 1});
+      const auto bootClocks = system.machine.Clocks();
+      system.machine.Reset(model != 0);
+      while (system.machine.Clocks() < 1000)
+        system.machine.RunInstruction();
+      const auto elapsed = bootClocks + system.machine.Clocks();
+      system.machine.Reset(model != 0);
+      now += 60;
+      polls = 0;
+      const unsigned rate = model ? 4194304 : 4295454;
+      const auto deadline = (rate / 16 + 1) / 2 - elapsed;
+      while (polls == 0 && system.machine.Clocks() < deadline + 32)
+        system.machine.RunInstruction();
+      Check(polls == 1 && system.machine.Clocks() >= deadline &&
+                system.machine.Clocks() < deadline + 16,
+            "Guest execution retains the battery clock polling edge through processor reset");
+    }
+}
 } // namespace
 
 int main() {
@@ -354,6 +388,7 @@ int main() {
     InterruptStackAndTimer();
     DmaAndContention();
     CameraSleepAndDma();
+    ClockResetPhase();
     std::puts("Handheld CPU, memory, device timing and DMA checks passed");
     return 0;
   } catch (const std::exception &error) {

@@ -164,7 +164,6 @@ void Cartridge::Reset() {
   motion_.Reset();
   infrared_.Reset();
   camera_.Reset();
-  rtcClocks_ = 0;
   multicartRegisters_ = {};
   lastTime_ = Now();
   huc3Clock_.Reset(lastTime_);
