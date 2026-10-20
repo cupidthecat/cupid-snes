@@ -9,6 +9,8 @@
 
 #include <array>
 #include <functional>
+#include <memory>
+#include <utility>
 
 namespace snes::core::gameboy {
 
@@ -49,8 +51,13 @@ public:
             std::string *error = nullptr);
   void Reset(bool secondModel = false, bool preserveAudio = false);
   void SetStartupEntropy(bool enabled, uint64_t seed) noexcept {
-    startup_.Configure(enabled, seed);
+    startup_->Configure(enabled, seed);
     cartridge_.SetCameraEntropy(seed, enabled);
+  }
+  void SetStartupState(std::shared_ptr<StartupState> state) noexcept {
+    if (state)
+      startup_ = std::move(state);
+    cartridge_.SetCameraEntropy(0, startup_->Enabled());
   }
   unsigned RunInstruction();
   void AdvanceHardware(unsigned clocks);
@@ -76,7 +83,7 @@ private:
   Cpu cpu_{*this};
   ClockedIo timer_{*this};
   Cartridge cartridge_;
-  StartupState startup_;
+  std::shared_ptr<StartupState> startup_ = std::make_shared<StartupState>();
   std::array<uint8_t, 8192> ram_{};
   std::array<uint8_t, 127> highRam_{};
   std::array<uint8_t, 256> boot_{};

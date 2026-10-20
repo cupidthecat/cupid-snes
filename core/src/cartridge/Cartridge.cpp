@@ -524,9 +524,9 @@ void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
     armDsp_->Power(state);
 }
 
-void Cartridge::InitializeGameBoyStartup(bool entropyEnabled, std::optional<uint64_t> seed) {
+void Cartridge::InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state) {
   if (gameBoy_)
-    gameBoy_->InitializeStartup(entropyEnabled, seed);
+    gameBoy_->InitializeStartup(std::move(state));
 }
 
 void Cartridge::SetSa1BusContention(bool enabled) {

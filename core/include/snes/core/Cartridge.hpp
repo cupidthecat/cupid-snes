@@ -35,7 +35,8 @@ namespace snes::core {
 class PowerOnState;
 namespace gameboy {
 class Adapter;
-}
+class StartupState;
+} // namespace gameboy
 
 enum class MappingType {
   Unknown,
@@ -166,7 +167,7 @@ public:
   // and clock data.
   void Reset();
   void InitializePowerOnMemory(PowerOnState &state);
-  void InitializeGameBoyStartup(bool entropyEnabled, std::optional<uint64_t> seed);
+  void InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state);
 
   void SetMemselFast(bool enabled) noexcept;
   bool MemselFast() const noexcept;

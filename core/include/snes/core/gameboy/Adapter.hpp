@@ -4,7 +4,7 @@
 #include "snes/core/gameboy/AudioMixer.hpp"
 #include "snes/core/gameboy/Peripherals.hpp"
 
-#include <optional>
+#include <memory>
 
 namespace snes::core {
 class MemoryBus;
@@ -22,7 +22,7 @@ public:
   bool Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
             std::string *error = nullptr);
   void Reset();
-  void InitializeStartup(bool entropyEnabled, std::optional<uint64_t> seed);
+  void InitializeStartup(std::shared_ptr<StartupState> state);
   void SetPal(bool pal) noexcept;
   void Advance(uint32_t masterClocks, bool synchronize = true);
   uint8_t Read(uint32_t address);

@@ -140,9 +140,12 @@ void RetainedMemoryAndRegisters() {
     Check(machine->GetTiming().MasterClockHz() ==
               (pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz),
           "Reset retains the cartridge region");
+    std::array<uint8_t, Smp::RamSize> audioRam{};
+    std::copy_n(smp.Ram(), audioRam.size(), audioRam.begin());
     Check(machine->LoadCartridge(Rom()), "A later cartridge load succeeds");
-    Check(ppu.VramData()[0] == 0 && smp.Ram()[0] == 0 && dsp.Read(0) == 0,
-          "Cold cartridge loading still clears volatile audio and video storage");
+    Check(ppu.VramData()[0] == 0 && dsp.Read(0) == 0 &&
+              std::equal(audioRam.begin(), audioRam.end(), smp.Ram()),
+          "Cartridge replacement clears video and DSP registers while retaining all audio RAM");
   }
 }
 

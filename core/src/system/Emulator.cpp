@@ -5,6 +5,7 @@
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/detail/Compatibility.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
+#include "snes/core/gameboy/StartupState.hpp"
 
 #include <algorithm>
 #include <ctime>
@@ -67,6 +68,11 @@ Emulator::Emulator() : Emulator(Config{}) {}
 
 Emulator::Emulator(Config config)
     : config_(std::move(config)), ppu_(config_.ppu), timing_(Region::NTSC, config_.cpuRevision) {
+  const auto seed = config_.entropySeed
+                        ? (uint64_t(config_.entropySequence) << 32) | *config_.entropySeed
+                        : gameboy::StartupState::SeedFromTime(uint64_t(std::time(nullptr)));
+  handheldStartup_ = std::make_shared<gameboy::StartupState>();
+  handheldStartup_->Configure(config_.entropyMode != EntropyMode::None, seed);
   Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
 }
 
@@ -301,12 +307,8 @@ const Cartridge *Emulator::LoadedCartridge() const noexcept {
 
 void Emulator::InitSubsystems() {
   msu1_.reset();
-  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy) {
-    std::optional<uint64_t> seed;
-    if (config_.entropySeed)
-      seed = (uint64_t(config_.entropySequence) << 32) | *config_.entropySeed;
-    cartridge_->InitializeGameBoyStartup(config_.entropyMode != EntropyMode::None, seed);
-  }
+  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy)
+    cartridge_->InitializeGameBoyStartup(handheldStartup_);
   // 1. Inter-subsystem connections
   dsp_.SetRam(smp_.Ram());
   smp_.SetDsp(dsp_);
@@ -597,7 +599,8 @@ void Emulator::ResetHardware(bool warm) {
     for (unsigned reg = 0; reg < Dsp::RegisterCount; ++reg)
       dsp_.Write(uint8_t(reg), 0xff);
   smp_.SetDspMode(compatibility.perCycleDsp ? Smp::DspMode::PerCycle : config_.dspMode);
-  smp_.Power(warm);
+  // Audio RAM belongs to the console and survives cartridge replacement.
+  smp_.Power(true);
   ppu_.Power(startup, compatibility.video, warm);
   cartridge_->InitializePowerOnMemory(startup);
   cpuIo_.Reset();

@@ -1,5 +1,6 @@
 #include "ConsoleConfig.hpp"
 #include "audio/MsuFixture.hpp"
+#include "gameboy/CameraProgram.hpp"
 #include "gameboy/StartupProgram.hpp"
 #include "snes/core/gameboy/AudioMixer.hpp"
 
@@ -127,6 +128,148 @@ void ConsoleStartupEntropy() {
                 "Console entropy settings and reset order reach the handheld memory");
         }
       }
+}
+
+uint64_t StartupSignature(std::span<const uint8_t> bytes) {
+  uint64_t value = 14695981039346656037ull;
+  for (uint8_t byte : bytes)
+    value = (value ^ byte) * 1099511628211ull;
+  return value;
+}
+
+void ConsoleReloadEntropy() {
+  constexpr uint64_t expected[2][2][3][3][2] = {
+      {{{{0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull}},
+        {{0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull}},
+        {{0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull}}},
+       {{{0xa2b002b734b29813ull, 0xcd274d4cba8ada78ull},
+         {0x2f2684a3979cb046ull, 0x26dd76fbadd81b98ull},
+         {0x1d2cdfcda64ef7f1ull, 0x0e52dcbb01ea5053ull}},
+        {{0x9c4e429010c917d7ull, 0x33cdbc1dd08f98c9ull},
+         {0x1e352b8020b2114eull, 0x1586e73ac2cdea8eull},
+         {0x56e75f5f76074fe9ull, 0x8a98aceed3ac227eull}},
+        {{0x5983ef54bb40ae55ull, 0x13c5b072cfbb3f1full},
+         {0x715683d8ee0b073dull, 0x9eb87e95c78ca1f3ull},
+         {0x343170d3be63cd43ull, 0x4b4fd2e9e36b24edull}}}},
+      {{{{0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull}},
+        {{0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull}},
+        {{0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+         {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+         {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull}}},
+       {{{0x06d32353afee2433ull, 0xb6e2eb304dc672eeull},
+         {0x26721664876e98faull, 0xff3d85cee190484dull},
+         {0x1332c1cdf4edb750ull, 0x174c43738b229b41ull}},
+        {{0x6cabe51aea7063f1ull, 0x016c241a40b9d947ull},
+         {0x9a2f7e40d6fe0f4full, 0xc06fb68e83f58729ull},
+         {0xb9229fffc8ead116ull, 0xd3033d090e385fe0ull}},
+        {{0x055801007060c1b7ull, 0x8cecaaa9f095e92full},
+         {0x52250348017e2171ull, 0x6f18717148d3a66dull},
+         {0x894569376903d19full, 0x56ea3e25c993441cull}}}}};
+  constexpr std::array<uint64_t, 3> seeds{1, 0xc0ffee, 0x100000001ull};
+  for (unsigned model = 0; model < 2; ++model)
+    for (const auto mode : {EntropyMode::None, EntropyMode::Low, EntropyMode::High})
+      for (unsigned seed = 0; seed < seeds.size(); ++seed) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.entropyMode = mode;
+        config.entropySeed = uint32_t(seeds[seed]);
+        config.entropySequence = uint32_t(seeds[seed] >> 32);
+        auto machine = std::make_unique<Emulator>(config);
+        for (unsigned load = 0; load < 3; ++load) {
+          const bool secondModel = (load & 1) ? model == 0 : model != 0;
+          Check(machine->LoadSuperGameBoy(Bios(secondModel), snes::tests::gameboy::StartupProgram(),
+                                          Boot()),
+                "The same console replaces its cartridge and adapter model");
+          Check(machine->LoadSlotBattery(0, std::vector<uint8_t>(32768)),
+                "Each replacement receives its own empty battery");
+          for (unsigned warm = 0; warm < 2; ++warm) {
+            if (warm)
+              Check(machine->Reset(), "The replacement also supports console reset");
+            for (unsigned frame = 0; frame < 8; ++frame)
+              machine->StepFrame({false, false, false});
+            const auto saved = machine->SaveSlotBattery(0);
+            Check(saved.size() == 32768 && saved[8495] == warm + 1,
+                  "Every replacement executes a complete new startup-memory copy");
+            Check(StartupSignature({saved.data(), 8495}) ==
+                      expected[model][mode != EntropyMode::None][seed][load][warm],
+                  "Startup noise continues across replacement, model changes and reset");
+          }
+        }
+      }
+}
+
+void CameraReloadEntropy() {
+  constexpr uint64_t expected[2][3][4][2] = {{{{0xb25ddc92772e7c1full, 0xb25ddc92772e7c1full},
+                                               {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+                                               {0xb25ddc92772e7c1full, 0xb25ddc92772e7c1full},
+                                               {0x83dcd331ece72507ull, 0x83dcd331ece72507ull}},
+                                              {{0x558662e1dc6c39a8ull, 0x53bdd6421639f21bull},
+                                               {0x0db6b407c14bcb3dull, 0xca634973b135627full},
+                                               {0x6016e019252a9d67ull, 0x0f9b6f81124b1f9dull},
+                                               {0x0819e7024ecb5cadull, 0xbc21980d5679c020ull}},
+                                              {{0x558662e1dc6c39a8ull, 0x53bdd6421639f21bull},
+                                               {0x0db6b407c14bcb3dull, 0xca634973b135627full},
+                                               {0x6016e019252a9d67ull, 0x0f9b6f81124b1f9dull},
+                                               {0x0819e7024ecb5cadull, 0xbc21980d5679c020ull}}},
+                                             {{{0xb25ddc92772e7c1full, 0xb25ddc92772e7c1full},
+                                               {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+                                               {0xb25ddc92772e7c1full, 0xb25ddc92772e7c1full},
+                                               {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull}},
+                                              {{0x45700a1220a5a951ull, 0xbf10a13f6e726ccdull},
+                                               {0x80b8f1d1420e9436ull, 0xf9f3293b240f8dddull},
+                                               {0xe0687cc7545183c0ull, 0xbf859f5dc37066e9ull},
+                                               {0x877197d5444bee80ull, 0x65ac5481e863fdb9ull}},
+                                              {{0x45700a1220a5a951ull, 0xbf10a13f6e726ccdull},
+                                               {0x80b8f1d1420e9436ull, 0xf9f3293b240f8dddull},
+                                               {0xe0687cc7545183c0ull, 0xbf859f5dc37066e9ull},
+                                               {0x877197d5444bee80ull, 0x65ac5481e863fdb9ull}}}};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned mode = 0; mode < 3; ++mode) {
+      auto config = snes::tests::DeterministicConsoleConfig();
+      config.entropyMode = EntropyMode(mode);
+      config.entropySeed = 1;
+      auto machine = std::make_unique<Emulator>(config);
+      for (unsigned load = 0; load < 4; ++load) {
+        const bool camera = !(load & 1);
+        const bool secondModel = load == 0 || load == 3 ? model != 0 : model == 0;
+        Check(machine->LoadSuperGameBoy(Bios(secondModel),
+                                        camera ? snes::tests::gameboy::CameraProgram()
+                                               : snes::tests::gameboy::StartupProgram(),
+                                        Boot()),
+              "Camera and startup-copier cartridges replace each other");
+        Check(machine->LoadSlotBattery(0, std::vector<uint8_t>(camera ? 131072 : 32768)),
+              "Each Camera or copier receives its own empty battery");
+        for (unsigned warm = 0; warm < 2; ++warm) {
+          if (warm)
+            Check(machine->Reset(), "The Camera sequence also covers console reset");
+          for (unsigned frame = 0; frame < 16; ++frame)
+            machine->StepFrame({false, false, false});
+          uint64_t signature;
+          if (camera) {
+            const auto saved = machine->SaveSlotBattery(0);
+            Check(saved.size() == 131072 && saved[16383] == warm + 1,
+                  "The guest completes a new Camera capture and image copy after every reset");
+            signature = StartupSignature({saved.data() + 8192, 3584});
+          } else {
+            const auto saved = machine->SaveSlotBattery(0);
+            Check(saved.size() == 32768 && saved[8495] == warm + 1,
+                  "The copier reads memory after Camera noise consumption");
+            signature = StartupSignature({saved.data(), 8495});
+          }
+          Check(signature == expected[model][mode][load][warm],
+                "Camera capture and later startup memory share the console's persistent noise");
+        }
+      }
+    }
 }
 
 void BoardMapping() {
@@ -480,6 +623,8 @@ void StereoAudioMix() {
 int main() {
   try {
     ConsoleStartupEntropy();
+    ConsoleReloadEntropy();
+    CameraReloadEntropy();
     BoardMapping();
     ClockAndBattery();
     ConsoleExecutionAndFailedLoads();

@@ -223,6 +223,7 @@ private:
   std::vector<ITraceSink *> traceSinks_;
 
   CartridgeDatabase cartridgeDatabase_{};
+  std::shared_ptr<gameboy::StartupState> handheldStartup_;
   std::optional<Cartridge> cartridge_{};
 
   // Hardware subsystems (construction order matters - bus_ before cpu_)

@@ -11,7 +11,7 @@ bool VideoBus(uint16_t address) noexcept {
 
 Machine::Machine(Host &host, Devices &devices) : host_(host), devices_(devices) {
   devices_.SetDmaSynchronizer([this] { SynchronizeDma(true); });
-  cartridge_.SetCameraNoiseSource([this] { return startup_.NoiseByte(); });
+  cartridge_.SetCameraNoiseSource([this] { return startup_->NoiseByte(); });
 }
 
 bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
@@ -34,7 +34,7 @@ void Machine::Reset(bool secondModel, bool preserveAudio) {
   timer_.Reset();
   cartridge_.Reset();
   cartridge_.SetClockRate(secondModel ? 4194304 : 4295454);
-  const auto initial = startup_.Power(secondModel);
+  const auto initial = startup_->Power(secondModel);
   ram_ = initial.work;
   highRam_ = initial.high;
   dmaSource_ = 0;

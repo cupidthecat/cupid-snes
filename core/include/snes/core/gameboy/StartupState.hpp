@@ -16,6 +16,9 @@ public:
   };
 
   void Configure(bool enabled, uint64_t seed) noexcept;
+  bool Enabled() const noexcept {
+    return enabled_;
+  }
   static uint64_t SeedFromTime(uint64_t timestamp) noexcept;
   Memory Power(bool secondModel) noexcept;
   uint8_t NoiseByte() noexcept;
