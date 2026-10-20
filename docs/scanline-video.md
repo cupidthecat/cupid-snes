@@ -2,7 +2,9 @@
 
 The console defaults to `Ppu::RenderModel::Scanline`. Set `Emulator::Config::ppu.model` to `Progressive` for clocked fetches and midline display changes. A standalone `Ppu` keeps the progressive default.
 
-Scanline rendering samples screen registers and palette memory at H=512. CPU writes at that clock complete before the sample. Later brightness, scroll, window, palette, and color-math changes affect later lines. Each retained line renders against stable VRAM and OAM; a permitted write to either memory draws pending lines before changing the shared data. Palette writes keep the earlier line's copied palette intact.
+Scanline rendering normally samples screen registers and palette memory at H=512. Cartridge rules can select H=32 or H=128 through `ppu.renderCycle`. CPU writes at the selected clock complete before the sample. Later brightness, scroll, window, palette, and color-math changes affect later lines. Each retained line renders against stable VRAM and OAM; a permitted write to either memory draws pending lines before changing the shared data. Palette writes keep the earlier line's copied palette intact.
+
+Air Strike Patrol, Desert Fighter, Marvelous, Crayon Shin-chan, Winter Olympics, and World Cup Striker select progressive rendering. PAL Adventures of Dr. Franken, Firepower 2000, Super SWIV, and NHL '94 use H=32 in scanline mode. Sugoro Quest++ uses H=128. Selection uses complete decoded header titles and the cartridge's region. Warm reset retains the selection, and loading another cartridge starts from the requested video configuration. These video rules apply independently of optional startup and audio fixes.
 
 Background and object decoding share the clocked renderer's fetch and composition components. Each scanline supplies a constant register snapshot. Background modes 0 through 7, offset tiles, mosaic, direct color, object dimensions, layer windows, and color windows use the retained state. Object overflow becomes visible when a batch renders, and disabled object screens skip evaluation in this model.
 

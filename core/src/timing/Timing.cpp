@@ -50,6 +50,11 @@ void Timing::SetRegion(Region r) noexcept {
   previousVPeriod_ = vperiod_;
 }
 
+void Timing::SetRenderCycle(uint16_t clock) noexcept {
+  renderCycle_ = std::clamp<uint16_t>(clock, 2, kDotsPerLineShort);
+  updateNextEvent();
+}
+
 // Core tick
 
 void Timing::Tick(uint32_t clocks) {
@@ -115,8 +120,8 @@ void Timing::dispatchScanlineEvents() {
       onNmiPoint();
   }
 
-  // PPU render sampling point (visible lines 1..vdisp-1).
-  if (!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_ && hcounter_ >= kRenderCycle) {
+  // PPU sampling uses the active cartridge's visible-line clock.
+  if (!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_ && hcounter_ >= renderCycle_) {
     renderCycleFired_ = true;
     if (onRenderCycle)
       onRenderCycle(vcounter_);
@@ -161,7 +166,7 @@ void Timing::updateNextEvent() {
   };
   include(!hdmaSetupFired_ && vcounter_ == 0, hdmaSetupPosition_);
   include(!nmiFired_ && vcounter_ == vdisp_, kNmiHPos);
-  include(!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_, kRenderCycle);
+  include(!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_, renderCycle_);
   include(!dramRefreshFired_, dramRefreshPosition_);
   include(!hblankFired_ && vcounter_ < vdisp_, kHBlankStart);
   include(!hdmaFired_ && vcounter_ < vdisp_, kHdmaPosition);

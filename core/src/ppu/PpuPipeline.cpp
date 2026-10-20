@@ -7,7 +7,7 @@
 namespace snes::core {
 void Ppu::SynchronizePipeline(uint16_t clock) {
   if (ScanlineModel()) {
-    if (pendingScanline_ && clock > 512) {
+    if (pendingScanline_ && clock > config_.renderCycle) {
       const auto line = pendingScanline_;
       pendingScanline_ = 0;
       CacheScanline(line);

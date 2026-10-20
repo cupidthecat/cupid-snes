@@ -40,6 +40,7 @@ public:
     uint32_t vramBytes = 65536;
     RenderModel model = RenderModel::Progressive;
     bool deinterlace = true;
+    uint16_t renderCycle = 512;
   };
 
   Ppu();
@@ -54,6 +55,7 @@ public:
   // retains VRAM and reinitializes palette, sprite and register state.
   void Reset(bool retainVram = false);
   void Power(PowerOnState &state, bool retainVram = false);
+  void Power(PowerOnState &state, Config config, bool retainVram = false);
   const Config &Configuration() const noexcept {
     return config_;
   }
@@ -69,7 +71,7 @@ public:
   /// Called at the start of each frame (V=0).
   void FrameBegin();
 
-  /// Called at H=512 on each visible scanline (V=1..vdisp-1).
+  /// Called at the configured sampling clock on each visible scanline.
   /// Retains screen registers for final composition.
   void ScanlineBegin(uint16_t line);
 

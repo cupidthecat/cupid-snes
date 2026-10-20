@@ -103,6 +103,11 @@ public:
     return cpuRevision_;
   }
 
+  void SetRenderCycle(uint16_t clock) noexcept;
+  uint16_t RenderCycle() const noexcept {
+    return renderCycle_;
+  }
+
   /// Interlace timing samples the PPU input when scanline 128 begins.
   bool Interlace() const noexcept {
     return interlace_;
@@ -258,6 +263,7 @@ private:
   bool interlace_ = false;
   bool interlaceInput_ = false;
   uint16_t vdisp_ = 225;
+  uint16_t renderCycle_ = kRenderCycle;
 
   uint16_t hcounter_ = 0; // 0 .. hperiod_-1
   uint16_t vcounter_ = 0; // 0 .. vperiod_-1

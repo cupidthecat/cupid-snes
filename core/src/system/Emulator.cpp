@@ -3,6 +3,7 @@
 #include "snes/core/Emulator.hpp"
 #include "snes/core/Logging.hpp"
 #include "snes/core/SnesCpu.hpp"
+#include "snes/core/detail/Compatibility.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
 
 #include <algorithm>
@@ -11,29 +12,11 @@
 #include <iterator>
 #include <limits>
 #include <optional>
-#include <string_view>
 #include <utility>
 
 namespace snes::core {
 
 namespace {
-struct GameCompatibility {
-  bool initializeWram = false;
-  bool initializeDsp = false;
-  uint32_t sampleRate = AudioTiming::SampleRate;
-};
-
-GameCompatibility SelectCompatibility(std::string_view title, bool enabled) {
-  GameCompatibility settings;
-  if (enabled) {
-    settings.initializeWram = title == "DIRT RACER";
-    settings.initializeDsp = title == "MAGICAL DROP";
-    if (title == "RENDERING RANGER R2")
-      settings.sampleRate = 32000;
-  }
-  return settings;
-}
-
 std::optional<std::vector<uint8_t>> ReadImage(const std::string &path, std::string *error) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
@@ -579,11 +562,11 @@ bool Emulator::Reset() {
 }
 
 void Emulator::ResetHardware(bool warm) {
-  const auto compatibility =
-      SelectCompatibility(cartridge_->Header().title, config_.gameCompatibilityFixes);
+  const auto compatibility = detail::SelectCompatibility(
+      cartridge_->Header(), config_.ppu, config_.entropyMode, config_.gameCompatibilityFixes);
   smp_.SetSampleRate(compatibility.sampleRate);
   const uint32_t seed = config_.entropySeed ? *config_.entropySeed : uint32_t(std::clock());
-  PowerOnState startup(config_.entropyMode, seed, config_.entropySequence);
+  PowerOnState startup(compatibility.entropy, seed, config_.entropySequence);
   if (!warm)
     startup.Fill({bus_.WramData(), MemoryBus::WramSize});
   if (compatibility.initializeWram)
@@ -607,7 +590,7 @@ void Emulator::ResetHardware(bool warm) {
     for (unsigned reg = 0; reg < Dsp::RegisterCount; ++reg)
       dsp_.Write(uint8_t(reg), 0xff);
   smp_.Power(warm);
-  ppu_.Power(startup, warm);
+  ppu_.Power(startup, compatibility.video, warm);
   cartridge_->InitializePowerOnMemory(startup);
   cpuIo_.Reset();
   cpuIo_.setCpuVersion(timing_.CpuRevision());
@@ -616,9 +599,10 @@ void Emulator::ResetHardware(bool warm) {
   autoJoypad_.Reset();
   timing_.Reset();
 
-  const auto country = cartridge_->Header().country;
-  const bool pal = country != 0 && country != 1 && country != 0x0b && country != 0x0d &&
-                   country != 0x0f && country != 0x10;
+  timing_.SetRenderCycle(ppu_.Configuration().model == Ppu::RenderModel::Scanline
+                             ? ppu_.Configuration().renderCycle
+                             : Timing::kRenderCycle);
+  const bool pal = detail::PalCountry(cartridge_->Header().country);
   timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
   cartridge_->SetPal(pal);
   cartridge_->SetGameBoyMixedAudioOutput([this](float left, float right) {

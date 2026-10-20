@@ -39,8 +39,6 @@ Ppu::Ppu(Config config)
       object_(std::make_unique<PpuObject>()), vram_(std::make_unique<uint16_t[]>(VramStorageWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
       output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
-  config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
-  config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
   BuildLightTable();
   Reset();
 }
@@ -53,6 +51,14 @@ void Ppu::Reset(bool retainVram) {
 }
 
 void Ppu::Power(PowerOnState &state, bool retainVram) {
+  Power(state, config_, retainVram);
+}
+
+void Ppu::Power(PowerOnState &state, Config config, bool retainVram) {
+  config_ = config;
+  config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
+  config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
+  config_.renderCycle = std::clamp<uint16_t>(config_.renderCycle, 2, 1360);
   background_->Reset();
   object_->Reset();
   pipelineClock_ = 0;

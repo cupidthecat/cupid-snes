@@ -168,12 +168,124 @@ void SelectionAndReload() {
   Check(machine->LoadCartridge(Rom("CONTROL")) && machine->GetSmp().SampleRate() == 32040,
         "Replacing the cartridge restores the normal oscillator");
 }
+
+void LaunchVideoProfiles() {
+  struct Scene {
+    std::string_view title;
+    bool pal, progressive;
+    uint64_t digest;
+    uint16_t clock = 512;
+  };
+  constexpr Scene scenes[]{
+      {"CONTROL", false, false, 0xf5030600487dab25ull},
+      {"AIR STRIKE PATROL", false, true, 0x371f992c6ecefbc1ull},
+      {"DESERT FIGHTER", false, true, 0x371f992c6ecefbc1ull},
+      {"Winter olympics", true, true, 0x87bd56811dd78991ull},
+      {"WORLD CUP STRIKER", true, true, 0x87bd56811dd78991ull},
+      {"\xcf\xb0\xb3\xde\xaa\xd7\xbd", false, true, 0x371f992c6ecefbc1ull},
+      {"SFC \xb8\xda\xd6\xdd\xbc\xdd\xc1\xac\xdd", false, true, 0x371f992c6ecefbc1ull},
+      {"ADVENTURES OF FRANKEN", true, false, 0x3df8a8f4a6534b25ull, 32},
+      {"ADVENTURES OF FRANKEN", false, false, 0xf5030600487dab25ull},
+      {"FIREPOWER 2000", false, false, 0xb6600e37256de325ull, 32},
+      {"SUPER SWIV", true, false, 0x3df8a8f4a6534b25ull, 32},
+      {"NHL '94", false, false, 0xb6600e37256de325ull, 32},
+      {"NHL PROHOCKEY'94", false, false, 0xb6600e37256de325ull, 32},
+      {"Sugoro Quest++", false, false, 0xc3e3e8cfa3631325ull, 128},
+      {"FIREPOWER 2000 X", false, false, 0xf5030600487dab25ull},
+      {"firepower 2000", false, false, 0xf5030600487dab25ull},
+      {"CONTROL", false, false, 0xf5030600487dab25ull},
+  };
+  struct Video final : IVideoOutput {
+    uint64_t digest = 0;
+    void Present(const VideoFrame &frame) override {
+      digest = 0xcbf29ce484222325ull;
+      for (auto pixel : frame.pixels) {
+        const auto color =
+            uint16_t((((pixel & 255) >> 3) << 10) | ((((pixel >> 8) & 255) >> 3) << 5) |
+                     (((pixel >> 16) & 255) >> 3));
+        for (unsigned shift : {0u, 8u})
+          digest = (digest ^ ((color >> shift) & 255)) * 0x100000001b3ull;
+      }
+    }
+  };
+  for (bool fixes : {false, true}) {
+    Emulator::Config config;
+    config.entropyMode = EntropyMode::None;
+    config.entropySeed = 0;
+    config.gameCompatibilityFixes = fixes;
+    auto machine = std::make_unique<Emulator>(config);
+    Video video;
+    machine->AttachVideoOutput(&video);
+    for (const auto &scene : scenes) {
+      auto image = Rom(scene.title, scene.pal);
+      std::vector<uint8_t> code{0x78};
+      const auto port = [&](uint16_t address, uint8_t value) {
+        code.insert(code.end(), {0xa9, value, 0x8d, uint8_t(address), uint8_t(address >> 8)});
+      };
+      port(0x2100, 0x80);
+      port(0x2121, 0);
+      port(0x2122, 0x1f);
+      port(0x2122, 0);
+      port(0x2100, 15);
+      const auto loop = code.size();
+      port(0x2100, 15);
+      code.insert(code.end(), {0xa2, 11, 0xca, 0xd0, 0xfd});
+      port(0x2100, 4);
+      code.insert(code.end(), {0xa2, 9, 0xca, 0xd0, 0xfd});
+      code.insert(code.end(), {0x80, uint8_t(int(loop) - int(code.size()) - 2)});
+      std::copy(code.begin(), code.end(), image.begin());
+      Check(machine->LoadCartridge(image), "The video compatibility cartridge loads");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(machine->Reset(), "Video compatibility survives a warm reset");
+        for (unsigned frame = 0; frame < 3; ++frame)
+          machine->StepFrame({false, false, false});
+        Check(video.digest == scene.digest,
+              "The cartridge selects its renderer and sampling clock on cold and warm starts");
+        Check(machine->GetPpu().Configuration().model ==
+                  (scene.progressive ? Ppu::RenderModel::Progressive : Ppu::RenderModel::Scanline),
+              "Renderer selection follows the complete cartridge title");
+        Check(machine->GetTiming().RenderCycle() == scene.clock,
+              "Cold and warm starts retain the selected video event clock");
+      }
+    }
+  }
+  auto config = snes::tests::DeterministicConsoleConfig();
+  auto progressive = std::make_unique<Emulator>(config);
+  Check(progressive->LoadCartridge(Rom("FIREPOWER 2000")) &&
+            progressive->GetPpu().Configuration().model == Ppu::RenderModel::Progressive &&
+            progressive->GetTiming().RenderCycle() == 512,
+        "An explicit progressive selection keeps its clocked video path");
+}
+
+void StartupEntropyProfiles() {
+  for (bool fixes : {false, true}) {
+    Emulator::Config config;
+    config.entropyMode = EntropyMode::High;
+    config.entropySeed = 0x12345678;
+    config.gameCompatibilityFixes = fixes;
+    auto machine = std::make_unique<Emulator>(config);
+    for (std::string_view title :
+         {"The Hurricanes",
+          "\xc6\xc1\xcc\xde\xc2\xa5\xb1\xb0\xb9\xb0\xc4\xde\xa5\xb8\xd7\xbc\xaf\xb8\xbd",
+          "CONTROL"}) {
+      Check(machine->LoadCartridge(Rom(title)), "The startup compatibility cartridge loads");
+      const auto *memory = machine->GetBus().WramData();
+      const bool empty = std::all_of(memory, memory + MemoryBus::WramSize,
+                                     [](uint8_t value) { return value == 0; });
+      Check(empty == (fixes && title != "CONTROL"),
+            "Selected startup fixes override entropy while other cartridges retain the request");
+    }
+  }
+}
 } // namespace
 
 int main() {
   try {
     StartupAndSound();
     SelectionAndReload();
+    LaunchVideoProfiles();
+    StartupEntropyProfiles();
     std::puts("Cartridge startup, audio clock and stream conversion checks passed");
     return 0;
   } catch (const std::exception &error) {

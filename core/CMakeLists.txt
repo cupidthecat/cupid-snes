@@ -78,6 +78,7 @@ add_library(snes_core
   src/dma/Dma.cpp
   src/timing/Timing.cpp
   src/system/Emulator.cpp
+  src/system/Compatibility.cpp
   src/system/ExecutionContext.cpp
   src/system/Logging.cpp
   src/system/PowerOnState.cpp
