@@ -1,5 +1,7 @@
 #include "ConsoleConfig.hpp"
 #include "audio/MsuFixture.hpp"
+#include "sa1/MailboxProgram.hpp"
+#include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
 #include <array>
@@ -278,10 +280,48 @@ void StartupEntropyProfiles() {
     }
   }
 }
+void Sa1ConsoleMailbox() {
+  constexpr std::array<std::array<uint8_t, 3>, 32> expected{
+      {{1, 1, 170},  {1, 1, 174},  {1, 1, 177},  {1, 1, 181}, {2, 1, 187}, {1, 1, 174}, {1, 1, 177},
+       {1, 1, 181},  {2, 1, 187},  {1, 1, 174},  {1, 1, 177}, {1, 1, 181}, {2, 1, 187}, {2, 1, 190},
+       {2, 1, 194},  {1, 1, 181},  {4, 1, 220},  {3, 1, 207}, {3, 1, 210}, {3, 1, 214}, {6, 1, 253},
+       {6, 1, 0},    {6, 1, 4},    {6, 1, 7},    {12, 1, 11}, {12, 1, 14}, {12, 1, 18}, {12, 1, 21},
+       {23, 1, 202}, {23, 1, 206}, {23, 1, 209}, {23, 1, 213}}};
+  constexpr std::array<std::array<uint8_t, 3>, 32> contended{
+      {{2, 1, 187},  {1, 1, 174},  {1, 1, 177},  {1, 1, 181},  {2, 1, 187}, {1, 1, 174},
+       {1, 1, 177},  {1, 1, 181},  {2, 1, 187},  {2, 1, 190},  {2, 1, 194}, {2, 1, 197},
+       {3, 1, 203},  {3, 1, 207},  {3, 1, 210},  {3, 1, 214},  {6, 1, 253}, {5, 1, 240},
+       {5, 1, 243},  {5, 1, 247},  {10, 1, 63},  {10, 1, 66},  {10, 1, 69}, {10, 1, 72},
+       {19, 1, 126}, {19, 1, 130}, {19, 1, 143}, {19, 1, 147}, {37, 1, 92}, {37, 1, 96},
+       {37, 1, 99},  {36, 1, 86}}};
+  for (bool contention : {false, true}) {
+    unsigned index = 0;
+    for (uint8_t count : {1, 2, 4, 8, 16, 32, 64, 128})
+      for (unsigned delay = 0; delay < 4; ++delay) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        if (contention)
+          config.sa1BusContention = true;
+        auto machine = std::make_unique<snes::core::Emulator>(config);
+        Check(machine->LoadCartridge(snes::tests::sa1::MailboxProgram(count, delay)),
+              "The generated SA-1 mailbox cartridge loads");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(machine->Reset(), "Console reset retains the SA-1 execution selection");
+          machine->StepFrame({false, false, false});
+          const auto &result = contention ? contended[index] : expected[index];
+          Check(machine->GetCpu()->regs().stp &&
+                    std::equal(result.begin(), result.end(), machine->GetBus().WramData() + 0x1000),
+                "SA-1 mailbox polling and beam latches follow the selected contention mode");
+        }
+        ++index;
+      }
+  }
+}
 } // namespace
 
 int main() {
   try {
+    Sa1ConsoleMailbox();
     StartupAndSound();
     SelectionAndReload();
     LaunchVideoProfiles();
