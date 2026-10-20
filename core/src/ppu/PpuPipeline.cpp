@@ -65,8 +65,8 @@ void Ppu::StorePipelinePixel(unsigned x) {
 }
 
 uint16_t Ppu::ProgressiveColor(uint16_t color) const {
-  if (io_.displayBrightness == 0 && color < displayFeedback_.size())
-    return displayFeedback_[color];
+  if (io_.displayBrightness == 0 && color < displayFeedback_->size())
+    return (*displayFeedback_)[color];
   return lightTable_[io_.displayBrightness][color];
 }
 
@@ -79,8 +79,8 @@ void Ppu::StoreDisplayFeedback(unsigned x, uint16_t color) {
     constexpr unsigned words = OutputWidth * OutputHeight;
     if (position < words) {
       progressiveOutput_[position] = uint16_t(color | (io_.displayDisable ? 0x8000 : 0));
-    } else if (position - words < displayFeedback_.size()) {
-      displayFeedback_[position - words] = color;
+    } else if (position - words < displayFeedback_->size()) {
+      (*displayFeedback_)[position - words] = color;
     }
   };
   if (!displayInterlace_)

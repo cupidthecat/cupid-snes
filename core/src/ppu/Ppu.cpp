@@ -39,7 +39,8 @@ Ppu::Ppu(Config config)
       object_(std::make_unique<PpuObject>()), vram_(std::make_unique<uint16_t[]>(VramStorageWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
       output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)),
-      progressiveOutput_(std::make_unique<uint16_t[]>(OutputWidth * OutputHeight)) {
+      progressiveOutput_(std::make_unique<uint16_t[]>(OutputWidth * OutputHeight)),
+      displayFeedback_(std::make_unique<std::array<uint16_t, 8192>>()) {
   BuildLightTable();
   Reset();
 }
@@ -126,7 +127,7 @@ void Ppu::LatchProgressiveDisplay() {
   if (ScanlineModel())
     return;
   if (feedbackOverscan_ && !io_.overscan) {
-    std::fill_n(displayFeedback_.begin(), 1024, 0);
+    std::fill_n(displayFeedback_->begin(), 1024, 0);
     for (unsigned row = 1; row < 240; ++row)
       if (row < 8 || row > 231)
         std::fill_n(progressiveOutput_.get() + row * 1024, 1024, 0);

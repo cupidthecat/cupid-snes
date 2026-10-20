@@ -580,7 +580,7 @@ private:
   uint16_t *lightTable_[16] = {};
   // Lower-border output feeds the dim-color lookup in progressive rendering.
   // Keep those words separate from both frame storage and scanline tables.
-  std::array<uint16_t, 8192> displayFeedback_{};
+  std::unique_ptr<std::array<uint16_t, 8192>> displayFeedback_;
   bool feedbackOverscan_ = false;
 
   // Current scanline (set by timing layer for display-disable checks)
