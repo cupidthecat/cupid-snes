@@ -32,6 +32,9 @@ public:
   void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
   bool CpuIrqPending() const noexcept;
   void SetPal(bool enabled) noexcept;
+  void SetBusContention(bool enabled) noexcept {
+    busContention_ = enabled;
+  }
   // Populated memory slots supply ROM pages 4-7. An empty slot retains
   // program-ROM mirroring. Reset() preserves the attached storage.
   void SetExpansionRom(std::span<const uint8_t> bytes, const BsMemory *device = nullptr) noexcept {
@@ -72,6 +75,7 @@ private:
   uint64_t executedClocks_ = 0;
   uint32_t cpuAddress_ = 0;
   bool cpuRefreshing_ = false;
+  bool busContention_ = true;
   uint16_t hClocks_ = 0;
   uint16_t vCounter_ = 0;
   uint16_t latchedH_ = 0;

@@ -204,15 +204,15 @@ void Sa1::InterruptProcessor() {
 }
 
 bool Sa1::CpuRomConflict() const noexcept {
-  return RomAddress(cpuAddress_);
+  return busContention_ && RomAddress(cpuAddress_);
 }
 
 bool Sa1::CpuBwramConflict() const noexcept {
-  return BwramAddress(cpuAddress_, 0x4f);
+  return busContention_ && BwramAddress(cpuAddress_, 0x4f);
 }
 
 bool Sa1::CpuIramConflict() const noexcept {
-  return (cpuAddress_ & 0x40f800) == 0x3000 && !cpuRefreshing_;
+  return busContention_ && (cpuAddress_ & 0x40f800) == 0x3000 && !cpuRefreshing_;
 }
 
 void Sa1::ClockAccess(uint32_t address) {

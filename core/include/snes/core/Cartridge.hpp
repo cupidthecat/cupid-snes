@@ -178,6 +178,7 @@ public:
   uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
   void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
                        bool synchronizeHandheld = true);
+  void SetSa1BusContention(bool enabled);
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {

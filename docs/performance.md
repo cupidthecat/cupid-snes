@@ -14,6 +14,8 @@ All three sequences exceeded full speed and delivered every generated native aud
 
 An earlier interlaced-hires RPM Racing replay reached 78.14 fields/s and delivered 1,922,880 stereo frames over the same measured duration. That run preceded automatic cartridge video selection.
 
+A later Marvelous replay with selectable SA-1 contention reached 61.85 fields/s in progressive hires video. It used 1,200 warmup fields and 3,600 measured fields with normal video and audio, while other heavy validation was stopped. Median field time was 16.099 ms and p95 was 17.090 ms. Every generated stereo audio frame was delivered, totaling 1,919,194 frames. This sequence exceeded average full speed, though its p95 field time crossed an individual display deadline. Separate 1,800-field captures for four SA-1 games checked complete pixels, PCM, counts, clocks, processor state and cartridge memory.
+
 ## Release compiler optimization
 
 Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.

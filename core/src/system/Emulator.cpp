@@ -562,6 +562,7 @@ bool Emulator::Reset() {
 }
 
 void Emulator::ResetHardware(bool warm) {
+  cartridge_->SetSa1BusContention(config_.sa1BusContention);
   const auto compatibility = detail::SelectCompatibility(
       cartridge_->Header(), config_.ppu, config_.entropyMode, config_.gameCompatibilityFixes);
   smp_.SetSampleRate(compatibility.sampleRate);

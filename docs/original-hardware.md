@@ -28,13 +28,13 @@ config.ppu = {2, 131072};
 snes::core::Emulator emulator(config);
 ```
 
-These settings cover the current progressive renderer. A separate scanline execution model and its palette and sprite-memory retention rules remain pending.
+These settings cover the progressive renderer. The default scanline model has separate cold and warm graphics-memory rules; see [scanline rendering](scanline-video.md).
 
 ## Cartridge implementations
 
 | Device | Implemented behavior | Important limits |
 | --- | --- | --- |
-| SA-1 | Reuses the 65816 instruction core; reset/vector registers, mailbox IRQ/NMI, timers, 2 KiB IRAM and protection, shared BW-RAM and bitmap modes, ROM banking, arithmetic, variable-length bit reads, progressive DMA, both character-conversion modes, and master-clock advancement. | Instruction execution suspends at bus and idle clocks, with contention waits for shared memory. ROM cache timing, exact character-conversion latency, DMA priority arbitration, and short/interlaced scanline coupling need further validation. |
+| SA-1 | Reuses the 65816 instruction core; reset/vector registers, mailbox IRQ/NMI, timers, 2 KiB IRAM and protection, shared BW-RAM and bitmap modes, ROM banking, arithmetic, variable-length bit reads, progressive DMA, both character-conversion modes, and master-clock advancement. | Instruction execution suspends at bus and idle clocks, with selectable contention waits for shared memory. ROM cache timing, exact character-conversion latency, DMA priority arbitration, and short/interlaced scanline coupling need further validation. |
 | Super FX/FX2 | GSU instruction and ALT encodings, prefetched pipeline and delay slots, register file, 512-byte cache, plotting/pixel rows, ROM/RAM buffers, screen modes, bus ownership, clock modes, IRQ, declared RAM capacities, and physical CPU ROM/RAM windows. | Cache fills and pixel writes publish at transaction completion rather than each constituent byte. Commercial GSU game and hardware traces remain unverified. |
 | DSP-3 | Clocked uPD7725 execution with supplied firmware, byte/word host protocol, board addressing, and internal data RAM. | Firmware is required. Generated processor checks and recorded game sequences cover the tested behavior; complete game compatibility remains unverified. |
 | DSP-4 | Clocked uPD7725 execution with supplied firmware, byte/word host protocol, board addressing, and internal data RAM. | Without firmware, a command model handles multiplication, road projection, lighting, polygon windows, objects, and OAM. Fallback reciprocal rounding and edge inputs need hardware measurements. |
@@ -57,6 +57,8 @@ Super FX CPU RAM windows occupy $00-$3F/$80-$BF:$6000-$7FFF, $70-$71, and $F0-$F
 The GSU RAMB instruction selects bank `$70` or `$71`, and `$303C` returns zero in its reserved upper bits, as specified in [Nintendo's development manual, Book II, section 4.7](https://archive.org/stream/SNESDevManual/book2_djvu.txt). Tests exercise all 256 low-byte values supplied to RAMB and verify that banked loads/stores stay within the connected RAM banks. Invalid internal GSU banks are not treated as extra ROM aliases.
 
 SPC7110 calendar state uses a separate 24-byte `.rtc` representation: sixteen nibble-valued clock registers followed by an eight-byte little-endian timestamp. This differs from S-RTC's format; the loaded cartridge selects the decoder. Tests cover emulated-time advancement, leap days, hold and stopped clocks, elapsed-time loading, and rejection of invalid state.
+
+Console startup disables SA-1 shared-bus contention by default. `Emulator::Config::sa1BusContention` enables conflict waits for ROM, BW-RAM and IRAM. Cold power, warm reset and cartridge reload apply the selection. Direct `Sa1` users keep contention enabled unless they call `SetBusContention(false)`.
 
 ## CPU, DMA, and audio timing
 

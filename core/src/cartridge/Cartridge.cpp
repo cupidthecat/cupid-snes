@@ -524,6 +524,11 @@ void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
     armDsp_->Power(state);
 }
 
+void Cartridge::SetSa1BusContention(bool enabled) {
+  if (sa1_)
+    sa1_->SetBusContention(enabled);
+}
+
 void Cartridge::Reset() {
   if (gameBoy_)
     gameBoy_->Reset();
