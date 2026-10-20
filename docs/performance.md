@@ -1,5 +1,17 @@
 # Performance checks
 
+## Scanline video, 2026-10-20
+
+Headless Windows Release replays used the default scanline renderer with normal core video and audio enabled. Each replay ran 1,200 warmup fields followed by 3,600 measured fields. Video hashing and PCM-file capture were disabled during timing.
+
+| Replay | Fields/s | Median field, ms | p95 field, ms | Stereo frames delivered |
+| --- | ---: | ---: | ---: | ---: |
+| Kirby's Dream Land, Super Game Boy | 90.68 | 10.882 | 12.453 | 1,919,238 |
+| Kirby's Dream Land, Super Game Boy 2 | 91.26 | 10.786 | 12.468 | 1,919,239 |
+| RPM Racing, interlaced hires | 78.14 | 12.687 | 14.714 | 1,922,880 |
+
+All three sequences exceeded full speed and delivered every generated native audio frame. Separate capture runs checked complete PCM, sample counts, pixels, processor state, and cartridge memory. These measurements cover core throughput; display presentation and physical audio-device pacing remain separate checks. Other workspace work was active, so field-time distributions include host contention.
+
 ## Release compiler optimization
 
 Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.

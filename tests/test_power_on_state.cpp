@@ -247,6 +247,7 @@ void ConsoleStartup() {
     Emulator::Config config;
     config.entropyMode = test.mode;
     config.entropySeed = test.seed;
+    config.ppu.model = Ppu::RenderModel::Progressive;
     config.ppu.vramBytes = 131072;
     auto machine = std::make_unique<Emulator>(config);
     Check(machine->LoadCartridge(Rom()), "Startup fixture loads");

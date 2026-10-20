@@ -257,6 +257,40 @@ void ExtendedVramFetches() {
           "Background names and patterns use the selected VRAM capacity");
   }
 }
+
+void FirstEdgeScrollAlignment() {
+  const auto render = [](unsigned writeClock, bool beforeLine) {
+    auto ppu = std::make_unique<Ppu>();
+    ppu->WriteIO(0x2100, 15);
+    ppu->WriteIO(0x2105, 0);
+    ppu->WriteIO(0x210b, 1);
+    ppu->WriteIO(0x212c, 1);
+    ppu->CgramData()[1] = 31;
+    for (unsigned row = 0; row < 8; ++row)
+      ppu->VramData()[0x1000 + row] = 0x00aa;
+    if (beforeLine) {
+      ppu->WriteIO(0x210d, 5);
+      ppu->WriteIO(0x210d, 0);
+    }
+    ppu->FrameBegin();
+    ppu->SetCurrentLine(1);
+    if (!beforeLine) {
+      ppu->SetCurrentHClock(uint16_t(writeClock));
+      ppu->WriteIO(0x210d, 5);
+      ppu->WriteIO(0x210d, 0);
+    }
+    ppu->ScanlineBegin(1);
+    ppu->VBlankBegin();
+    std::array<uint16_t, 256> result{};
+    for (unsigned x = 0; x < result.size(); ++x)
+      result[x] = Color(*ppu, int(x), 0);
+    return result;
+  };
+  Check(render(0, false) == render(0, true),
+        "A line-start scroll write participates in the first background fetch edge");
+  Check(render(2, false)[0] == 31 && render(0, true)[0] == 0,
+        "A scroll write after the first fetch edge retains the earlier fine alignment");
+}
 } // namespace
 int main() {
   try {
@@ -268,6 +302,7 @@ int main() {
     LiveObjectPriority();
     RetainedTileTail();
     ExtendedVramFetches();
+    FirstEdgeScrollAlignment();
     std::puts("Background fetch tests passed");
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

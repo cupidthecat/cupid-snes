@@ -11,6 +11,7 @@
 //
 
 #include "snes/core/Ppu.hpp"
+#include "snes/core/PpuScanline.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -95,19 +96,29 @@ void Ppu::ParseOam() {
 // Frame rendering - renders all cached scanlines at VBlank
 
 void Ppu::RenderFrame() {
+  if (ScanlineModel())
+    SynchronizePipeline(1368);
+  FlushCachedLines();
+}
+
+void Ppu::FlushCachedLines() {
   if (lineCount_ == 0)
     return;
 
-  bool hires = false, interlace = displayInterlace_, overscan = false;
-  for (int i = 0; i < lineCount_; ++i) {
-    const auto &registers = lines_[lineStart_ + i].io;
-    hires |= lines_[lineStart_ + i].sampledHires;
-    hires |= registers.pseudoHires || registers.bgMode == 5 || registers.bgMode == 6;
-    overscan |= registers.overscan;
+  bool hires = scanlineHires_, interlace = displayInterlace_, overscan = frameOverscan_;
+  if (!ScanlineModel()) {
+    hires = overscan = false;
+    for (int i = 0; i < lineCount_; ++i) {
+      const auto &registers = lines_[lineStart_ + i].io;
+      hires |= lines_[lineStart_ + i].sampledHires;
+      hires |= registers.pseudoHires || registers.bgMode == 5 || registers.bgMode == 6;
+      overscan |= registers.overscan;
+    }
   }
   const uint16_t width = hires ? 512 : 256;
   const uint16_t height = uint16_t((overscan ? 239 : 224) * (interlace ? 2 : 1));
-  if (width != frameWidth_ || height != frameHeight_ || interlace != frameInterlace_)
+  if (!ScanlineModel() &&
+      (width != frameWidth_ || height != frameHeight_ || interlace != frameInterlace_))
     std::fill_n(output_.get(), OutputWidth * OutputHeight, 0xff000000u);
   frameWidth_ = width;
   frameHeight_ = height;
@@ -148,6 +159,28 @@ void Ppu::RenderFrame() {
 // RenderLine - the core per-scanline pipeline
 
 void Ppu::RenderLine(Line &line) {
+  if (ScanlineModel()) {
+    const bool originalField = line.fieldID;
+    const auto draw = [&](bool field) {
+      line.fieldID = field;
+      if (!line.io.displayDisable) {
+        const auto status = SamplePpuScanline(line, {vram_.get(), 32768}, oam_);
+        io_.obj.rangeOver |= status.rangeOver;
+        io_.obj.timeOver |= status.timeOver;
+      }
+      ColorMathLatch latch;
+      RenderLineSpan(line, line.io, 0, 256, latch);
+    };
+    if (config_.deinterlace) {
+      draw(false);
+      if (displayInterlace_)
+        draw(true);
+    } else {
+      draw(originalField);
+    }
+    line.fieldID = originalField;
+    return;
+  }
   const auto &events = rasterEvents_[line.y];
   ColorMathLatch latch;
 
@@ -235,17 +268,6 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
   }
 }
 
-// DirectColor - BG1 direct color mode (modes 3/4)
-
-uint16_t Ppu::DirectColor(uint8_t paletteIndex, uint8_t paletteColor) {
-  // paletteIndex = bgr bits from palette number (3 bits)
-  // paletteColor = BBGGGRRR (8-bit pixel value)
-  return static_cast<uint16_t>(
-      ((paletteColor << 2) & 0x001C) + ((paletteIndex << 1) & 0x0002) +  // R
-      ((paletteColor << 4) & 0x0380) + ((paletteIndex << 5) & 0x0040) +  // G
-      ((paletteColor << 7) & 0x6000) + ((paletteIndex << 10) & 0x1000)); // B
-}
-
 // RenderWindowColor - compute window mask for color math
 //
 // mask: 0=always on, 1=inside window only, 2=outside window only, 3=never
@@ -313,8 +335,11 @@ void Ppu::RenderWindowColor(const Line &line, const WindowColor &wc, uint8_t mas
 //
 
 uint16_t Ppu::CompositePixel(const Line &line, int x, ColorMathLatch &latch) const {
-  const Pixel &main = line.above[x];
-  const Pixel &sub = line.below[x];
+  return CompositePixel(line, line.above[x], line.below[x], x, latch);
+}
+
+uint16_t Ppu::CompositePixel(const Line &line, const Pixel &main, const Pixel &sub, int x,
+                             ColorMathLatch &latch) const {
   latch.mainColor = main.color;
   latch.mainVisible = line.windowAbove[x];
   latch.mathEnabled = line.windowBelow[x] && line.io.col.enable[main.source];
@@ -322,15 +347,20 @@ uint16_t Ppu::CompositePixel(const Line &line, int x, ColorMathLatch &latch) con
   if (!latch.mathEnabled)
     return visible;
 
-  // A transparent sub screen selects fixed color and suppresses halving.
+  // Progressive dots substitute fixed color for a transparent sub screen.
+  // Both render models suppress halving when that screen is transparent.
   const bool transparent = sub.source == Source::COL;
-  latch.useSubscreen = line.io.col.blendMode && !transparent;
+  latch.useSubscreen = line.io.col.blendMode && (ScanlineModel() || !transparent);
   latch.halve = line.io.col.halve && latch.mainVisible && !(line.io.col.blendMode && transparent);
   const uint16_t operand = latch.useSubscreen ? sub.color : line.io.col.fixedColor;
   return Blend(line, visible, operand, latch.halve);
 }
 
 uint16_t Ppu::CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const {
+  if (ScanlineModel()) {
+    ColorMathLatch current;
+    return CompositePixel(line, line.below[x], line.above[x], x, current);
+  }
   const uint16_t visible = latch.mainVisible ? line.below[x].color : 0;
   if (!latch.mathEnabled)
     return visible;

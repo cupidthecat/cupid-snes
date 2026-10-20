@@ -34,9 +34,12 @@ class PowerOnState;
 // Ppu - PPU register model
 class Ppu {
 public:
+  enum class RenderModel { Progressive, Scanline };
   struct Config {
     uint8_t revision2 = 3;
     uint32_t vramBytes = 65536;
+    RenderModel model = RenderModel::Progressive;
+    bool deinterlace = true;
   };
 
   Ppu();
@@ -47,7 +50,8 @@ public:
   Ppu(const Ppu &) = delete;
   Ppu &operator=(const Ppu &) = delete;
 
-  // Warm reset retains VRAM; OAM, CGRAM and latches reset on either path.
+  // Scanline power retains graphics memory on warm reset. Progressive power
+  // retains VRAM and reinitializes palette, sprite and register state.
   void Reset(bool retainVram = false);
   void Power(PowerOnState &state, bool retainVram = false);
   const Config &Configuration() const noexcept {
@@ -374,6 +378,7 @@ public:
     bool fieldID = false;
 
     IO io; // Snapshot of PPU IO
+    std::array<uint16_t, CgramColors> palette{};
     Pixel sampledAbove[256] = {}, sampledBelow[256] = {};
     bool sampledHires = false;
     Pixel above[256] = {};      // Main screen line buffer
@@ -487,6 +492,8 @@ private:
 
   /// Render a single cached scanline.
   void RenderLine(Line &line);
+  void CacheScanline(uint16_t line);
+  void FlushCachedLines();
 
   /// Render one IO state over a logical 256-dot span of a cached scanline.
   void RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch);
@@ -496,6 +503,8 @@ private:
 
   /// Color math compositing for a single pixel.
   uint16_t CompositePixel(const Line &line, int x, ColorMathLatch &latch) const;
+  uint16_t CompositePixel(const Line &line, const Pixel &main, const Pixel &sub, int x,
+                          ColorMathLatch &latch) const;
 
   /// Sub(x+1) uses Main(x)'s visibility, math enable, operand selection, and
   /// halving decision. Fixed color and the add/subtract operation remain live.
@@ -504,15 +513,16 @@ private:
   /// Color math blend (add/subtract with saturation).
   uint16_t Blend(const Line &line, uint16_t x, uint16_t y, bool halve) const;
 
-  /// Direct color mode conversion.
-  static uint16_t DirectColor(uint8_t paletteIndex, uint8_t paletteColor);
-
   /// Build the brightness lookup table.
   void BuildLightTable();
 
   void SynchronizePipeline(uint16_t clock);
   void StorePipelinePixel(unsigned x);
   void InitializePowerOnState(PowerOnState &state, bool retainVram);
+  void InitializeScanlineState(bool retainMemory);
+  bool ScanlineModel() const noexcept {
+    return config_.model == RenderModel::Scanline;
+  }
 
   // State
   Config config_;
@@ -539,6 +549,8 @@ private:
   std::unique_ptr<Line[]> lines_;
   int lineStart_ = 0;
   int lineCount_ = 0;
+  uint16_t pendingScanline_ = 0;
+  bool scanlineHires_ = false;
   std::array<std::vector<RasterEvent>, MaxVisibleLines> rasterEvents_;
 
   // Mosaic progression normally happens from SetCurrentLine at H=0.  Direct

@@ -299,6 +299,10 @@ add_executable(snes_ppu_port_tests test_ppu_ports.cpp)
 target_link_libraries(snes_ppu_port_tests PRIVATE snes_core)
 add_test(NAME snes_ppu_port_tests COMMAND snes_ppu_port_tests)
 
+add_executable(snes_ppu_scanline_tests test_ppu_scanline.cpp)
+target_link_libraries(snes_ppu_scanline_tests PRIVATE snes_core)
+add_test(NAME snes_ppu_scanline_tests COMMAND snes_ppu_scanline_tests)
+
 add_executable(snes_st018_tests test_st018.cpp)
 target_link_libraries(snes_st018_tests PRIVATE snes_core)
 add_test(NAME snes_st018_tests COMMAND snes_st018_tests)

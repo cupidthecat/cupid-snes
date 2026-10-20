@@ -1,6 +1,6 @@
 # PPU memory ports
 
-CPU accesses to VRAM, OAM, and CGRAM consume their register address and byte phase even when rendering blocks or redirects the memory access. The graphics pipeline advances to the access clock before the register is consumed.
+CPU accesses to VRAM, OAM, and CGRAM consume their register address and byte phase even when rendering blocks or redirects the memory access. The progressive graphics pipeline advances to the access clock before the register is consumed. The default [scanline model](scanline-video.md) retains registers and palette memory at one sampling point per line.
 
 ## Access ownership
 
@@ -11,6 +11,8 @@ CPU accesses to VRAM, OAM, and CGRAM consume their register address and byte pha
 | CGRAM | The palette lookup address owns accesses on lines 1 through `vdisp - 1`, from H=88 through H=1094. | The CPU address selects memory. |
 
 Horizontal positions use master clocks. CGRAM returns to CPU addressing at H=1096 and during the rest of horizontal blanking. Vertical blank starts at line 225, or line 240 with overscan enabled. Scanline zero blocks VRAM and redirects OAM, but leaves CGRAM under CPU control.
+
+The ownership table describes the progressive model. Scanline rendering redirects active OAM writes to `$0218` and retains address zero for active OAM reads and palette accesses. Permitted VRAM and OAM writes render cached lines before replacing memory. Both models keep the same register increments and shared byte phases.
 
 VRAM reads return the prefetched word before fetching again and incrementing the address on the selected byte port. Enabling display therefore preserves a word fetched during blanking; a later blocked fetch replaces it with zero. Discarded writes still perform the configured increment. Address remapping and the 64 KiB physical mirror apply to permitted memory accesses.
 

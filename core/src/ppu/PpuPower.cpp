@@ -1,9 +1,31 @@
 #include "snes/core/PowerOnState.hpp"
 #include "snes/core/Ppu.hpp"
 
+#include <algorithm>
+
 namespace snes::core {
 
+void Ppu::InitializeScanlineState(bool retainMemory) {
+  if (!retainMemory) {
+    std::fill_n(vram_.get(), VramStorageWords, uint16_t{});
+    cgram_.fill(0);
+    oam_.fill(0);
+    for (unsigned object = 0; object < 128; ++object)
+      oam_[object * 4 + 1] = 0xff;
+    objects_.fill({});
+  }
+  io_ = IO{};
+  io_.vramIncrementMode = false;
+  io_.vramIncrementSize = 0;
+  latch_ = Latch{};
+  latch_.ppu1.mdr = latch_.ppu2.mdr = 0;
+}
+
 void Ppu::InitializePowerOnState(PowerOnState &state, bool retainVram) {
+  if (ScanlineModel()) {
+    InitializeScanlineState(retainVram);
+    return;
+  }
   if (!retainVram)
     state.Fill({reinterpret_cast<uint8_t *>(vram_.get()), VramStorageWords * sizeof(uint16_t)});
   oam_.fill(0);

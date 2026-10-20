@@ -62,6 +62,8 @@ void Ppu::Power(PowerOnState &state, bool retainVram) {
   // Clear rendering state
   lineStart_ = 0;
   lineCount_ = 0;
+  pendingScanline_ = 0;
+  scanlineHires_ = false;
   for (auto &events : rasterEvents_)
     events.clear();
   mosaicCounterLine_ = 0xffff;
@@ -100,6 +102,8 @@ void Ppu::FrameBegin() {
   // Reset scanline cache for new frame
   lineStart_ = 0;
   lineCount_ = 0;
+  pendingScanline_ = 0;
+  scanlineHires_ = false;
   for (auto &events : rasterEvents_)
     events.clear();
   mosaicCounterLine_ = 0xffff;
@@ -126,7 +130,8 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     currentLine_ = vcounter;
     currentHClock_ = 0;
     pipelineClock_ = 0;
-    AdvanceMosaicCounter(vcounter);
+    if (!ScanlineModel())
+      AdvanceMosaicCounter(vcounter);
     background_->BeginLine(vcounter, fieldId_, io_);
     object_->BeginLine(vcounter, io_.obj);
     latch_.cgramAddress = 0;
@@ -135,10 +140,17 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     if (vcounter > 0 && vcounter < MaxVisibleLines)
       lines_[vcounter].sampledHires = false;
   }
-  AdvanceMosaicCounter(vcounter);
+  if (ScanlineModel()) {
+    if (vcounter > 0 && vcounter < VDisp())
+      scanlineHires_ |= io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
+  } else {
+    AdvanceMosaicCounter(vcounter);
+  }
 }
 
 void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO &before) {
+  if (ScanlineModel())
+    return;
   if (currentLine_ == 0 || currentLine_ >= VDisp())
     return;
   if (currentHClock_ < 58 || currentHClock_ >= 1082)
@@ -275,7 +287,16 @@ void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
 void Ppu::ScanlineBegin(uint16_t line) {
   if (currentLine_ != line)
     SetCurrentLine(line);
+  if (ScanlineModel()) {
+    // Writes at the sampling clock complete before the paused video work resumes.
+    pendingScanline_ = line;
+    return;
+  }
   SynchronizePipeline(512);
+  CacheScanline(line);
+}
+
+void Ppu::CacheScanline(uint16_t line) {
   AdvanceMosaicCounter(line);
 
   // Retain screen registers for final composition.
@@ -284,6 +305,8 @@ void Ppu::ScanlineBegin(uint16_t line) {
     cache.y = line;
     cache.fieldID = fieldId_;
     cache.io = io_;
+    if (ScanlineModel())
+      cache.palette = cgram_;
 
     if (line >= VDisp()) {
       cache.io.displayDisable = true;
@@ -320,7 +343,7 @@ uint16_t Ppu::TranslatedVramAddress() const {
     address = (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
     break;
   }
-  return address & (config_.vramBytes / 2 - 1);
+  return address & (ScanlineModel() ? 0x7fff : config_.vramBytes / 2 - 1);
 }
 
 uint16_t Ppu::ReadVram() {
@@ -336,6 +359,8 @@ void Ppu::WriteVram(bool highByte, uint8_t data) {
   if (!io_.displayDisable && currentLine_ < VDisp()) {
     return;
   }
+  if (ScanlineModel())
+    FlushCachedLines();
   uint16_t addr = TranslatedVramAddress();
   if (!highByte) {
     vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
@@ -358,10 +383,12 @@ uint8_t Ppu::ReadOam(uint16_t address) {
 }
 
 void Ppu::WriteOam(uint16_t address, uint8_t data) {
+  if (ScanlineModel())
+    FlushCachedLines();
   address &= 0x03FF;
   // The object pipeline owns the OAM address during active display.
   if (!io_.displayDisable && currentLine_ < VDisp()) {
-    address = latch_.oamAddress & 0x03FF;
+    address = ScanlineModel() ? 0x0218 : latch_.oamAddress & 0x03FF;
   }
   if (address & 0x200)
     address &= 0x21F;
@@ -539,7 +566,8 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
   // $213E - STAT77 (PPU1 status: version + OBJ overflow flags)
   case 0x213E: {
-    latch_.ppu1.mdr = (latch_.ppu1.mdr & 0x10) | 0x01; // bit 4 is open bus
+    // Progressive status retains open-bus bit 4; scanline status clears it.
+    latch_.ppu1.mdr = (ScanlineModel() ? 0 : latch_.ppu1.mdr & 0x10) | 0x01;
     latch_.ppu1.mdr |= (io_.obj.rangeOver ? 1 : 0) << 6;
     latch_.ppu1.mdr |= (io_.obj.timeOver ? 1 : 0) << 7;
     return latch_.ppu1.mdr;
@@ -553,7 +581,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
     // Preserve bit 5 (open bus)
     latch_.ppu2.mdr &= (1 << 5);
-    latch_.ppu2.mdr |= config_.revision2;
+    latch_.ppu2.mdr |= ScanlineModel() ? 3 : config_.revision2;
     latch_.ppu2.mdr |= (isPal_ ? 1 : 0) << 4;
     // Bit 6: counter latch flag
     // When PIO bit 7 is clear, bit 6 always reads high.

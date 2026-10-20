@@ -1,36 +1,27 @@
 #include "snes/core/PpuBackground.hpp"
 #include "snes/core/PpuObject.hpp"
+#include "snes/core/PpuPixelMixer.hpp"
 
 #include <algorithm>
 
 namespace snes::core {
-namespace {
-bool Blocked(const Ppu::WindowLayer &layer, const Ppu::WindowPos &window, unsigned x) {
-  const bool one = (x >= window.oneLeft && x <= window.oneRight) != layer.oneInvert;
-  const bool two = (x >= window.twoLeft && x <= window.twoRight) != layer.twoInvert;
-  if (!layer.oneEnable)
-    return layer.twoEnable && two;
-  if (!layer.twoEnable)
-    return one;
-  switch (layer.mask) {
-  case 0:
-    return one || two;
-  case 1:
-    return one && two;
-  case 2:
-    return one != two;
-  default:
-    return one == two;
-  }
-}
-} // namespace
-
 void Ppu::SynchronizePipeline(uint16_t clock) {
+  if (ScanlineModel()) {
+    if (pendingScanline_ && clock > 512) {
+      const auto line = pendingScanline_;
+      pendingScanline_ = 0;
+      CacheScanline(line);
+    }
+    return;
+  }
   const uint16_t end = std::min<uint16_t>(clock, 1368);
   if (currentLine_ > 240) {
     pipelineClock_ = end;
     return;
   }
+  // Fine alignment includes writes at line start, before the first fetch edge.
+  if (pipelineClock_ == 0 && end > 0)
+    background_->BeginLine(currentLine_, fieldId_, io_);
   while (pipelineClock_ < end) {
     const auto h = pipelineClock_;
     pipelineClock_ += 2;
@@ -53,60 +44,14 @@ void Ppu::StorePipelinePixel(unsigned x) {
   if (io_.displayDisable || currentLine_ == 0 || currentLine_ > 240 ||
       (!io_.overscan && currentLine_ >= 225))
     return;
-  Pixel above{COL, 0, cgram_[0]}, below{COL, 0, hires ? cgram_[0] : io_.col.fixedColor};
-  int aboveRead = -1, belowRead = -1;
-  const std::array<const Background *, 4> registers{&io_.bg1, &io_.bg2, &io_.bg3, &io_.bg4};
-  const auto &samples = background_->Samples();
-  for (unsigned id = 0; id < 4; ++id) {
-    if (!samples.above[id].priority && !samples.below[id].priority)
-      continue;
-    const auto &bg = *registers[id];
-    const bool blocked =
-        (bg.window.oneEnable || bg.window.twoEnable) && Blocked(bg.window, io_.window, x);
-    for (bool sub : {false, true}) {
-      const auto &pixel = (sub ? samples.below : samples.above)[id];
-      auto &winner = sub ? below : above;
-      if (pixel.priority <= winner.priority ||
-          (blocked && (sub ? bg.window.belowEnable : bg.window.aboveEnable)))
-        continue;
-      const bool direct =
-          id == 0 && io_.col.directColor && (io_.bgMode == 3 || io_.bgMode == 4 || io_.bgMode == 7);
-      winner = {uint8_t(id), pixel.priority,
-                direct ? DirectColor(pixel.group, pixel.palette) : cgram_[pixel.palette]};
-      if (!direct)
-        (sub ? belowRead : aboveRead) = pixel.palette;
-    }
-  }
-  const auto pixel = object_->Pixel(x);
-  if (pixel.palette) {
-    const auto &obj = io_.obj;
-    const auto priority = obj.priority[pixel.priority];
-    const bool blocked =
-        (obj.window.oneEnable || obj.window.twoEnable) && Blocked(obj.window, io_.window, x);
-    const Pixel resolved{pixel.palette < 192 ? OBJ1 : OBJ2, priority, cgram_[pixel.palette]};
-    if (obj.aboveEnable && priority > above.priority && !(blocked && obj.window.aboveEnable)) {
-      above = resolved;
-      aboveRead = pixel.palette;
-    }
-    if (obj.belowEnable && priority > below.priority && !(blocked && obj.window.belowEnable)) {
-      below = resolved;
-      belowRead = pixel.palette;
-    }
-  }
-  if (!below.priority)
-    belowRead = 0;
-  if (!above.priority)
-    aboveRead = 0;
-  // The sub-screen lookup precedes the main-screen lookup. Direct color
-  // consumes no palette word and leaves the preceding bus address intact.
-  if (belowRead >= 0)
-    latch_.cgramAddress = uint8_t(belowRead);
-  if (aboveRead >= 0)
-    latch_.cgramAddress = uint8_t(aboveRead);
+  const auto pixel = MixPpuPixel(io_, cgram_, *background_, *object_, x);
+  // The main-screen lookup follows the sub-screen lookup on the palette bus.
+  if (pixel.paletteAddress >= 0)
+    latch_.cgramAddress = uint8_t(pixel.paletteAddress);
   if (retained) {
     auto &line = lines_[currentLine_];
-    line.sampledAbove[x] = above;
-    line.sampledBelow[x] = below;
+    line.sampledAbove[x] = pixel.above;
+    line.sampledBelow[x] = pixel.below;
   }
 }
 

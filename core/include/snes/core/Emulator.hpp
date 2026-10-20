@@ -69,7 +69,7 @@ public:
     std::optional<uint32_t> entropySeed;
     uint32_t entropySequence = 0;
     uint8_t cpuRevision = 2;
-    Ppu::Config ppu;
+    Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
     bool gameCompatibilityFixes = true;
   };
 

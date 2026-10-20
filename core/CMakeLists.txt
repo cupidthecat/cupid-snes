@@ -62,6 +62,8 @@ add_library(snes_core
   src/ppu/Ppu.cpp
   src/ppu/PpuPower.cpp
   src/ppu/PpuRender.cpp
+  src/ppu/PpuPixelMixer.cpp
+  src/ppu/PpuScanline.cpp
   src/audio/Dsp.cpp
   src/audio/StreamMixer.cpp
   src/audio/Dsp1.cpp
