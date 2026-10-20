@@ -73,6 +73,7 @@ Emulator::Emulator(Config config)
                         : gameboy::StartupState::SeedFromTime(uint64_t(std::time(nullptr)));
   handheldStartup_ = std::make_shared<gameboy::StartupState>();
   handheldStartup_->Configure(config_.entropyMode != EntropyMode::None, seed);
+  broadcastReceiver_.SetTimeSource(CurrentBroadcastTime);
   Logger::Instance().Write(LogLevel::Info, "Emulator initialized");
 }
 
@@ -81,6 +82,11 @@ Emulator::~Emulator() {
 }
 
 // Platform attachment
+
+void Emulator::SetExpansionDevice(ExpansionDevice device) {
+  config_.expansionDevice = device;
+  broadcastReceiver_.Reset();
+}
 
 void Emulator::AttachVideoOutput(IVideoOutput *output) {
   videoOutput_ = output;
@@ -323,6 +329,17 @@ void Emulator::InitSubsystems() {
   bus_.MapCpuIo(cpuIo_);
   bus_.MapDma(dma_);
   bus_.MapCartridge(*cartridge_);
+  const auto expansion = bus_.RegisterHandler(
+      [this](uint32_t address, uint8_t openBus) {
+        return config_.expansionDevice == ExpansionDevice::Satellaview
+                   ? broadcastReceiver_.ReadCpu(address, openBus)
+                   : openBus;
+      },
+      [this](uint32_t address, uint8_t value) {
+        if (config_.expansionDevice == ExpansionDevice::Satellaview)
+          broadcastReceiver_.WriteCpu(address, value);
+      });
+  bus_.MapRegions({{0x00, 0x3f, 0x2188, 0x219f}, {0x80, 0xbf, 0x2188, 0x219f}}, expansion);
   dma_.SetCartridge(&*cartridge_);
 
   // Map the DSP-1 data and status windows for the cartridge board.
@@ -570,6 +587,7 @@ bool Emulator::Reset() {
 }
 
 void Emulator::ResetHardware(bool warm) {
+  broadcastReceiver_.Reset();
   cartridge_->SetSa1BusContention(config_.sa1BusContention);
   const auto compatibility = detail::SelectCompatibility(
       cartridge_->Header(), config_.ppu, config_.entropyMode, config_.gameCompatibilityFixes);

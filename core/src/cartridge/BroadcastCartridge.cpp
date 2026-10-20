@@ -1,7 +1,6 @@
 #include "snes/core/Cartridge.hpp"
 
 #include <algorithm>
-#include <ctime>
 
 namespace snes::core {
 namespace {
@@ -21,26 +20,7 @@ void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
   memoryPack_.assign(pack.begin(), pack.end());
   memoryPackReadOnly_ = MaskRomPack(memoryPack_);
   bsx_ = std::make_unique<Bsx>(rom_, memoryPack_, sram_);
-  bsx_->SetTimeSource([]() {
-    BroadcastTime time;
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-#ifdef _WIN32
-    if (localtime_s(&local, &now) != 0)
-      return time;
-#else
-    if (!localtime_r(&now, &local))
-      return time;
-#endif
-    time.year = uint16_t(local.tm_year + 1900);
-    time.month = uint8_t(local.tm_mon + 1);
-    time.day = uint8_t(local.tm_mday);
-    time.weekday = uint8_t(local.tm_wday + 1);
-    time.hour = uint8_t(local.tm_hour);
-    time.minute = uint8_t(local.tm_min);
-    time.second = uint8_t(local.tm_sec);
-    return time;
-  });
+  bsx_->SetTimeSource(CurrentBroadcastTime);
 }
 
 bool Cartridge::LoadBroadcastStream(uint16_t channel, uint8_t sequence,

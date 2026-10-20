@@ -1,6 +1,8 @@
 // BS-X BIOS cartridge controller and Satellaview register interface.
 #pragma once
 
+#include "snes/core/BroadcastReceiver.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -8,12 +10,6 @@
 #include <vector>
 
 namespace snes::core {
-
-struct BroadcastTime {
-  uint16_t year = 2000;
-  uint8_t month = 1, day = 1, weekday = 7; // Sunday=1 through Saturday=7.
-  uint8_t hour = 0, minute = 0, second = 0;
-};
 
 class Bsx {
 public:

@@ -34,8 +34,21 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
   std::optional<uint8_t> competitionDip;
+  auto expansion = snes::core::Emulator::ExpansionDevice::None;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
+    if (value.starts_with("--expansion=")) {
+      const auto name = value.substr(12);
+      if (name == "none")
+        expansion = snes::core::Emulator::ExpansionDevice::None;
+      else if (name == "satellaview")
+        expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
+      else {
+        std::cerr << "Unknown expansion device: " << name << '\n';
+        return EXIT_FAILURE;
+      }
+      continue;
+    }
     if (value.starts_with("--competition-dip=")) {
       const auto digits = value.substr(18);
       unsigned setting = 0;
@@ -103,6 +116,7 @@ int main(int argc, char *argv[]) {
                  "<game2.sfc> <game3.sfc> [--competition-dip=0..255]\n";
     std::cerr << "       Port 2 also supports scope, justifier, justifiers, and rifle\n";
     std::cerr << "       --firmware-dir=<directory> supplies cartridge processor firmware\n";
+    std::cerr << "       --expansion=none|satellaview selects the console expansion device\n";
     return EXIT_FAILURE;
   }
   if (devices[0] == ControllerDevice::Mouse && devices[1] == ControllerDevice::Mouse) {
@@ -122,6 +136,7 @@ int main(int argc, char *argv[]) {
                                              sufami && arguments.size() == 4 ? arguments[3] : ""};
 
   snes::core::Emulator::Config emulatorConfig;
+  emulatorConfig.expansionDevice = expansion;
   if (!firmwareDirectory.empty()) {
     auto firmware = std::make_shared<snes::core::CartridgeFirmware>();
     std::string error;

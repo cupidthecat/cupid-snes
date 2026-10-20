@@ -59,6 +59,7 @@ struct FrameStepResult {
 
 class Emulator {
 public:
+  enum class ExpansionDevice { None, Satellaview };
   struct Config {
     uint32_t frameRate = 60;
     uint32_t visibleWidth = 256;
@@ -74,6 +75,7 @@ public:
     Smp::DspMode dspMode = Smp::DspMode::Batch32;
     Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
     bool gameCompatibilityFixes = true;
+    ExpansionDevice expansionDevice = ExpansionDevice::None;
   };
 
   explicit Emulator();
@@ -116,10 +118,18 @@ public:
     return cartridge_ && cartridge_->LoadMemoryPackMetadata(bytes);
   }
   bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data) {
-    return cartridge_ && cartridge_->LoadBroadcastStream(channel, sequence, data);
+    return config_.expansionDevice == ExpansionDevice::Satellaview &&
+           broadcastReceiver_.LoadStream(channel, sequence, data);
   }
   bool SetBroadcastTimeSource(std::function<BroadcastTime()> source) {
-    return cartridge_ && cartridge_->SetBroadcastTimeSource(std::move(source));
+    if (config_.expansionDevice != ExpansionDevice::Satellaview)
+      return false;
+    broadcastReceiver_.SetTimeSource(std::move(source));
+    return true;
+  }
+  void SetExpansionDevice(ExpansionDevice device);
+  ExpansionDevice GetExpansionDevice() const noexcept {
+    return config_.expansionDevice;
   }
 
   const Cartridge *LoadedCartridge() const noexcept;
@@ -213,6 +223,7 @@ private:
   void EmitTrace(const TraceEvent &event) const;
 
   Config config_;
+  BroadcastReceiver broadcastReceiver_;
   uint64_t frameIndex_ = 0;
   uint64_t masterCycles_ = 0;
   bool initialized_ = false;

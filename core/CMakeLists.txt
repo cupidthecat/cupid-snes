@@ -43,6 +43,7 @@ add_library(snes_core
   src/cartridge/SetaProtocol.cpp
   src/cartridge/St018Processor.cpp
   src/cartridge/Bsx.cpp
+  src/io/BroadcastReceiver.cpp
   src/cartridge/Dsp3.cpp
   src/cartridge/Dsp3Decode.cpp
   src/cartridge/Dsp3Path.cpp
