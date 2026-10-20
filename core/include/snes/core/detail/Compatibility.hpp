@@ -11,6 +11,7 @@ namespace detail {
 struct CompatibilitySettings {
   bool initializeWram = false;
   bool initializeDsp = false;
+  bool perCycleDsp = false;
   uint32_t sampleRate = AudioTiming::SampleRate;
   Ppu::Config video;
   EntropyMode entropy = EntropyMode::Low;

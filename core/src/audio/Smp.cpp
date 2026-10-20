@@ -105,6 +105,7 @@ void Smp::Power(bool retainRam) {
   timer2_ = {};
   busWait_ = {};
   hardwareClocks_ = 0;
+  dspClockBalance_ = 0;
   synchronizingCpu_ = yieldedCpu_ = false;
 }
 
@@ -138,15 +139,6 @@ void Smp::Write(uint16_t address, uint8_t data) {
   BusWait wait;
   const PendingCycle cycle{PendingCycleKind::Write, address, data, nullptr};
   while (!ClockBusCycle(cycle, wait)) {
-  }
-}
-
-void Smp::WriteBus(uint16_t address, uint8_t data) {
-  // Writes always go to underlying RAM (even in I/O region)
-  writeRam(address, data);
-  // I/O registers at $00F0-$00FF get additional handling
-  if ((address & 0xFFF0) == 0x00F0) {
-    writeIO(address, data);
   }
 }
 
@@ -230,15 +222,31 @@ bool Smp::ClockBusCycle(const PendingCycle &cycle, BusWait &wait) {
     const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
     StepTimers(nextTicks - previousTicks);
     // The DSP starts on the first half-cycle, then clocks on alternate edges.
-    if (hardwareClocks_ & 1)
+    if (dspMode_ == DspMode::PerCycle && (hardwareClocks_ & 1))
       tickDsp();
+    if (dspMode_ == DspMode::Batch32)
+      --dspClockBalance_;
   }
 
   const bool midpoint = inputPort && !wait.sampled && 2 * wait.elapsed >= wait.duration;
   const bool finished = wait.elapsed == wait.duration;
+  if (dspMode_ == DspMode::Batch32 && cycle.kind != PendingCycleKind::Idle &&
+      (midpoint || finished)) {
+    while (dspClockBalance_ < 0) {
+      for (unsigned clock = 0; clock < 32; ++clock)
+        tickDsp();
+      dspClockBalance_ += 64;
+    }
+  }
   const bool outputPort =
       cycle.kind == PendingCycleKind::Write &&
       ((cycle.address & 0xfffc) == 0x00f4 || (cycle.address == 0x00f1 && (cycle.data & 0x30)));
+  // Communication writes reach shared RAM before yielding to the console.
+  // The port latch changes only after that handoff returns.
+  if (finished && outputPort && !wait.wroteRam) {
+    writeRam(cycle.address, cycle.data);
+    wait.wroteRam = true;
+  }
   // Keep the bus operation suspended before changing a communication latch.
   // Bound execution even when a program never touches those latches.
   constexpr int64_t maximumClockLead = 442'368'000'000;
@@ -261,7 +269,11 @@ bool Smp::ClockBusCycle(const PendingCycle &cycle, BusWait &wait) {
     *cycle.readResult = wait.sampled ? wait.readData : ReadBus(cycle.address);
     break;
   case PendingCycleKind::Write:
-    WriteBus(cycle.address, cycle.data);
+    // I/O writes also reach underlying RAM, once per completed operation.
+    if (!wait.wroteRam)
+      writeRam(cycle.address, cycle.data);
+    if ((cycle.address & 0xfff0) == 0x00f0)
+      writeIO(cycle.address, cycle.data);
     break;
   case PendingCycleKind::Idle:
   case PendingCycleKind::None:

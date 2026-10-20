@@ -72,9 +72,13 @@ Multiply and divide run for eight and sixteen CPU cycles. The result registers e
 
 DMA requests allow a CPU cycle before bus takeover. Transfers align to the DMA divider, charge startup, place source and destination accesses on separate phases, and resume the CPU at its cycle boundary. HDMA table and data accesses advance hardware as they occur and can interrupt general DMA. Refresh positions follow the divider instead of staying fixed on every scanline. The existing eight-channel modes, source-bank wrapping, and same-channel HDMA cancellation remain covered.
 
-The S-DSP advances through 32 phases per output sample. Register latches, BRR/directory reads, envelopes, noise, pitch modulation, voice mixing, echo RAM, and output timing have separate phase behavior. It clocks on odd SMP half-cycles, including time spent waiting for a memory access. The normal complete-cycle rate is 1.02528 MHz; cartridge compatibility settings can select 1.024 MHz.
+The S-DSP advances through 32 phases per output sample. Register latches, BRR/directory reads, envelopes, noise, pitch modulation, voice mixing, echo RAM, and output timing have separate phase behavior. The normal complete-cycle rate is 1.02528 MHz; cartridge compatibility settings can select 1.024 MHz.
 
-The SPC700 can pause inside an instruction or a stretched memory access. `RunUntil` stops at its requested clock count. Communication reads hold their sampled input until the read completes; pending stores do not reach the console early. CONTROL clears and timer read-and-clear operations occur on their access boundary. `Step` still completes one instruction for direct processor users. Reset cancels pending work, and coroutine storage belongs to the processor so sequential thread handoff does not invalidate a suspended instruction.
+`Emulator::Config::dspMode` defaults to `Smp::DspMode::Batch32`. At SMP memory-access boundaries, the DSP runs complete 32-clock batches and retains its clock lead for later accesses. Idle time accumulates until the next memory access. This scheduling affects register readbacks, shared echo RAM and the number of samples emitted at a field boundary. `PerCycle` advances on odd SMP half-cycles, including stretched waits. Both modes execute the same DSP pipeline. Standalone `Smp` callers default to `PerCycle` and can select a mode before power or reset.
+
+The complete titles `KOUSHIEN_2` and `RENDERING RANGER R2`, plus `BUBSY II` in PAL regions, select per-cycle execution at launch. These rules apply independently of optional startup fixes. Warm reset retains the selected profile, while another cartridge restores its own selection.
+
+The SPC700 can pause inside an instruction or a stretched memory access. `RunUntil` stops at its requested clock count. Communication reads hold their sampled input until the read completes; pending stores do not reach the console early. Port writes reach backing audio RAM before the console handoff, then update the port latch when execution resumes. CONTROL clears and timer read-and-clear operations occur on their access boundary. `Step` still completes one instruction for direct processor users. Reset cancels pending work, and coroutine storage belongs to the processor so sequential thread handoff does not invalidate a suspended instruction.
 
 The SMP TEST register selects internal and external wait states separately. I/O, idle cycles, and the enabled IPL overlay use the internal setting; other RAM accesses use the external setting. The implemented clock model uses 1, 2, 5, or 10 SMP clocks and advances the timer divider by 2, 4, 8, or 16 ticks. A TEST write finishes under the old setting. The model samples port reads midway through a stretched access, rounded to the next SMP clock, and ordinary RAM reads at its end.
 
@@ -119,7 +123,7 @@ The memory controller exposes D7-only registers, pending and applied mapping bit
 
 ## Validation scope
 
-The current Windows Release build passes all 75 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
+The current Windows Release build passes all 78 bundled CTest suites. The earlier Clang 21 Release and AddressSanitizer audit covered 36 targets: 33 bundled tests and three optional DMA/IRQ, CPU, and SPC diagnostics. The Windows legacy test executable reserves an 8 MiB stack so sanitizer instrumentation can retain its large fixtures.
 
 Run the complete test set with:
 
@@ -135,6 +139,8 @@ The CPU arithmetic tests check all 65,536 eight-bit products and 657,664 divisio
 The sound-port integration tests execute console loads and stores through `$2140-$2143` and their mirrors under both PAL and NTSC clock ratios. They check deadlines in both communication directions. In the earlier audit, these tests exposed an SMP store becoming visible too early and console accesses failing to reach Super FX RAM banks `$72-$73`.
 
 The earlier audit compared SPC700 traces for 2,048 cases: all 256 opcodes, four deterministic RAM/register/flag seeds, and two branch paths. Ordered read/write/idle events, cycle counts, registers, halt state, and complete RAM hashes matched. The committed segmented-execution tests also cover reset during an instruction, CONTROL clears, timer reads, halt deadlines, DSP phase boundaries, and sequential cross-thread resume/destruction.
+
+DSP scheduling tests upload an audible program through the IPL ports and check both execution modes through cold and warm starts. Field traces include full work RAM, audio RAM, both processor states, DSP registers, clocks, output counts and PCM digests. Separate fixtures cover port-read midpoints, retained clock lead, backing RAM before a port handoff, and exact-title launch rules with optional startup fixes enabled and disabled.
 
 For external text diagnostics, `snes_rom_diagnostic` reads a 32-column ASCII tilemap directly from backing VRAM without touching PPU read latches. It prints stable result pages. `--expect` requires exact result lines and returns a failing exit status when any are missing; execution alone is not a diagnostic pass. For example, with an existing [SnesTests checkout](https://github.com/SourMesen/SnesTests):
 

@@ -9,6 +9,7 @@ inline core::Emulator::Config DeterministicConsoleConfig() {
   config.entropyMode = core::EntropyMode::None;
   config.entropySeed = 0;
   config.ppu.model = core::Ppu::RenderModel::Progressive;
+  config.dspMode = core::Smp::DspMode::PerCycle;
   return config;
 }
 

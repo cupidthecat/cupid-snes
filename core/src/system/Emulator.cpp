@@ -596,6 +596,7 @@ void Emulator::ResetHardware(bool warm) {
   if (compatibility.initializeDsp)
     for (unsigned reg = 0; reg < Dsp::RegisterCount; ++reg)
       dsp_.Write(uint8_t(reg), 0xff);
+  smp_.SetDspMode(compatibility.perCycleDsp ? Smp::DspMode::PerCycle : config_.dspMode);
   smp_.Power(warm);
   ppu_.Power(startup, compatibility.video, warm);
   cartridge_->InitializePowerOnMemory(startup);

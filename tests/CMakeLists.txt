@@ -234,6 +234,10 @@ add_executable(snes_dsp_phase_tests test_dsp_phases.cpp)
 target_link_libraries(snes_dsp_phase_tests PRIVATE snes_core)
 add_test(NAME snes_dsp_phase_tests COMMAND snes_dsp_phase_tests)
 
+add_executable(snes_dsp_batch_tests test_dsp_batch.cpp)
+target_link_libraries(snes_dsp_batch_tests PRIVATE snes_core)
+add_test(NAME snes_dsp_batch_tests COMMAND snes_dsp_batch_tests)
+
 add_executable(snes_sdl_audio_tests test_sdl_audio.cpp ../frontend/src/SdlAudioOutput.cpp)
 
 add_executable(snes_frame_pacing_tests test_frame_pacing.cpp)

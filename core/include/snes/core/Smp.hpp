@@ -27,6 +27,8 @@ class Dsp; // Forward declaration
 
 class Smp : public Spc700 {
 public:
+  enum class DspMode { PerCycle, Batch32 };
+
   // Timer - 4-stage pipeline.
   //
   // Template parameter Frequency: number of SMP clocks per stage0 overflow.
@@ -80,6 +82,14 @@ public:
   // DSP connection
   void SetDsp(Dsp &dsp) {
     dsp_ = &dsp;
+  }
+  // Select before power or reset. Batched execution retains its clock lead
+  // across bus operations and synchronizes at memory-access boundaries.
+  void SetDspMode(DspMode mode) noexcept {
+    dspMode_ = mode;
+  }
+  DspMode GetDspMode() const noexcept {
+    return dspMode_;
   }
 
   // DSP pipeline clocks and SMP hardware clocks share the audio oscillator.
@@ -194,9 +204,12 @@ private:
     uint8_t readData = 0;
     bool sampled = false;
     bool deferred = false;
+    bool wroteRam = false;
   } busWait_{};
 
   uint64_t hardwareClocks_ = 0;
+  DspMode dspMode_ = DspMode::PerCycle;
+  int64_t dspClockBalance_ = 0;
   uint32_t sampleRate_ = AudioTiming::SampleRate;
   uint64_t synchronizationTarget_ = 0;
   uint32_t synchronizationPhase_ = 0, synchronizationFrequency_ = 1;
@@ -207,7 +220,6 @@ private:
   bool ExecuteBusCycle(const PendingCycle &cycle) override;
   bool ClockBusCycle(const PendingCycle &cycle, BusWait &wait);
   uint8_t ReadBus(uint16_t address);
-  void WriteBus(uint16_t address, uint8_t data);
 
   // Internal I/O dispatch
   uint8_t readIO(uint16_t address);
@@ -234,7 +246,7 @@ private:
   std::array<uint8_t, 4> apuInput_{};  // written by CPU portWrite()
   std::array<uint8_t, 4> cpuOutput_{}; // written by SMP writeIO($F4-$F7)
 
-  // Each elapsed complete-cycle clock advances one DSP pipeline phase.
+  // Advance one DSP phase, including each phase within a scheduled batch.
   void tickDsp();
 
   // DSP pointer (set via SetDsp)

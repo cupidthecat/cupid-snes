@@ -37,6 +37,8 @@ CompatibilitySettings SelectCompatibility(const RomHeader &header, Ppu::Config v
     result.video.renderCycle = 32;
   if (title == "Sugoro Quest++")
     result.video.renderCycle = 128;
+  result.perCycleDsp = title == "KOUSHIEN_2" || title == "RENDERING RANGER R2" ||
+                       (title == "BUBSY II" && PalCountry(header.country));
   if (hotfixes) {
     result.initializeWram = title == "DIRT RACER";
     result.initializeDsp = title == "MAGICAL DROP";
