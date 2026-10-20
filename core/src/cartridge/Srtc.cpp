@@ -184,7 +184,6 @@ bool Srtc::Load(std::span<const uint8_t> data) {
       AdvanceSeconds(elapsed % 60);
     }
   }
-  Reset();
   return true;
 }
 } // namespace snes::core

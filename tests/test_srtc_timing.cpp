@@ -60,6 +60,19 @@ void ConsoleClock() {
           "The running console supplies its selected region's oscillator frequency");
   }
 }
+void ConsoleBatteryReload() {
+  for (bool pal : {false, true}) {
+    auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+    Check(emu->LoadCartridge(Image(pal)), "The generated clock cartridge loads for battery reload");
+    emu->StepFrame();
+    const auto saved = emu->SaveRtc();
+    Check(emu->LoadRtc(saved), "The running console accepts its clock battery data");
+    const unsigned resumed = Seconds(*emu);
+    emu->StepFrame();
+    Check(Seconds(*emu) == resumed,
+          "Loading clock battery data retains the console-driven oscillator phase");
+  }
+}
 void ColdStorage() {
   auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(Image(false)), "The generated battery-backed clock board loads");
@@ -84,8 +97,10 @@ void HeaderFlags() {
 } // namespace
 int main(int argc, char **argv) {
   try {
-    if (argc == 1 || std::string_view(argv[1]) == "timing")
+    if (argc == 1 || std::string_view(argv[1]) == "timing") {
       ConsoleClock();
+      ConsoleBatteryReload();
+    }
     if (argc == 1 || std::string_view(argv[1]) == "cold")
       ColdStorage();
     if (argc == 1 || std::string_view(argv[1]) == "header")
