@@ -6,9 +6,11 @@ Existing LoROM, HiROM, extended and special boards, DSP-1/2, OBC1, S-RTC, S-DD1,
 
 ## Console startup and video hardware
 
-`Emulator::Config::entropyMode` selects deterministic startup (`None`), a correlated memory pattern with sparse bit changes (`Low`), or independent byte generation (`High`). The default is `Low`. `entropySeed` and `entropySequence` make startup reproducible; an omitted seed uses the process CPU clock. WRAM, progressive video memory and registers, and ST018 work RAM consume one shared stream in startup order.
+`Emulator::Config::entropyMode` selects deterministic startup (`None`), a correlated memory pattern with sparse bit changes (`Low`), or independent byte generation (`High`). The default is `Low`. `entropySeed` and `entropySequence` make startup reproducible; an omitted console seed uses the process CPU clock. WRAM, progressive video memory and registers, and ST018 work RAM consume one shared stream in startup order.
 
 The progressive video path retains WRAM, APURAM and VRAM on warm reset. It clears OAM and initializes palette memory and register latches through a fresh startup stream. Deterministic mode clears palette memory and retains defined fallback bits, including the PPU bus values and VRAM increment selection. Reset preserves the selected video hardware configuration.
+
+Handheld startup uses an independent noise stream. Both `Low` and `High` enable the same model-specific WRAM, high RAM, object-memory and wave-memory patterns. `None` clears those regions except for the second adapter's `$55` WRAM pattern. VRAM stays clear, and the final wave byte stays zero. Console and bridge resets continue the stream; Camera capture-control writes draw from it too. With an explicit seed, `entropySequence` supplies the upper 32 bits and `entropySeed` the lower 32 bits. An omitted handheld seed uses wall-clock time. Battery data retains its own lifecycle.
 
 ST018 initializes its 16 KiB work RAM after video startup on cold and warm console resets. Deterministic mode clears it. Reset through the cartridge bridge retains work RAM and firmware writes. Battery RAM remains separate and survives both resets.
 
@@ -168,7 +170,7 @@ The earlier cartridge and DSP audit exercised these paths:
 | BS-X | 256 mapping configurations, 1,068 flash transactions, 371,783 reads, and 36,222 writes matched on common paths, including two packet receivers. The independently documented MCC differences, injected calendar, and malformed/exhausted stream handling were checked separately. |
 | ST011/ST018 | 11,527,200 RAM/status/result comparisons matched on the implemented board-packet and startup-handshake paths. No internal processor or game-logic behavior was compared. |
 
-The temporary comparison adapters and external source builds are local validation tools under `out/`; they are not dependencies of the committed tests. These comparisons do not cover every possible input or establish complete chip accuracy.
+Committed tests generate their own cartridge programs and use fixed expected results. Coverage is limited to the recorded fixtures.
 
 Each supplied game completed a 9,000-frame integration run from reset, with Start held for 20 frames beginning at frame 600:
 
@@ -180,6 +182,4 @@ Each supplied game completed a 9,000-frame integration run from reset, with Star
 | Super Mario RPG | 7,945 | 7,279,463 | SA-1 opening sequence |
 | Super Mario All-Stars + Super Mario World | 8,877 | 8,477,772 | Game selection menu |
 
-In the earlier audit, the four retail titles also ran in an independent comparison build. Their captures reached corresponding menus or sequences, with timing and animation differences; these were not pixel-identical comparisons. That build selected HiROM for the Contra prototype and produced no output, so it provided no valid game comparison for that image. The local core's prototype run was checked separately.
-
-These runs check boot, sustained execution, output generation, and limited Start input. They do not establish complete playthroughs, every controller interaction, or commercial compatibility for every enhancement chip. GSU and other chips without supplied game images retain the synthetic and command-level coverage described above. Diagnostic BMP capture now converts the core's ABGR pixels to BMP channel order, so capture colors can be compared correctly.
+These runs check boot, sustained execution, output generation, and limited Start input. They do not establish complete playthroughs, every controller interaction, or commercial compatibility for every enhancement chip. Generated tests cover additional processor, bus and peripheral cases. Diagnostic BMP capture now converts the core's ABGR pixels to BMP channel order, so capture colors can be compared correctly.

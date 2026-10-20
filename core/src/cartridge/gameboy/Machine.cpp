@@ -11,6 +11,7 @@ bool VideoBus(uint16_t address) noexcept {
 
 Machine::Machine(Host &host, Devices &devices) : host_(host), devices_(devices) {
   devices_.SetDmaSynchronizer([this] { SynchronizeDma(true); });
+  cartridge_.SetCameraNoiseSource([this] { return startup_.NoiseByte(); });
 }
 
 bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
@@ -33,8 +34,9 @@ void Machine::Reset(bool secondModel, bool preserveAudio) {
   timer_.Reset();
   cartridge_.Reset();
   cartridge_.SetClockRate(secondModel ? 4194304 : 4295454);
-  ram_.fill(secondModel ? 0x55 : 0);
-  highRam_.fill(0);
+  const auto initial = startup_.Power(secondModel);
+  ram_ = initial.work;
+  highRam_ = initial.high;
   dmaSource_ = 0;
   dmaPosition_ = 0xa1;
   dmaClocks_ = 0;
@@ -43,6 +45,7 @@ void Machine::Reset(bool secondModel, bool preserveAudio) {
   flags_ = enable_ = dataBus_ = decay_ = 0;
   joypad_ = 0xcf;
   devices_.Reset(secondModel, preserveAudio);
+  devices_.InitializePowerOnMemory(initial.objects, initial.wave);
 }
 
 unsigned Machine::RunInstruction() {

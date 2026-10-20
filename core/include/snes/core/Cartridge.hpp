@@ -166,6 +166,7 @@ public:
   // and clock data.
   void Reset();
   void InitializePowerOnMemory(PowerOnState &state);
+  void InitializeGameBoyStartup(bool entropyEnabled, std::optional<uint64_t> seed);
 
   void SetMemselFast(bool enabled) noexcept;
   bool MemselFast() const noexcept;

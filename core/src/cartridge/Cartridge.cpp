@@ -524,6 +524,11 @@ void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
     armDsp_->Power(state);
 }
 
+void Cartridge::InitializeGameBoyStartup(bool entropyEnabled, std::optional<uint64_t> seed) {
+  if (gameBoy_)
+    gameBoy_->InitializeStartup(entropyEnabled, seed);
+}
+
 void Cartridge::SetSa1BusContention(bool enabled) {
   if (sa1_)
     sa1_->SetBusContention(enabled);

@@ -5,6 +5,7 @@
 #include "snes/core/gameboy/ClockedIo.hpp"
 #include "snes/core/gameboy/Cpu.hpp"
 #include "snes/core/gameboy/Host.hpp"
+#include "snes/core/gameboy/StartupState.hpp"
 
 #include <array>
 #include <functional>
@@ -20,6 +21,8 @@ public:
     virtual void Reset(bool secondModel, bool) {
       Reset(secondModel);
     }
+    virtual void InitializePowerOnMemory(std::span<const uint8_t, 160>,
+                                         std::span<const uint8_t, 16>) {}
     virtual uint8_t Read(uint16_t address, Access access) = 0;
     // Writes and elapsed clocks return newly requested interrupt bits.
     virtual uint8_t Write(uint16_t address, uint8_t value, Access access) = 0;
@@ -45,6 +48,10 @@ public:
   bool Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
             std::string *error = nullptr);
   void Reset(bool secondModel = false, bool preserveAudio = false);
+  void SetStartupEntropy(bool enabled, uint64_t seed) noexcept {
+    startup_.Configure(enabled, seed);
+    cartridge_.SetCameraEntropy(seed, enabled);
+  }
   unsigned RunInstruction();
   void AdvanceHardware(unsigned clocks);
   uint8_t ReadMemory(uint16_t address);
@@ -69,6 +76,7 @@ private:
   Cpu cpu_{*this};
   ClockedIo timer_{*this};
   Cartridge cartridge_;
+  StartupState startup_;
   std::array<uint8_t, 8192> ram_{};
   std::array<uint8_t, 127> highRam_{};
   std::array<uint8_t, 256> boot_{};

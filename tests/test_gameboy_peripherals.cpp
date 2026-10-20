@@ -181,6 +181,31 @@ struct System final : Audio::Output, Video::Output {
   }
 };
 
+void StartupDevices() {
+  constexpr uint64_t expected[2][2] = {
+      {0x70e1144bc8285336ull, 0x4a67f410f6b918dbull},
+      {0x61803d732ff687d0ull, 0x96eab4661e66d488ull},
+  };
+  for (unsigned model = 0; model < 2; ++model) {
+    System system;
+    system.machine.SetStartupEntropy(true, 1);
+    for (unsigned reset = 0; reset < 2; ++reset) {
+      system.machine.Reset(model != 0);
+      uint64_t signature = 14695981039346656037ull;
+      for (const auto [first, size] :
+           {std::pair{0xc000, 8192}, {0xff80, 127}, {0xfe00, 160}, {0xff30, 16}, {0x8000, 8192}})
+        for (unsigned offset = 0; offset < unsigned(size); ++offset) {
+          signature ^= system.machine.ReadMemory(uint16_t(first + offset));
+          signature *= 1099511628211ull;
+        }
+      Check(signature == expected[model][reset],
+            "Startup bytes reach the physical object and wave memory");
+      Check(system.samples == 0 && system.pixels.empty(),
+            "Initializing peripheral memory does not present pixels or sound");
+    }
+  }
+}
+
 void StopAndWake() {
   constexpr std::array<unsigned, 5> waits = {0, 1, 2, 31, 1000};
   for (unsigned model = 0; model < 2; ++model)
@@ -766,6 +791,7 @@ void WaveFetchUsesProgramCounter() {
 
 int main() {
   try {
+    StartupDevices();
     WaveFetchUsesProgramCounter();
     StopAndWake();
     InfraredExecution();

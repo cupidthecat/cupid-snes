@@ -28,6 +28,11 @@ struct Devices final : Machine::Devices {
     clocks = 0;
     interruptAt = UINT64_MAX;
   }
+  void InitializePowerOnMemory(std::span<const uint8_t, 160> objects,
+                               std::span<const uint8_t, 16> wave) override {
+    std::copy(objects.begin(), objects.end(), memory.begin() + 0xfe00);
+    std::copy(wave.begin(), wave.end(), memory.begin() + 0xff30);
+  }
   uint8_t Read(uint16_t address, Machine::Access) override {
     return memory[address];
   }
@@ -61,6 +66,87 @@ struct System {
     Check(machine.CpuState().pc == 0x100, "Boot firmware jumps into the cartridge program");
   }
 };
+
+void StartupMemory() {
+  constexpr uint64_t expected[2][3][3] = {
+      {
+          {0x0c0f1a4679c7715dull, 0x7d79c384beba1dccull, 0xf5a3c7d962e56e0bull},
+          {0x70e1144bc8285336ull, 0x4a67f410f6b918dbull, 0x6f16ec3ce51c1813ull},
+          {0x45ba11aad0f18c62ull, 0x85da23cd5bb6800full, 0x168262b79cdbdd64ull},
+      },
+      {
+          {0xbaa3d27ccc778008ull, 0x64b554027d36d468ull, 0x9d7f0c1faf22b66aull},
+          {0x61803d732ff687d0ull, 0x96eab4661e66d488ull, 0x9e91b11b6a67a433ull},
+          {0xb3079542b8efeda1ull, 0x48e1b8906e853d82ull, 0x796129d74b55a350ull},
+      },
+  };
+  constexpr std::array<uint64_t, 3> seeds{0, 1, 0x123456789abcdef0ull};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned seed = 0; seed < seeds.size(); ++seed) {
+      System system;
+      system.machine.SetStartupEntropy(true, seeds[seed]);
+      for (unsigned reset = 0; reset < 3; ++reset) {
+        system.machine.Reset(model != 0);
+        uint64_t signature = 14695981039346656037ull;
+        const auto include = [&](uint16_t first, unsigned size) {
+          for (unsigned offset = 0; offset < size; ++offset) {
+            signature ^= system.machine.ReadMemory(uint16_t(first + offset));
+            signature *= 1099511628211ull;
+          }
+        };
+        include(0xc000, 8192);
+        include(0xff80, 127);
+        include(0xfe00, 160);
+        include(0xff30, 16);
+        include(0x8000, 8192);
+        Check(signature == expected[model][seed][reset],
+              "Startup memory follows the model, seed and persistent noise stream");
+        Check(system.machine.Clocks() == 0 && system.machine.CpuState().pc == 0,
+              "Power-on memory does not execute instructions or advance devices");
+      }
+    }
+}
+
+void CameraStartupStream() {
+  constexpr uint64_t expected[2][2][3] = {
+      {
+          {0x2846e7bbed5bde3full, 0xab23c007621ff56eull, 0x3d53c908eb812348ull},
+          {0x26a8b5c741d32368ull, 0x7e0a243b053a89dfull, 0x554674ce5b19108bull},
+      },
+      {
+          {0xd004fab0cc1a437aull, 0xfd17f441c643cc43ull, 0x52da1298c5af3e51ull},
+          {0xba75dfdb469849d2ull, 0xe2ef6aa42d394f63ull, 0x143727bbc6c5afb0ull},
+      },
+  };
+  constexpr std::array<uint64_t, 2> seeds{1, 0x123456789abcdef0ull};
+  for (unsigned model = 0; model < 2; ++model)
+    for (unsigned seed = 0; seed < seeds.size(); ++seed) {
+      System system;
+      system.rom[0x147] = 0xfc;
+      system.rom[0x149] = 4;
+      system.machine.SetStartupEntropy(true, seeds[seed]);
+      Check(system.machine.Load(system.rom, system.boot), "Load a generated Camera cartridge");
+      if (model) {
+        // Select the second model for the first powered state too.
+        system.machine.SetStartupEntropy(true, seeds[seed]);
+        system.machine.Reset(true);
+      }
+      for (unsigned reset = 0; reset < 3; ++reset) {
+        system.machine.WriteMemory(0x4000, 0x10);
+        system.machine.WriteMemory(0xa000, 0);
+        system.machine.Reset(model != 0);
+        uint64_t signature = 14695981039346656037ull;
+        for (const auto [first, size] :
+             {std::pair{0xc000, 8192}, {0xff80, 127}, {0xfe00, 160}, {0xff30, 16}, {0x8000, 8192}})
+          for (unsigned offset = 0; offset < unsigned(size); ++offset) {
+            signature ^= system.machine.ReadMemory(uint16_t(first + offset));
+            signature *= 1099511628211ull;
+          }
+        Check(signature == expected[model][seed][reset],
+              "Camera control writes and subsequent resets share one noise stream");
+      }
+    }
+}
 
 void BootAndMemory() {
   System system;
@@ -260,6 +346,8 @@ void CameraSleepAndDma() {
 
 int main() {
   try {
+    StartupMemory();
+    CameraStartupStream();
     BootAndMemory();
     OpenBusAndJoypad();
     RegisterPhases();

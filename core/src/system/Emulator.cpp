@@ -301,6 +301,12 @@ const Cartridge *Emulator::LoadedCartridge() const noexcept {
 
 void Emulator::InitSubsystems() {
   msu1_.reset();
+  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy) {
+    std::optional<uint64_t> seed;
+    if (config_.entropySeed)
+      seed = (uint64_t(config_.entropySequence) << 32) | *config_.entropySeed;
+    cartridge_->InitializeGameBoyStartup(config_.entropyMode != EntropyMode::None, seed);
+  }
   // 1. Inter-subsystem connections
   dsp_.SetRam(smp_.Ram());
   smp_.SetDsp(dsp_);

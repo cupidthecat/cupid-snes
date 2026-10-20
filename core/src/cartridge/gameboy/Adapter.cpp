@@ -3,6 +3,8 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Timing.hpp"
 
+#include <ctime>
+
 namespace snes::core::gameboy {
 
 Adapter::Adapter(bool secondModel) : secondModel_(secondModel) {
@@ -27,6 +29,14 @@ void Adapter::Reset() {
   host_.Reset();
   ResetHandheld();
   mixer_.Reset(ClockRate() / 128);
+}
+
+void Adapter::InitializeStartup(bool entropyEnabled, std::optional<uint64_t> seed) {
+  machine_.SetStartupEntropy(
+      entropyEnabled, seed.value_or(StartupState::SeedFromTime(uint64_t(std::time(nullptr)))));
+  // Initialize the handheld circuitry before applying console power.
+  machine_.Reset(secondModel_);
+  Reset();
 }
 
 void Adapter::SetPal(bool pal) noexcept {

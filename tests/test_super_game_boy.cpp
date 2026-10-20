@@ -1,5 +1,6 @@
 #include "ConsoleConfig.hpp"
 #include "audio/MsuFixture.hpp"
+#include "gameboy/StartupProgram.hpp"
 #include "snes/core/gameboy/AudioMixer.hpp"
 
 #include <algorithm>
@@ -71,6 +72,61 @@ std::vector<uint8_t> Game(bool sound = false) {
   program.insert(program.end(), {0x21, 0, 0xa0, 0x34, 0x18, 0xfd});
   std::copy(program.begin(), program.end(), bytes.begin() + 0x100);
   return bytes;
+}
+
+void ConsoleStartupEntropy() {
+  constexpr uint64_t expected[2][2][2][2] = {
+      {
+          {
+              {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+              {0x83dcd331ece72507ull, 0x83dcd331ece72507ull},
+          },
+          {
+              {0xa2b002b734b29813ull, 0xcd274d4cba8ada78ull},
+              {0x9c4e429010c917d7ull, 0x33cdbc1dd08f98c9ull},
+          },
+      },
+      {
+          {
+              {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+              {0x38df0d2b727c8507ull, 0x38df0d2b727c8507ull},
+          },
+          {
+              {0x06d32353afee2433ull, 0xb6e2eb304dc672eeull},
+              {0x6cabe51aea7063f1ull, 0x016c241a40b9d947ull},
+          },
+      },
+  };
+  constexpr std::array<uint32_t, 2> seeds{1, 0xc0ffee};
+  for (unsigned model = 0; model < 2; ++model)
+    for (const auto mode : {EntropyMode::None, EntropyMode::Low, EntropyMode::High})
+      for (unsigned seed = 0; seed < seeds.size(); ++seed) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.entropyMode = mode;
+        config.entropySeed = seeds[seed];
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadSuperGameBoy(Bios(model != 0), snes::tests::gameboy::StartupProgram(),
+                                        Boot()),
+              "The startup-memory copier cartridge loads");
+        const std::vector<uint8_t> initial(32768, 0);
+        Check(machine->LoadSlotBattery(0, initial), "Load an empty copier battery");
+        for (unsigned warm = 0; warm < 2; ++warm) {
+          if (warm)
+            Check(machine->Reset(), "The copier also executes after console reset");
+          for (unsigned frame = 0; frame < 8; ++frame)
+            machine->StepFrame({false, false, false});
+          const auto saved = machine->SaveSlotBattery(0);
+          Check(saved.size() == 32768 && saved[8495] == warm + 1,
+                "The guest finishes a new startup-memory copy after each reset");
+          uint64_t signature = 14695981039346656037ull;
+          for (unsigned address = 0; address < 8495; ++address) {
+            signature ^= saved[address];
+            signature *= 1099511628211ull;
+          }
+          Check(signature == expected[model][mode != EntropyMode::None][seed][warm],
+                "Console entropy settings and reset order reach the handheld memory");
+        }
+      }
 }
 
 void BoardMapping() {
@@ -423,6 +479,7 @@ void StereoAudioMix() {
 
 int main() {
   try {
+    ConsoleStartupEntropy();
     BoardMapping();
     ClockAndBattery();
     ConsoleExecutionAndFailedLoads();

@@ -12,6 +12,8 @@ public:
   Peripherals(Video::Output &video, Audio::Output &audio) : video_(video), audio_(audio) {}
   void Reset(bool secondModel) override;
   void Reset(bool secondModel, bool preserveAudio) override;
+  void InitializePowerOnMemory(std::span<const uint8_t, 160> objects,
+                               std::span<const uint8_t, 16> wave) override;
   uint8_t Read(uint16_t address, Machine::Access access) override;
   uint8_t Write(uint16_t address, uint8_t value, Machine::Access access) override;
   uint8_t WriteCpu(uint16_t address, uint8_t value, uint16_t programCounter) override;

@@ -12,6 +12,14 @@ void Peripherals::Reset(bool secondModel, bool preserveAudio) {
   audio_.Reset(secondModel, preserveAudio);
 }
 
+void Peripherals::InitializePowerOnMemory(std::span<const uint8_t, 160> objects,
+                                          std::span<const uint8_t, 16> wave) {
+  for (unsigned address = 0; address < objects.size(); ++address)
+    video_.Write(uint16_t(0xfe00 + address), objects[address], true);
+  for (unsigned address = 0; address < wave.size(); ++address)
+    audio_.Write(uint16_t(0xff30 + address), wave[address]);
+}
+
 uint8_t Peripherals::Read(uint16_t address, Machine::Access access) {
   if (address >= 0xff10 && address < 0xff40) {
     audio_.AdvanceTo(clocks_);
