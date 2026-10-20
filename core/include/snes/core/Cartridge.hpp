@@ -231,6 +231,7 @@ public:
   }
 
 private:
+  void ApplyBiosCompatibility();
   void InitializeBroadcast(std::span<const uint8_t> pack = {});
 
   static std::vector<uint8_t> RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed);

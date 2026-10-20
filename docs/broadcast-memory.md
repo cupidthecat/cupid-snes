@@ -4,6 +4,8 @@ The BIOS cartridge controller provides 512 KiB PSRAM, header-sized battery RAM, 
 
 A valid extended identifier selects the board before processor detection. Maker byte $33 enables four uppercase letters or digits: `ZBSJ` selects the BIOS controller, while other `Z??J` identifiers select the slot variant of the header's LoROM, HiROM, or SA-1 map. The BIOS title alone does not select a controller. These profiles need a save-RAM declaration; unsupported combinations remain unconnected.
 
+Loading a BIOS with the exact title `Satellaview BS-X` and at least 1 MiB of program data bypasses four known limited-play branches. Each site changes only when its original opcode is present. Copier headers are removed first, and the caller's image and original normalized CRC remain intact. This preparation applies independently of optional startup fixes and persists through reset.
+
 ## Controller and slot maps
 
 Controller registers occupy `$00-$0F:$5000-$5FFF`. Reads return only D7; reserved registers return zero. Register 1 applies immediately. Registers 2 through 13 stage mapping changes, and writing register 14 with D7 high commits them. A write with D7 low leaves the applied map unchanged. Register 12 enables flash command writes, while register 13 controls the external write pin. Flash completion does not raise a controller IRQ.

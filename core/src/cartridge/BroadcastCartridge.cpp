@@ -15,6 +15,18 @@ bool ValidMemoryPack(std::span<const uint8_t> bytes) {
 }
 } // namespace
 
+void Cartridge::ApplyBiosCompatibility() {
+  if (header_.title != "Satellaview BS-X" || rom_.size() < 0x100000)
+    return;
+
+  // Skip the known limited-play checks in the broadcast BIOS.
+  for (const size_t offset : {0x4a9b, 0x4d6d, 0x4ded, 0x4e9a}) {
+    auto &opcode = rom_[offset];
+    if (opcode == 0x10)
+      opcode = 0x80;
+  }
+}
+
 void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
   bsx_.reset();
   memoryPack_.assign(pack.begin(), pack.end());

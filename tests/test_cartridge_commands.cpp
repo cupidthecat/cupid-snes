@@ -263,6 +263,95 @@ void BroadcastControllerCpu() {
           "CPU loads observe controller bits, commit gating and packed PSRAM aliases");
 }
 
+void BroadcastBiosLaunch() {
+  struct Scene {
+    std::string_view title;
+    size_t size;
+    bool controller, copierHeader;
+    std::array<uint8_t, 4> branches;
+    uint32_t crc;
+  };
+  constexpr std::array<uint8_t, 4> ordinary{0x10, 0x10, 0x10, 0x10};
+  constexpr Scene scenes[]{
+      {"Satellaview BS-X", 0x100000, true, false, ordinary, 0x2ff4cbf3},
+      {"Satellaview BS-X", 0x200000, false, true, ordinary, 0xb8ebf447},
+      {"Satellaview BS-X", 0x80000, true, false, ordinary, 0x86d18908},
+      {"Satellaview BS-Y", 0x100000, true, false, ordinary, 0x83097b59},
+      {"satellaview BS-X", 0x100000, false, false, ordinary, 0xbb826a48},
+      {"Satellaview BS-X PLUS", 0x100000, false, false, ordinary, 0x2990974a},
+      {"Satellaview BS-X", 0x100000, true, true, {0x10, 0x80, 0x30, 0x90}, 0xdd107ac0},
+  };
+  constexpr std::array<size_t, 4> offsets{0x4a9b, 0x4d6d, 0x4ded, 0x4e9a};
+  for (bool fixes : {false, true})
+    for (const auto &scene : scenes) {
+      auto image = Rom(0x20, 0);
+      image.resize(scene.size, 0xea);
+      std::fill_n(image.begin() + 0x7fc0, 21, ' ');
+      std::copy(scene.title.begin(), scene.title.end(), image.begin() + 0x7fc0);
+      image[0x7fd7] = scene.size == 0x80000 ? 9 : scene.size == 0x100000 ? 10 : 11;
+      if (scene.controller) {
+        std::copy_n("ZBSJ", 4, image.begin() + 0x7fb2);
+        image[0x7fda] = 0x33;
+        image[0x7fd8] = 5;
+      }
+      Program program;
+      program.bytes = {0x78, 0xd8, 0x18};
+      for (unsigned index = 0; index < offsets.size(); ++index) {
+        const auto offset = offsets[index];
+        const std::array<uint8_t, 17> branch{0xa9,
+                                             0x80,
+                                             scene.branches[index],
+                                             7,
+                                             0xa9,
+                                             0x11,
+                                             0x8f,
+                                             uint8_t(index),
+                                             1,
+                                             0x7e,
+                                             0x60,
+                                             0xa9,
+                                             0x22,
+                                             0x8f,
+                                             uint8_t(index),
+                                             1,
+                                             0x7e};
+        std::copy(branch.begin(), branch.end(), image.begin() + offset - 2);
+        image[offset + 15] = 0x60;
+        const auto address = uint16_t(0x8000 + offset - 2);
+        program.bytes.insert(program.bytes.end(), {0x20, uint8_t(address), uint8_t(address >> 8)});
+        program.Read(uint32_t(0x8000 + offset), uint8_t(0x10 + index));
+      }
+      program.bytes.insert(program.bytes.end(), {0xaf, 0, 2, 0x7e, 0x1a, 0x8f, 0, 2, 0x7e, 0xdb});
+      std::copy(program.bytes.begin(), program.bytes.end(), image.begin());
+      if (scene.copierHeader)
+        image.insert(image.begin(), 512, 0x5a);
+      const auto original = image;
+      auto config = snes::tests::DeterministicConsoleConfig();
+      config.gameCompatibilityFixes = fixes;
+      auto machine = std::make_unique<Emulator>(config);
+      Check(machine->LoadCartridge(image),
+            "The BIOS branch program loads through the cartridge API");
+      Check(image == original && machine->LoadedCartridge()->RomCrc32() == scene.crc,
+            "BIOS preparation retains the caller's image and the original normalized checksum");
+      for (unsigned pass = 0; pass < 2; ++pass) {
+        for (unsigned step = 0; step < 1000 && !machine->GetCpu()->regs().stp; ++step)
+          machine->GetCpu()->Step();
+        const auto *ram = machine->GetBus().WramData();
+        Check(machine->GetCpu()->regs().stp && ram[0x200] == pass + 1,
+              "The BIOS branch program completes on cold and warm starts");
+        const bool prepare = scene.title == "Satellaview BS-X" && scene.size >= 0x100000;
+        for (unsigned index = 0; index < offsets.size(); ++index) {
+          const auto opcode =
+              prepare && scene.branches[index] == 0x10 ? 0x80 : scene.branches[index];
+          Check(ram[0x10 + index] == opcode && ram[0x100 + index] == (opcode == 0x10 ? 0x11 : 0x22),
+                "Guest execution bypasses known BIOS lockout branches and retains other opcodes");
+        }
+        if (pass == 0)
+          Check(machine->Reset(), "The prepared BIOS resets normally");
+      }
+    }
+}
+
 void ExpansionDefaults() {
   for (bool broadcast : {false, true}) {
     auto image = Rom(0x20, 0);
@@ -460,6 +549,7 @@ int main() {
     BroadcastControllerCpu();
     Dsp1StatusBytes();
     CommandBuses();
+    BroadcastBiosLaunch();
     ExpansionDefaults();
     ExpansionAttachment();
     BroadcastBus();

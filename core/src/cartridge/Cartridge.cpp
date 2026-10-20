@@ -282,6 +282,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.rom_.resize(cart.rom_.size() - trailer);
   }
   cart.romCrc32_ = ComputeCrc32(cart.rom_);
+  cart.ApplyBiosCompatibility();
   cart.memselFast_ = false;
 
   if (cart.header_.chip == EnhancementChip::Sdd1)
