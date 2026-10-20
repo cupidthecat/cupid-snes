@@ -23,6 +23,16 @@ namespace snes::core {
 namespace {
 int gRenderFrame = 0;
 
+uint32_t ExpandColor(uint16_t color) {
+  if (color == 0x8000)
+    return 0;
+  const uint32_t r = color & 31;
+  const uint32_t g = (color >> 5) & 31;
+  const uint32_t b = (color >> 10) & 31;
+  return 0xff000000u | (((b << 3) | (b >> 2)) << 16) | (((g << 3) | (g >> 2)) << 8) | (r << 3) |
+         (r >> 2);
+}
+
 int ProbeFrame() {
   static int probeFrame = -2;
   if (probeFrame == -2) {
@@ -117,15 +127,24 @@ void Ppu::FlushCachedLines() {
   }
   const uint16_t width = hires ? 512 : 256;
   const uint16_t height = uint16_t((overscan ? 239 : 224) * (interlace ? 2 : 1));
-  if (!ScanlineModel() &&
-      (width != frameWidth_ || height != frameHeight_ || interlace != frameInterlace_))
-    std::fill_n(output_.get(), OutputWidth * OutputHeight, 0xff000000u);
   frameWidth_ = width;
   frameHeight_ = height;
   frameInterlace_ = interlace;
 
-  // Parse OAM once per frame
+  // Parse OAM once per frame, including when progressive pixels are already drawn.
   ParseOam();
+  if (!ScanlineModel()) {
+    const unsigned top = overscan ? 2 : 16;
+    for (unsigned y = 0; y < height; ++y) {
+      const auto *source = progressiveOutput_.get() + (top + y * (interlace ? 1 : 2)) * 512;
+      auto *target = output_.get() + y * OutputWidth;
+      for (unsigned x = 0; x < width; ++x)
+        target[x] = ExpandColor(source[width == 512 ? x : x * 2 + 1]);
+    }
+    lineStart_ = lineCount_ = 0;
+    ++gRenderFrame;
+    return;
+  }
 
   if (OamTraceEnabled() && gRenderFrame == ProbeFrame()) {
     std::fprintf(stderr, "[OAM frame=%d] baseSize=%u first=%u\n", gRenderFrame, io_.obj.baseSize,
@@ -241,18 +260,8 @@ void Ppu::RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathL
 
   const bool hires = line.io.pseudoHires || line.io.bgMode == 5 || line.io.bgMode == 6;
   const auto expandColor = [luma](uint16_t color555) {
-    uint16_t dimmed = luma[color555];
-
-    // Convert BGR555 → RGBA8888
-    // dimmed is BGR555: bbbbb_ggggg_rrrrr
-    // Expand each five-bit channel with (c << 3) | (c >> 2).
-    uint32_t r5 = (dimmed >> 0) & 31;
-    uint32_t g5 = (dimmed >> 5) & 31;
-    uint32_t b5 = (dimmed >> 10) & 31;
-    uint32_t r8 = (r5 << 3) | (r5 >> 2);
-    uint32_t g8 = (g5 << 3) | (g5 >> 2);
-    uint32_t b8 = (b5 << 3) | (b5 >> 2);
-    return (0xFFu << 24) | (b8 << 16) | (g8 << 8) | r8;
+    // Convert BGR555 to RGBA8888, expanding each five-bit channel.
+    return ExpandColor(luma[color555]);
   };
   for (int x = x0; x < x1; ++x) {
     // The sub dot consumes the preceding main dot's decisions before the
@@ -340,20 +349,25 @@ uint16_t Ppu::CompositePixel(const Line &line, int x, ColorMathLatch &latch) con
 
 uint16_t Ppu::CompositePixel(const Line &line, const Pixel &main, const Pixel &sub, int x,
                              ColorMathLatch &latch) const {
+  return CompositePixel(line.io, main, sub, line.windowAbove[x], line.windowBelow[x], latch);
+}
+
+uint16_t Ppu::CompositePixel(const IO &io, const Pixel &main, const Pixel &sub, bool visible,
+                             bool mathEnabled, ColorMathLatch &latch) const {
   latch.mainColor = main.color;
-  latch.mainVisible = line.windowAbove[x];
-  latch.mathEnabled = line.windowBelow[x] && line.io.col.enable[main.source];
-  const uint16_t visible = latch.mainVisible ? main.color : 0;
+  latch.mainVisible = visible;
+  latch.mathEnabled = mathEnabled && io.col.enable[main.source];
+  const uint16_t color = latch.mainVisible ? main.color : 0;
   if (!latch.mathEnabled)
-    return visible;
+    return color;
 
   // Progressive dots substitute fixed color for a transparent sub screen.
   // Both render models suppress halving when that screen is transparent.
   const bool transparent = sub.source == Source::COL;
-  latch.useSubscreen = line.io.col.blendMode && (ScanlineModel() || !transparent);
-  latch.halve = line.io.col.halve && latch.mainVisible && !(line.io.col.blendMode && transparent);
-  const uint16_t operand = latch.useSubscreen ? sub.color : line.io.col.fixedColor;
-  return Blend(line, visible, operand, latch.halve);
+  latch.useSubscreen = io.col.blendMode && (ScanlineModel() || !transparent);
+  latch.halve = io.col.halve && latch.mainVisible && !(io.col.blendMode && transparent);
+  const uint16_t operand = latch.useSubscreen ? sub.color : io.col.fixedColor;
+  return Blend(io, color, operand, latch.halve);
 }
 
 uint16_t Ppu::CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const {
@@ -361,17 +375,22 @@ uint16_t Ppu::CompositeHiresSubPixel(const Line &line, int x, const ColorMathLat
     ColorMathLatch current;
     return CompositePixel(line, line.below[x], line.above[x], x, current);
   }
-  const uint16_t visible = latch.mainVisible ? line.below[x].color : 0;
+  return CompositeHiresSubPixel(line.io, line.below[x], latch);
+}
+
+uint16_t Ppu::CompositeHiresSubPixel(const IO &io, const Pixel &sub,
+                                     const ColorMathLatch &latch) const {
+  const uint16_t visible = latch.mainVisible ? sub.color : 0;
   if (!latch.mathEnabled)
     return visible;
-  const uint16_t operand = latch.useSubscreen ? latch.mainColor : line.io.col.fixedColor;
-  return Blend(line, visible, operand, latch.halve);
+  const uint16_t operand = latch.useSubscreen ? latch.mainColor : io.col.fixedColor;
+  return Blend(io, visible, operand, latch.halve);
 }
 
 // Blend packed BGR555 channels with saturation.
 
-uint16_t Ppu::Blend(const Line &line, uint16_t x, uint16_t y, bool halve) const {
-  if (!line.io.col.mathMode) {
+uint16_t Ppu::Blend(const IO &io, uint16_t x, uint16_t y, bool halve) const {
+  if (!io.col.mathMode) {
     // ADD
     if (!halve) {
       uint32_t sum = static_cast<uint32_t>(x) + static_cast<uint32_t>(y);

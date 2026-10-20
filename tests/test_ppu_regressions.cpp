@@ -1,5 +1,6 @@
 // Regression coverage for PPU registers and rendering.
 
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/Ppu.hpp"
 
 #include <cstdio>
@@ -478,6 +479,7 @@ void MixedWidthsAndFields() {
     ppu->VramData()[0x1000 + row] = 0x55aa;
   ppu->FrameBegin();
   ppu->ScanlineBegin(1);
+  ppu->SetCurrentLine(2);
   ppu->WriteIO(0x2133, 8);
   ppu->ScanlineBegin(2);
   ppu->VBlankBegin();
@@ -1262,6 +1264,120 @@ void HiresCompositingLatches() {
   }
 }
 
+void ProgressiveDisplayFeedback() {
+  const auto field = [](Ppu &ppu) {
+    ppu.FrameBegin();
+    for (uint16_t line = 1; line <= 240; ++line) {
+      ppu.SetCurrentLine(line);
+      if (line == ppu.VDisp())
+        ppu.VBlankBegin();
+      if (line < ppu.VDisp())
+        ppu.ScanlineBegin(line);
+      ppu.SetCurrentHClock(1368);
+    }
+    ppu.VBlankBegin();
+  };
+  const auto firstLine = [](Ppu &ppu, bool begin = true, uint16_t count = 1) {
+    if (begin)
+      ppu.FrameBegin();
+    for (uint16_t line = 1; line <= count; ++line) {
+      ppu.ScanlineBegin(line);
+      ppu.SetCurrentHClock(1368);
+    }
+    ppu.RenderFrame();
+  };
+  for (uint16_t color : {0x001f, 0x03e0, 0x7c00}) {
+    auto ppu = std::make_unique<Ppu>();
+    ppu->WriteIO(0x2133, 4);
+    ppu->WriteIO(0x2100, 15);
+    ppu->CgramData()[0] = color;
+    field(*ppu);
+    ppu->WriteIO(0x2100, 0);
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, 0) == (color < 1024 ? color : 0),
+           "Progressive lower-border colors feed the matching dim-color entries");
+    ppu->WriteIO(0x2100, 0x80);
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, 0) == color,
+           "Progressive forced blank still consumes the dim-color lookup");
+    ppu->Reset(true);
+    firstLine(*ppu, false, 8);
+    Expect(Pixel(*ppu, 0, 0) == 0,
+           "Progressive reset clears the first feedback row when overscan ends");
+  }
+  {
+    auto ppu = std::make_unique<Ppu>();
+    ppu->WriteIO(0x2100, 15);
+    ppu->CgramData()[0] = 0x03e0;
+    ppu->FrameBegin();
+    for (uint16_t line = 1; line <= 240; ++line) {
+      if (line == 233)
+        ppu->WriteIO(0x2133, 4);
+      ppu->SetCurrentLine(line);
+      if (line == ppu->VDisp())
+        ppu->VBlankBegin();
+      if (line < ppu->VDisp())
+        ppu->ScanlineBegin(line);
+      ppu->SetCurrentHClock(1368);
+    }
+    ppu->VBlankBegin();
+    ppu->WriteIO(0x2100, 0);
+    ppu->CgramData()[0] = 0x1fff;
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, 0) == 0x03e0,
+           "Late overscan changes retain all eight lower-border lookup rows");
+    ppu->WriteIO(0x2133, 0);
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, 0) == 0x03e0,
+           "Disabling overscan preserves dim entries beyond the first border row");
+    ppu->CgramData()[0] = 0;
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, 0) == 0, "Disabling overscan clears the first lower-border lookup row");
+    for (bool warm : {false, true}) {
+      ppu->Reset(warm);
+      ppu->WriteIO(0x2100, 0);
+      ppu->CgramData()[0] = 0x1fff;
+      firstLine(*ppu, false);
+      Expect(Pixel(*ppu, 0, 0) == 0x03e0,
+             "Cold and warm reset retain dim entries beyond the cleared border row");
+    }
+    snes::core::PowerOnState startup(snes::core::EntropyMode::None, 0);
+    auto config = ppu->Configuration();
+    config.model = Ppu::RenderModel::Scanline;
+    ppu->Power(startup, config, true);
+    ppu->WriteIO(0x2100, 0);
+    ppu->CgramData()[0] = 0x1fff;
+    firstLine(*ppu, false);
+    Expect(Pixel(*ppu, 0, 0) == 0, "Scanline brightness stays fixed after progressive feedback");
+    config.model = Ppu::RenderModel::Progressive;
+    ppu->Power(startup, config, true);
+    ppu->WriteIO(0x2100, 0);
+    ppu->CgramData()[0] = 0x1fff;
+    firstLine(*ppu, false);
+    Expect(Pixel(*ppu, 0, 0) == 0x03e0,
+           "Returning to progressive rendering retains its independent dim-color lookup");
+  }
+  for (bool initialField : {false, true}) {
+    auto ppu = std::make_unique<Ppu>();
+    ppu->WriteIO(0x2133, 5);
+    ppu->WriteIO(0x2100, 15);
+    ppu->CgramData()[0] = 0x001f;
+    if (initialField)
+      ppu->FrameBegin();
+    field(*ppu);
+    const unsigned writtenHalf = ppu->FieldID() ? 512 : 0;
+    ppu->WriteIO(0x2100, 0);
+    ppu->CgramData()[0] = uint16_t(writtenHalf + 31);
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, ppu->FieldID() ? 1 : 0) == 0x001f,
+           "Interlaced feedback retains the completed field's lookup half");
+    ppu->CgramData()[0] = uint16_t((writtenHalf ^ 512) + 31);
+    firstLine(*ppu);
+    Expect(Pixel(*ppu, 0, ppu->FieldID() ? 1 : 0) == 0,
+           "Interlaced feedback leaves the other field's lookup half unchanged");
+  }
+}
+
 void ObjectOverflowAndStat77() {
   for (bool blank : {false, true}) {
     Ppu ppu;
@@ -1321,6 +1437,7 @@ int main() {
   Mode7DirectColorAndExtbgMosaic();
   HiresAdjacentMathAndWindows();
   HiresCompositingLatches();
+  ProgressiveDisplayFeedback();
   ObjectOverflowAndStat77();
   std::printf("PPU regression failures: %d\n", failures);
   return failures ? 1 : 0;

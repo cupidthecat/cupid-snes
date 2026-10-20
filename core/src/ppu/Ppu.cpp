@@ -38,7 +38,8 @@ Ppu::Ppu(Config config)
     : config_(config), background_(std::make_unique<PpuBackground>()),
       object_(std::make_unique<PpuObject>()), vram_(std::make_unique<uint16_t[]>(VramStorageWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
-      output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
+      output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)),
+      progressiveOutput_(std::make_unique<uint16_t[]>(OutputWidth * OutputHeight)) {
   BuildLightTable();
   Reset();
 }
@@ -62,6 +63,7 @@ void Ppu::Power(PowerOnState &state, Config config, bool retainVram) {
   background_->Reset();
   object_->Reset();
   pipelineClock_ = 0;
+  pipelineMath_ = {};
   InitializePowerOnState(state, retainVram);
   object_->BeginLine(0, io_.obj);
 
@@ -74,6 +76,9 @@ void Ppu::Power(PowerOnState &state, Config config, bool retainVram) {
     events.clear();
   mosaicCounterLine_ = 0xffff;
   std::memset(output_.get(), 0, static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
+  if (!ScanlineModel())
+    std::fill_n(progressiveOutput_.get(), OutputWidth * OutputHeight, 0);
+  LatchProgressiveDisplay();
 
   currentLine_ = 0;
   currentHClock_ = 0;
@@ -95,11 +100,13 @@ void Ppu::FrameBegin() {
     SetCurrentLine(0);
   // Toggle interlace field each frame
   fieldId_ = !fieldId_;
+  LatchProgressiveDisplay();
   frameOverscan_ = io_.overscan;
   displayInterlace_ = io_.interlace;
   background_->BeginLine(0, fieldId_, io_);
   object_->BeginLine(0, io_.obj);
   pipelineClock_ = 0;
+  pipelineMath_ = {};
   latch_.cgramAddress = 0;
 
   io_.obj.rangeOver = false;
@@ -113,6 +120,18 @@ void Ppu::FrameBegin() {
   for (auto &events : rasterEvents_)
     events.clear();
   mosaicCounterLine_ = 0xffff;
+}
+
+void Ppu::LatchProgressiveDisplay() {
+  if (ScanlineModel())
+    return;
+  if (feedbackOverscan_ && !io_.overscan) {
+    std::fill_n(displayFeedback_.begin(), 1024, 0);
+    for (unsigned row = 1; row < 240; ++row)
+      if (row < 8 || row > 231)
+        std::fill_n(progressiveOutput_.get() + row * 1024, 1024, 0);
+  }
+  feedbackOverscan_ = io_.overscan;
 }
 
 void Ppu::AdvanceMosaicCounter(uint16_t line) noexcept {
@@ -136,6 +155,7 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     currentLine_ = vcounter;
     currentHClock_ = 0;
     pipelineClock_ = 0;
+    pipelineMath_ = {};
     if (!ScanlineModel())
       AdvanceMosaicCounter(vcounter);
     background_->BeginLine(vcounter, fieldId_, io_);
@@ -143,8 +163,9 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     latch_.cgramAddress = 0;
     if (vcounter == VDisp() && !io_.displayDisable)
       OamAddressReset();
-    if (vcounter > 0 && vcounter < MaxVisibleLines)
+    if (vcounter > 0 && vcounter < MaxVisibleLines) {
       lines_[vcounter].sampledHires = false;
+    }
   }
   if (ScanlineModel()) {
     if (vcounter > 0 && vcounter < VDisp())

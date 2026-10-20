@@ -5,7 +5,8 @@
 
 namespace snes::core {
 namespace {
-bool Blocked(const Ppu::WindowLayer &layer, const Ppu::WindowPos &window, unsigned x) {
+template <typename Window>
+bool Blocked(const Window &layer, const Ppu::WindowPos &window, unsigned x) {
   const bool one = (x >= window.oneLeft && x <= window.oneRight) != layer.oneInvert;
   const bool two = (x >= window.twoLeft && x <= window.twoRight) != layer.twoInvert;
   if (!layer.oneEnable)
@@ -29,6 +30,15 @@ uint16_t DirectColor(uint8_t group, uint8_t color) {
                   ((group << 5) & 0x0040) + ((color << 7) & 0x6000) + ((group << 10) & 0x1000));
 }
 } // namespace
+
+bool PpuColorWindow(const Ppu::IO &io, uint8_t mask, unsigned x) {
+  if (mask == 0)
+    return true;
+  if (mask == 3)
+    return false;
+  const bool inside = Blocked(io.col.window, io.window, x);
+  return mask == 1 ? inside : !inside;
+}
 
 PpuMixedPixel MixPpuPixel(const Ppu::IO &io, std::span<const uint16_t, Ppu::CgramColors> palette,
                           const PpuBackground &background, const PpuObject &objects, unsigned x) {

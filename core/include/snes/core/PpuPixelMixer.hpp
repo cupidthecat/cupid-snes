@@ -16,4 +16,6 @@ struct PpuMixedPixel {
 PpuMixedPixel MixPpuPixel(const Ppu::IO &io, std::span<const uint16_t, Ppu::CgramColors> palette,
                           const PpuBackground &background, const PpuObject &objects, unsigned x);
 
+bool PpuColorWindow(const Ppu::IO &io, uint8_t mask, unsigned x);
+
 } // namespace snes::core

@@ -507,19 +507,26 @@ private:
   uint16_t CompositePixel(const Line &line, int x, ColorMathLatch &latch) const;
   uint16_t CompositePixel(const Line &line, const Pixel &main, const Pixel &sub, int x,
                           ColorMathLatch &latch) const;
+  uint16_t CompositePixel(const IO &io, const Pixel &main, const Pixel &sub, bool visible,
+                          bool mathEnabled, ColorMathLatch &latch) const;
 
   /// Sub(x+1) uses Main(x)'s visibility, math enable, operand selection, and
   /// halving decision. Fixed color and the add/subtract operation remain live.
   uint16_t CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const;
+  uint16_t CompositeHiresSubPixel(const IO &io, const Pixel &sub,
+                                  const ColorMathLatch &latch) const;
 
   /// Color math blend (add/subtract with saturation).
-  uint16_t Blend(const Line &line, uint16_t x, uint16_t y, bool halve) const;
+  uint16_t Blend(const IO &io, uint16_t x, uint16_t y, bool halve) const;
 
   /// Build the brightness lookup table.
   void BuildLightTable();
 
   void SynchronizePipeline(uint16_t clock);
   void StorePipelinePixel(unsigned x);
+  uint16_t ProgressiveColor(uint16_t color) const;
+  void StoreDisplayFeedback(unsigned x, uint16_t color);
+  void LatchProgressiveDisplay();
   void InitializePowerOnState(PowerOnState &state, bool retainVram);
   void InitializeScanlineState(bool retainMemory);
   bool ScanlineModel() const noexcept {
@@ -531,6 +538,7 @@ private:
   std::unique_ptr<PpuBackground> background_;
   std::unique_ptr<PpuObject> object_;
   uint16_t pipelineClock_ = 0;
+  ColorMathLatch pipelineMath_;
   IO io_;
   Latch latch_;
 
@@ -562,11 +570,18 @@ private:
 
   // Output framebuffer - 512×480 RGBA8888
   std::unique_ptr<uint32_t[]> output_;
+  // Progressive dots retain the complete display raster, including border rows.
+  // Bit 15 preserves the public output's forced-blank pixel formatting.
+  std::unique_ptr<uint16_t[]> progressiveOutput_;
 
   // Brightness lookup table: lightTable_[brightness][bgr555] → bgr555 dimmed
   // 16 brightness levels × 32768 colors
   std::unique_ptr<uint16_t[]> lightTableData_;
   uint16_t *lightTable_[16] = {};
+  // Lower-border output feeds the dim-color lookup in progressive rendering.
+  // Keep those words separate from both frame storage and scanline tables.
+  std::array<uint16_t, 8192> displayFeedback_{};
+  bool feedbackOverscan_ = false;
 
   // Current scanline (set by timing layer for display-disable checks)
   uint16_t currentLine_ = 0;
