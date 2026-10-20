@@ -338,3 +338,56 @@ add_test(NAME snes_cartridge_storage_tests COMMAND snes_cartridge_storage_tests)
 add_executable(snes_competition_cartridge_tests test_competition_cartridges.cpp)
 target_link_libraries(snes_competition_cartridge_tests PRIVATE snes_core)
 add_test(NAME snes_competition_cartridge_tests COMMAND snes_competition_cartridge_tests)
+
+# One dependency graph lets build tools schedule these executables together.
+add_custom_target(snes_optimized_checks
+  DEPENDS
+    snes_frontend
+    snes_rom_diagnostic
+    snes_rom_smoke
+    snes_trace_dump
+    snes_gameboy_cpu_tests
+    snes_gameboy_host_tests
+    snes_gameboy_clocked_io_tests
+    snes_gameboy_cartridge_tests
+    snes_gameboy_camera_tests
+    snes_gameboy_tpp1_tests
+    snes_gameboy_oam_tests
+    snes_gameboy_machine_tests
+    snes_gameboy_video_tests
+    snes_gameboy_sound_channels_tests
+    snes_gameboy_audio_tests
+    snes_gameboy_peripherals_tests
+    snes_super_game_boy_tests
+    snes_msu1_tests
+    snes_msu1_integration_tests
+    snes_cartridge_compatibility_tests
+    snes_bus_scheduling_tests
+    snes_sound_clocking_tests
+    snes_dsp_batch_tests
+    snes_power_on_state_tests
+    snes_ppu_background_tests
+    snes_ppu_object_tests
+    snes_ppu_port_tests
+    snes_ppu_scanline_tests
+    snes_ppu_regression_tests
+    snes_dma_timing_tests
+    snes_controller_tests
+    snes_light_gun_tests
+    snes_frame_execution_tests
+    snes_console_reset_tests
+    snes_competition_cartridge_tests
+    snes_sdl_audio_tests
+    snes_sdl_video_tests
+    snes_bsx_tests
+    snes_cartridge_command_tests
+    snes_sdd1_tests
+    snes_processor_startup_tests
+    snes_srtc_tests
+    snes_srtc_timing_tests
+    snes_cartridge_device_tests
+    snes_superfx_tests
+    snes_cartridge_processor_tests
+    snes_cx4_processor_tests
+    snes_sa1_tests
+)

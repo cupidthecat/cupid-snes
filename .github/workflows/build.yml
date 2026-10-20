@@ -142,24 +142,7 @@ jobs:
         run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
       - name: Build optimized executables
         if: matrix.mode == 'optimized'
-        run: >-
-          cmake --build out/build/ci --config Release --parallel 4 --target
-          snes_frontend snes_rom_diagnostic snes_rom_smoke snes_trace_dump
-          snes_gameboy_cpu_tests snes_gameboy_host_tests snes_gameboy_clocked_io_tests
-          snes_gameboy_cartridge_tests snes_gameboy_camera_tests snes_gameboy_tpp1_tests snes_gameboy_oam_tests
-          snes_gameboy_machine_tests snes_gameboy_video_tests snes_gameboy_sound_channels_tests snes_gameboy_audio_tests snes_gameboy_peripherals_tests
-          snes_super_game_boy_tests
-          snes_msu1_tests snes_msu1_integration_tests snes_cartridge_compatibility_tests
-          snes_bus_scheduling_tests snes_sound_clocking_tests snes_dsp_batch_tests
-          snes_power_on_state_tests snes_ppu_background_tests snes_ppu_object_tests snes_ppu_port_tests
-          snes_ppu_scanline_tests snes_ppu_regression_tests
-          snes_dma_timing_tests
-          snes_controller_tests snes_light_gun_tests
-          snes_frame_execution_tests snes_console_reset_tests snes_competition_cartridge_tests
-          snes_sdl_audio_tests snes_sdl_video_tests snes_bsx_tests snes_cartridge_command_tests
-          snes_sdd1_tests snes_processor_startup_tests snes_srtc_tests snes_srtc_timing_tests
-          snes_cartridge_device_tests
-          snes_superfx_tests snes_cartridge_processor_tests snes_cx4_processor_tests snes_sa1_tests
+        run: cmake --build out/build/ci --config Release --parallel 4 --target snes_optimized_checks
       - name: Test optimized console and SDL paths
         if: matrix.mode == 'optimized'
         run: >-
