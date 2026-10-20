@@ -33,8 +33,10 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, size_t size = 0x100000) {
   return bytes;
 }
 
-std::unique_ptr<Emulator> Machine(const std::vector<uint8_t> &rom) {
-  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+std::unique_ptr<Emulator>
+Machine(const std::vector<uint8_t> &rom,
+        Emulator::Config config = snes::tests::DeterministicConsoleConfig()) {
+  auto machine = std::make_unique<Emulator>(config);
   std::string error;
   if (!machine->LoadCartridge(rom, &error))
     throw std::runtime_error(error);
@@ -373,7 +375,9 @@ void SuperFxMasterReset() {
 
 void CoprocessorBusSynchronization() {
   for (bool write : {false, true}) {
-    auto machine = Machine(Rom(0x20, 0x15));
+    auto config = snes::tests::DeterministicConsoleConfig();
+    config.superFxDelayedSync = false;
+    auto machine = Machine(Rom(0x20, 0x15), config);
     auto &bus = machine->GetBus();
     bus.Write(0x3039, 1);
     bus.Write(0x303a, 8);
@@ -394,10 +398,10 @@ void CoprocessorBusSynchronization() {
       machine->GetCpu()->write(0x7e0100, 0);
     else
       machine->GetCpu()->read(0x7e0100);
-    Check(
-        machine->LoadedCartridge()->SramData()[0x100] == 0x55 &&
-            machine->LoadedCartridge()->CpuIrqPending(),
-        "CPU reads and writes synchronize all preceding coprocessor clocks before their bus edge");
+    Check(machine->LoadedCartridge()->SramData()[0x100] == 0x55 &&
+              machine->LoadedCartridge()->CpuIrqPending(),
+          "Bus synchronization mode executes preceding coprocessor clocks before CPU reads and "
+          "writes");
   }
 }
 

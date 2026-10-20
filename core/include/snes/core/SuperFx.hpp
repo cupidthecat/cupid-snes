@@ -25,6 +25,7 @@ public:
   // Addresses are full 24-bit S-CPU addresses. Synchronize before CPU accesses.
   // Union of supported cartridge windows; disconnected windows read open bus.
   static bool Selects(uint32_t address) noexcept;
+  static bool SelectsRegisters(uint32_t address) noexcept;
   uint8_t ReadCpu(uint32_t address, uint8_t openBus = 0xff);
   void WriteCpu(uint32_t address, uint8_t value);
   // Elapsed cartridge oscillator clocks, not console clocks or an absolute timestamp.
@@ -32,6 +33,7 @@ public:
   // Console master-clock timing. The selected region is retained across resets.
   void SetPal(bool pal);
   void AdvanceMasterClocks(uint32_t clocks);
+  // STOP and acknowledge reads drive this output independently of writable SFR bits.
   bool CpuIrqPending() const noexcept;
 
 private:

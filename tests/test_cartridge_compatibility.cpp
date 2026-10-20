@@ -1,5 +1,7 @@
 #include "ConsoleConfig.hpp"
 #include "audio/MsuFixture.hpp"
+#include "gsu/IrqProgram.hpp"
+#include "gsu/IrqSignalProgram.hpp"
 #include "sa1/MailboxProgram.hpp"
 #include "snes/core/SnesCpu.hpp"
 
@@ -317,10 +319,86 @@ void Sa1ConsoleMailbox() {
       }
   }
 }
+
+void SuperFxIrqHandoffs() {
+  constexpr std::array<std::array<std::array<uint8_t, 5>, 28>, 2> expected{
+      {{{{26, 26, 16, 16, 165}, {26, 26, 16, 16, 165}, {26, 26, 16, 16, 165},
+         {26, 26, 16, 16, 165}, {26, 26, 16, 16, 165}, {26, 26, 16, 16, 165},
+         {26, 26, 16, 16, 165}, {26, 26, 16, 16, 165}, {26, 26, 16, 16, 165},
+         {28, 28, 17, 16, 165}, {28, 28, 17, 16, 165}, {28, 28, 17, 16, 165},
+         {28, 28, 17, 16, 165}, {28, 28, 17, 16, 165}, {28, 28, 17, 16, 165},
+         {28, 28, 17, 16, 165}, {13, 13, 15, 14, 0},   {13, 13, 15, 14, 0},
+         {78, 79, 15, 14, 1},   {13, 13, 15, 14, 0},   {13, 13, 15, 14, 0},
+         {46, 47, 15, 14, 0},   {25, 24, 16, 16, 0},   {26, 26, 16, 16, 47},
+         {13, 13, 15, 14, 0},   {13, 13, 15, 14, 4},   {13, 13, 15, 14, 0},
+         {26, 26, 16, 16, 53}}},
+       {{{58, 58, 15, 14, 165},   {92, 92, 15, 14, 165},   {127, 126, 15, 14, 165},
+         {171, 170, 15, 14, 165}, {206, 206, 15, 14, 165}, {240, 240, 15, 14, 165},
+         {19, 19, 15, 14, 165},   {53, 53, 15, 14, 165},   {3, 2, 16, 16, 165},
+         {37, 36, 16, 16, 165},   {72, 72, 16, 16, 165},   {106, 106, 16, 16, 165},
+         {151, 150, 16, 16, 165}, {185, 184, 16, 16, 165}, {220, 220, 16, 16, 165},
+         {254, 254, 16, 16, 165}, {13, 13, 15, 14, 0},     {13, 13, 15, 14, 0},
+         {78, 79, 15, 14, 1},     {13, 13, 15, 14, 0},     {13, 13, 15, 14, 0},
+         {46, 47, 15, 14, 0},     {47, 47, 15, 14, 234},   {13, 13, 15, 14, 47},
+         {13, 13, 15, 14, 0},     {13, 13, 15, 14, 4},     {13, 13, 15, 14, 0},
+         {13, 13, 15, 14, 53}}}}};
+  for (bool delayed : {true, false}) {
+    for (bool pal : {false, true}) {
+      for (unsigned scene = 0; scene < 28; ++scene) {
+        const unsigned phase = scene < 16 ? scene : 0;
+        const auto probe =
+            scene < 16 ? snes::tests::gsu::Probe::None : snes::tests::gsu::Probe(scene - 15);
+        auto config = snes::tests::DeterministicConsoleConfig();
+        if (!delayed)
+          config.superFxDelayedSync = false;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(snes::tests::gsu::IrqProgram(phase, pal, probe)),
+              "The generated graphics IRQ cartridge loads");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(machine->Reset(), "Graphics IRQ execution also follows warm reset");
+          machine->StepFrame({false, false, false});
+          const auto *memory = machine->GetBus().WramData();
+          const std::array<uint8_t, 5> output{memory[0x1200], memory[0x1201], memory[0x1202],
+                                              memory[0x1203], memory[0x1210]};
+          Check(machine->GetCpu()->regs().stp && memory[0x42] == 1 &&
+                    output == expected[delayed ? 0 : 1][scene],
+                "Graphics IRQ delivery follows the selected synchronization and register window");
+        }
+      }
+    }
+  }
+}
+
+void SuperFxIrqOutput() {
+  for (bool delayed : {true, false})
+    for (bool pal : {false, true})
+      for (unsigned scene = 0; scene < 9; ++scene) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        if (!delayed)
+          config.superFxDelayedSync = false;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(snes::tests::gsu::IrqSignalProgram(scene, pal)),
+              "The graphics IRQ output program loads");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(machine->Reset(), "Warm reset clears the previous graphics IRQ output");
+          machine->StepFrame({false, false, false});
+          Check(
+              machine->GetCpu()->regs().stp &&
+                  machine->GetBus().WramData()[0x1200] == (scene == 8 ? 1 : 0) &&
+                  machine->LoadedCartridge()->CpuIrqPending() == (scene == 2 || scene == 3),
+              "Graphics IRQ output follows STOP and acknowledge reads independently of SFR writes");
+        }
+      }
+}
+
 } // namespace
 
 int main() {
   try {
+    SuperFxIrqOutput();
+    SuperFxIrqHandoffs();
     Sa1ConsoleMailbox();
     StartupAndSound();
     SelectionAndReload();

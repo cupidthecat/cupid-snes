@@ -16,6 +16,8 @@ An earlier interlaced-hires RPM Racing replay reached 78.14 fields/s and deliver
 
 A later Marvelous replay with selectable SA-1 contention reached 61.85 fields/s in progressive hires video. It used 1,200 warmup fields and 3,600 measured fields with normal video and audio, while other heavy validation was stopped. Median field time was 16.099 ms and p95 was 17.090 ms. Every generated stereo audio frame was delivered, totaling 1,919,194 frames. This sequence exceeded average full speed, though its p95 field time crossed an individual display deadline. Separate 1,800-field captures for four SA-1 games checked complete pixels, PCM, counts, clocks, processor state and cartridge memory.
 
+With deferred GSU execution enabled, Dirt Racer reached 87.80 fields/s and Yoshi's Island reached 122.33 fields/s using the same 1,200-field warmup and 3,600-field measurement. Median field times were 11.588 and 8.142 ms, with p95 times of 12.266 and 8.924 ms. Both used default scanline video and presented all measured fields. Dirt Racer's sequence was silent; Yoshi's Island produced audible output and delivered all 1,919,176 generated stereo frames. Separate 1,800-field captures covered five GSU games, with another Dirt Racer capture checking execution at CPU bus accesses. Other workspace activity remained present during timing.
+
 ## Release compiler optimization
 
 Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.

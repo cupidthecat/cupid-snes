@@ -70,6 +70,7 @@ public:
     uint32_t entropySequence = 0;
     uint8_t cpuRevision = 2;
     bool sa1BusContention = false;
+    bool superFxDelayedSync = true;
     Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
     bool gameCompatibilityFixes = true;
   };
@@ -201,7 +202,7 @@ private:
   void ConfigureAudioStreams();
   void AttachMsu1(const std::string &path);
   void SynchronizeExpansionAudio(uint64_t elapsed);
-  void SynchronizeCoprocessors(bool synchronizeHandheld = false);
+  void SynchronizeCoprocessors(bool forceExecution = false);
   void StopFrameExecution();
   uint32_t ResumeCpuInstruction();
   void SuspendFrame();

@@ -786,7 +786,11 @@ void Emulator::AdvanceClocks(uint32_t clocks) {
   SynchronizeDevices();
 }
 
-void Emulator::SynchronizeCoprocessors(bool synchronizeHandheld) {
+void Emulator::SynchronizeCoprocessors(bool forceExecution) {
+  // Retain elapsed debt until a register access or scanline handoff.
+  if (config_.superFxDelayedSync && cartridge_->Header().chip == EnhancementChip::SuperFx &&
+      !forceExecution && !SuperFx::SelectsRegisters(cpu_->regs().mar))
+    return;
   // Charge the handheld oscillator after each completed CPU bus interval.
   // Its pending execution resumes at scanline handoffs.
   const auto elapsed = cartridge_->Header().chip == EnhancementChip::SuperGameBoy
@@ -796,13 +800,13 @@ void Emulator::SynchronizeCoprocessors(bool synchronizeHandheld) {
   coprocessorsSyncedClock_ = elapsed;
   while (delta > std::numeric_limits<uint32_t>::max()) {
     cartridge_->AdvanceHardware(std::numeric_limits<uint32_t>::max(), cpu_->regs().mar,
-                                cpu_->DramRefreshActive(), synchronizeHandheld);
+                                cpu_->DramRefreshActive(), forceExecution);
     if (srtc_)
       srtc_->Advance(std::numeric_limits<uint32_t>::max());
     delta -= std::numeric_limits<uint32_t>::max();
   }
   cartridge_->AdvanceHardware(static_cast<uint32_t>(delta), cpu_->regs().mar,
-                              cpu_->DramRefreshActive(), synchronizeHandheld);
+                              cpu_->DramRefreshActive(), forceExecution);
   if (srtc_)
     srtc_->Advance(static_cast<uint32_t>(delta));
 }
