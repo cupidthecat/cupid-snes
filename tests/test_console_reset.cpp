@@ -337,4 +337,5 @@ int main() {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }
+  return 0;
 }

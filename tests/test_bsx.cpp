@@ -513,4 +513,5 @@ int main() {
   }
   std::puts(
       "BS-X mapper, clocked flash, metadata, PSRAM, radio, clock and packet-stream checks passed");
+  return 0;
 }

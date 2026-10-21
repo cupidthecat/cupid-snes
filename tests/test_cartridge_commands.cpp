@@ -558,4 +558,5 @@ int main() {
   }
   std::puts("Native cartridge command, broadcast mapping, flash, clock, stream and "
             "persistence checks passed");
+  return 0;
 }

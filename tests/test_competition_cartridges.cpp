@@ -228,4 +228,5 @@ int main() {
   }
   std::puts(
       "Competition board mapping, countdown, save, firmware and console loading checks passed");
+  return 0;
 }

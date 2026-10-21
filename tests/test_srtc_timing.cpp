@@ -110,4 +110,5 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::puts("S-RTC console timing tests passed");
+  return 0;
 }

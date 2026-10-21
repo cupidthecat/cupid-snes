@@ -122,8 +122,10 @@ jobs:
         include:
           - mode: regular
             lto: "OFF"
+            bundle: "OFF"
           - mode: optimized
             lto: "ON"
+            bundle: "ON"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cache SDL build
@@ -133,21 +135,21 @@ jobs:
           key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('cmake/SDL3.cmake') }}
           restore-keys: sdl-${{ runner.os }}-vs2022-
       - name: Configure
-        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=${{ matrix.lto }}
+        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=${{ matrix.lto }} -DSNES_BUNDLE_OPTIMIZED_TESTS=${{ matrix.bundle }}
       - name: Build
         if: matrix.mode == 'regular'
         run: cmake --build out/build/ci --config Release --parallel 4
       - name: Test
         if: matrix.mode == 'regular'
-        run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
+        run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120 --no-tests=error
       - name: Build optimized executables
         if: matrix.mode == 'optimized'
         run: cmake --build out/build/ci --config Release --parallel 4 --target snes_optimized_checks
       - name: Test optimized console and SDL paths
         if: matrix.mode == 'optimized'
         run: >-
-          ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|super_game_boy|msu1|msu1_integration|cartridge_compatibility|bus_scheduling|sound_clocking|dsp_batch|power_on_state|ppu_background|ppu_object|ppu_port|ppu_scanline|ppu_regression|dma_timing|controller|light_gun|frame_execution|frame_pacing|console_reset|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|st018|superfx|sdd1|srtc|srtc_timing|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120 --no-tests=error
+          -L optimized
   windows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

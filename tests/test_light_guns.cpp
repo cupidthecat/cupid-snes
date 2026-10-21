@@ -527,4 +527,5 @@ int main() {
     return 1;
   }
   std::puts("Light gun protocol, beam, and automatic polling checks passed");
+  return 0;
 }

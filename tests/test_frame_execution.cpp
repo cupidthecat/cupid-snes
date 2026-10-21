@@ -288,4 +288,5 @@ int main() {
     return 1;
   }
   std::puts("Frame boundary and suspended DMA checks passed");
+  return 0;
 }

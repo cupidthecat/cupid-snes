@@ -413,4 +413,5 @@ int main() {
     return 1;
   }
   std::puts("Cx4 processor tests passed");
+  return 0;
 }

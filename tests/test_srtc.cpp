@@ -184,4 +184,5 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::puts("S-RTC tests passed");
+  return 0;
 }

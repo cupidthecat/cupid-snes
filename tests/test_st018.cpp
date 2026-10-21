@@ -279,4 +279,5 @@ int main() {
     return 1;
   }
   std::puts("ST018 firmware tests passed");
+  return 0;
 }

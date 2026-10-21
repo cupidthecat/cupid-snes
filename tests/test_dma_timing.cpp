@@ -488,4 +488,5 @@ int main() {
     return 1;
   }
   std::puts("DMA timing, HDMA interruption, and field presentation checks passed");
+  return 0;
 }

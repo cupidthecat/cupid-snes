@@ -368,4 +368,5 @@ int main() {
     return 1;
   std::puts(
       "Sound hardware-clock edges, port holds, halted cycles, and CONTROL transitions passed");
+  return 0;
 }

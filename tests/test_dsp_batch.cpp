@@ -251,4 +251,5 @@ int main() {
     return 1;
   }
   std::puts("DSP batch and per-cycle console traces passed");
+  return 0;
 }

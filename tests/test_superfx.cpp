@@ -1259,4 +1259,5 @@ int main() {
     return 1;
   }
   std::puts("Super FX instruction, pipeline, pixel, cache, mapping, IRQ and clock checks passed");
+  return 0;
 }

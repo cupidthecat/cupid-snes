@@ -398,4 +398,5 @@ int main() {
     return 1;
   }
   std::puts("CPU bus scheduling and interrupt sampling checks passed");
+  return 0;
 }

@@ -1597,4 +1597,5 @@ int main() {
   }
   std::puts("SA-1 processor, mapping, protection, interrupts, timers, arithmetic, DMA, conversion, "
             "and synchronization checks passed");
+  return 0;
 }

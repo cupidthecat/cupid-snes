@@ -488,4 +488,5 @@ int main() {
     return 1;
   std::puts(
       "Processor startup, reset bus phases, shared latches, and first-instruction checks passed");
+  return 0;
 }

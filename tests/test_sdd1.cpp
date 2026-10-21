@@ -342,4 +342,5 @@ int main() {
     return 1;
   }
   std::puts("S-DD1 decoder, mapper, DMA, and save checks passed");
+  return 0;
 }

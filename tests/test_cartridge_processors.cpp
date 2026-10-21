@@ -555,4 +555,5 @@ int main() {
     return 1;
   }
   std::puts("Cartridge processor bus, scheduling, IRQ and save integration checks passed");
+  return 0;
 }
