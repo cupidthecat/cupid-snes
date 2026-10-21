@@ -156,6 +156,9 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *) {
 }
 
 void Cartridge::Reset() {
+  // TPP1 retains RAM independently of its save-file capability.
+  if (!battery_ && mapper_ != Mapper::Tpp1)
+    std::fill(ram_.begin(), ram_.end(), 0xff);
   lowBank_ = (mapper_ == Mapper::Mbc5 || mapper_ == Mapper::Camera) ? 1 : 0;
   highBank_ = ramBank_ = huc3Mode_ = 0;
   mode_ = rtcMapped_ = rumble_ = false;

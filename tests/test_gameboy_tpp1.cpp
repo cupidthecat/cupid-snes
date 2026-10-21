@@ -108,6 +108,12 @@ void HeaderAndBanking() {
   volatileCartridge.Write(3, 0x23);
   Check(volatileCartridge.SaveBattery().empty() && volatileCartridge.RumbleStrength() == 3,
         "The battery capability gates saves independently of control commands");
+  volatileCartridge.Write(3, 3);
+  volatileCartridge.Write(0xa123, 0x6b);
+  volatileCartridge.Reset();
+  volatileCartridge.Write(3, 2);
+  Check(volatileCartridge.Read(0xa123) == 0x6b && volatileCartridge.SaveBattery().empty(),
+        "TPP1 reset retains RAM independently of the save-file capability");
 }
 
 void ClockAndBattery() {

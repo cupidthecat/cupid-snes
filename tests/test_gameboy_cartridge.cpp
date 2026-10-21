@@ -75,6 +75,38 @@ void MulticartAndSmallRam() {
         "Battery data retains the stored MBC2 byte representation");
 }
 
+void ResetRestoresVolatileRam() {
+  constexpr std::array<std::array<uint8_t, 2>, 12> cases{{{2, 0},
+                                                          {3, 1},
+                                                          {5, 0},
+                                                          {6, 1},
+                                                          {0x0c, 0},
+                                                          {0x0d, 1},
+                                                          {0x12, 0},
+                                                          {0x13, 1},
+                                                          {0x1a, 0},
+                                                          {0x1b, 1},
+                                                          {0x1d, 0},
+                                                          {0x1e, 1}}};
+  for (const auto [type, retained] : cases) {
+    Cartridge cartridge;
+    Check(cartridge.Load(Image(type, 2, 2)), "Load cartridge RAM for reset checks");
+    cartridge.Write(0, 10);
+    for (unsigned i = 0; i < cartridge.Ram().size(); ++i)
+      cartridge.Write(uint16_t(0xa000 + i), uint8_t(i * 37 + 11));
+    const std::vector<uint8_t> before(cartridge.Ram().begin(), cartridge.Ram().end());
+    Check(!before.empty() && before[0] == 11, "Guest writes initialize the cartridge RAM");
+    cartridge.Reset();
+    if (retained)
+      Check(std::equal(before.begin(), before.end(), cartridge.Ram().begin()),
+            "Reset preserves every battery-backed RAM byte");
+    else
+      Check(std::all_of(cartridge.Ram().begin(), cartridge.Ram().end(),
+                        [](uint8_t value) { return value == 0xff; }),
+            "Reset restores every volatile cartridge RAM byte to its power-on value");
+  }
+}
+
 void Mbc3AndMbc5Banks() {
   Cartridge cartridge;
   Check(cartridge.Load(Image(0x13, 128, 3)), "Load the generated MBC3 image");
@@ -557,6 +589,7 @@ int main() {
   try {
     Mbc1Modes();
     MulticartAndSmallRam();
+    ResetRestoresVolatileRam();
     Mbc3AndMbc5Banks();
     LockingMulticart();
     RtcAndBattery();
