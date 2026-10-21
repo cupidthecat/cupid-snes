@@ -30,7 +30,7 @@ jobs:
           c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -pthread -Icore/include
           core/src/cpu/Processor65816.cpp core/src/cartridge/Sa1.cpp
           core/src/cartridge/Sa1Arithmetic.cpp core/src/cartridge/Sa1Dma.cpp
-          core/src/cartridge/BsMemory.cpp
+          core/src/cartridge/BsMemory.cpp core/src/system/PowerOnState.cpp
           core/src/system/ExecutionContext.cpp tests/test_sa1.cpp -o sa1-tests
       - name: Test SA-1 core
         run: ./sa1-tests
