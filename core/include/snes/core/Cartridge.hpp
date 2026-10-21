@@ -182,6 +182,8 @@ public:
                        bool synchronizeProcessors = true);
   void SetSa1BusContention(bool enabled);
   void SetCx4DelayedSync(bool enabled);
+  std::optional<Cx4Processor::RetainedStorage> CaptureCx4Storage() const;
+  void InitializeCx4Storage(const Cx4Processor::RetainedStorage &storage);
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {

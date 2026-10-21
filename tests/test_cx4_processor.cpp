@@ -155,6 +155,44 @@ void ProgramExecution() {
     Check(!cart->CpuIrqPending(), "Disabling processor IRQ clears the CPU IRQ line");
   }
 }
+void RetainedStorageAcrossCartridges() {
+  for (bool immediate : {false, true})
+    for (bool pal : {false, true})
+      for (bool intermediate : {false, true}) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.cx4DelayedSync = !immediate;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(snes::tests::cx4::RetainedStorageProgram(false, pal)),
+              "The generated cache and return-stack program loads");
+        machine->StepFrame({false, false, false});
+        Check(machine->GetCpu()->regs().stp && machine->GetBus().WramData()[0x1108] == 0xa5,
+              "The first cartridge finishes its call before replacement");
+        Check(!machine->LoadCartridge(std::span<const uint8_t>{}),
+              "A rejected cartridge retains the active processor storage");
+        if (intermediate) {
+          auto plain = snes::tests::cx4::IrqProgram(0, 0, pal);
+          plain.resize(0x80000);
+          plain[0x7fd6] = 0;
+          plain[0] = 0x78;
+          plain[1] = 0xdb;
+          Check(machine->LoadCartridge(plain), "An ordinary intervening cartridge loads");
+          machine->StepFrame({false, false, false});
+        }
+        const auto next = snes::tests::cx4::RetainedStorageProgram(true, pal);
+        Check(machine->LoadCartridge(next), "The second cartridge loads in the same console");
+        machine->StepFrame({false, false, false});
+        const auto *output = machine->GetBus().WramData() + 0x1100;
+        Check(machine->GetCpu()->regs().stp && output[5] == 0x2a && output[8] == 0xa5,
+              "Cartridge replacement retains both cache words and return-stack entries");
+
+        auto fresh = std::make_unique<Emulator>(config);
+        Check(fresh->LoadCartridge(next), "An independent console loads the consumer program");
+        fresh->StepFrame({false, false, false});
+        Check(fresh->GetCpu()->regs().stp && fresh->GetBus().WramData()[0x1105] == 0,
+              "Separate console instances start with independent processor storage");
+      }
+}
+
 void DeferredHandoffs() {
   for (bool delayed : {false, true})
     for (bool pal : {false, true}) {
@@ -360,6 +398,7 @@ void IdleResumeAndPendingInstruction() {
 } // namespace
 int main() {
   try {
+    RetainedStorageAcrossCartridges();
     ConsoleInterruptTiming();
     DeferredHandoffs();
     ProgramExecution();

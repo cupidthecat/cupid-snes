@@ -540,6 +540,15 @@ void Cartridge::SetCx4DelayedSync(bool enabled) {
     cx4Processor_->SetDelayedSync(enabled);
 }
 
+std::optional<Cx4Processor::RetainedStorage> Cartridge::CaptureCx4Storage() const {
+  return cx4Processor_ ? std::optional(cx4Processor_->CaptureStorage()) : std::nullopt;
+}
+
+void Cartridge::InitializeCx4Storage(const Cx4Processor::RetainedStorage &storage) {
+  if (cx4Processor_)
+    cx4Processor_->InitializeStorage(storage);
+}
+
 void Cartridge::Reset() {
   if (gameBoy_)
     gameBoy_->Reset();

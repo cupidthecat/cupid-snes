@@ -109,6 +109,16 @@ void Emulator::AddTraceSink(ITraceSink *sink) {
 
 // Cartridge loading
 
+void Emulator::ReplaceCartridge(Cartridge &&cartridge) {
+  StopFrameExecution();
+  if (cartridge_)
+    if (auto storage = cartridge_->CaptureCx4Storage())
+      cx4Storage_ = std::move(*storage);
+  if (cx4Storage_)
+    cartridge.InitializeCx4Storage(*cx4Storage_);
+  cartridge_ = std::move(cartridge);
+}
+
 bool Emulator::LoadCartridge(std::span<const uint8_t> romData, std::string *error) {
   return LoadCartridgeWithFirmware(romData, config_.cartridgeFirmware.get(), error);
 }
@@ -133,8 +143,7 @@ bool Emulator::LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
     return false;
   }
 
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   Logger::Instance().Write(
       LogLevel::Info, "Cartridge loaded: " + cartridge_->Header().title +
                           (normalization.hadCopierHeader ? " [copier-header-normalized]" : "") +
@@ -151,8 +160,7 @@ bool Emulator::LoadSufamiTurbo(std::span<const uint8_t> bios, std::span<const ui
   auto cartridge = Cartridge::FromSufamiTurbo(bios, slotA, slotB, error);
   if (!cartridge)
     return false;
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   InitSubsystems();
   return true;
 }
@@ -201,8 +209,7 @@ bool Emulator::LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const u
   auto cartridge = Cartridge::FromSuperGameBoy(bios, game, boot, error);
   if (!cartridge)
     return false;
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   InitSubsystems();
   return true;
 }
@@ -227,8 +234,7 @@ bool Emulator::LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<c
   auto cartridge = Cartridge::FromBroadcastCartridge(base, pack, error);
   if (!cartridge)
     return false;
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   InitSubsystems();
   return true;
 }
@@ -269,8 +275,7 @@ bool Emulator::LoadCompetitionCartridge(CompetitionBoard::Settings settings,
       Cartridge::FromCompetitionCartridge(settings, images, error, config_.cartridgeFirmware.get());
   if (!cartridge)
     return false;
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   InitSubsystems();
   return true;
 }
@@ -299,8 +304,7 @@ bool Emulator::LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings sett
   auto cartridge = Cartridge::FromCompetitionCartridge(settings, views, error, firmware);
   if (!cartridge)
     return false;
-  StopFrameExecution();
-  cartridge_ = std::move(*cartridge);
+  ReplaceCartridge(std::move(*cartridge));
   InitSubsystems();
   return true;
 }

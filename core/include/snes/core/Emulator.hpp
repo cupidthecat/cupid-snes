@@ -206,6 +206,7 @@ private:
   /// Wire all subsystem callbacks and map the bus.
   /// Called from LoadCartridge() once the cartridge is ready.
   void InitSubsystems();
+  void ReplaceCartridge(Cartridge &&cartridge);
   bool LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
                                  const CartridgeFirmware *firmware, std::string *error);
   void ResetHardware(bool warm);
@@ -237,6 +238,8 @@ private:
   CartridgeDatabase cartridgeDatabase_{};
   std::shared_ptr<gameboy::StartupState> handheldStartup_;
   std::optional<Cartridge> cartridge_{};
+  // Cache words and return-stack entries belong to this console across cartridge changes.
+  std::optional<Cx4Processor::RetainedStorage> cx4Storage_;
 
   // Hardware subsystems (construction order matters - bus_ before cpu_)
   Dsp dsp_;

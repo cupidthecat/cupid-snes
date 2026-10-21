@@ -15,10 +15,16 @@ class ExecutionContext;
 class Cx4Processor : private Hg51b {
 public:
   enum class Layout { LoRom, HiRom };
+  struct RetainedStorage {
+    std::array<std::array<uint16_t, 256>, 2> program{};
+    std::array<uint32_t, 8> stack{};
+  };
   Cx4Processor(std::span<const uint8_t> rom, std::span<uint8_t> save,
                std::span<const uint8_t> firmware, Layout layout = Layout::LoRom);
   ~Cx4Processor();
   void Reset();
+  RetainedStorage CaptureStorage() const noexcept;
+  void InitializeStorage(const RetainedStorage &storage);
   void SetPal(bool pal);
   void SetDelayedSync(bool enabled) noexcept {
     delayedSync_ = enabled;

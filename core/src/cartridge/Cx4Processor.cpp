@@ -18,6 +18,18 @@ Cx4Processor::Cx4Processor(std::span<const uint8_t> rom, std::span<uint8_t> save
 
 Cx4Processor::~Cx4Processor() = default;
 
+Cx4Processor::RetainedStorage Cx4Processor::CaptureStorage() const noexcept {
+  const auto &state = GetState();
+  return {state.program, state.stack};
+}
+
+void Cx4Processor::InitializeStorage(const RetainedStorage &storage) {
+  auto state = GetState();
+  state.program = storage.program;
+  state.stack = storage.stack;
+  SetState(state);
+}
+
 void Cx4Processor::Reset() {
   execution_.reset();
   Hg51b::Reset();
