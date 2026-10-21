@@ -126,8 +126,8 @@ void Bsx::Reset() {
 void Bsx::SetPal(bool pal) {
   impl_->flash.SetPal(pal);
 }
-void Bsx::Advance(uint32_t masterClocks) {
-  impl_->flash.Advance(masterClocks);
+void Bsx::Advance(uint32_t masterClocks, bool synchronizeProcessor) {
+  impl_->flash.Advance(masterClocks, synchronizeProcessor);
 }
 std::vector<uint8_t> Bsx::FlashMetadata() const {
   return impl_->flash.Metadata();

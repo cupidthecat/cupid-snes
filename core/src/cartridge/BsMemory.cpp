@@ -136,10 +136,12 @@ void BsMemory::RunClock() {
   clock_ += int64_t(masterFrequency_) * 10'000;
 }
 
-void BsMemory::Advance(uint32_t masterClocks) {
+void BsMemory::Advance(uint32_t masterClocks, bool synchronizeProcessor) {
   if (image_.empty())
     return;
   clock_ -= int64_t(masterClocks) * 1'000'000;
+  if (!synchronizeProcessor)
+    return;
   if (readOnly_) {
     if (clock_ < 0) {
       const int64_t period = int64_t(masterFrequency_) * 1'000'000;

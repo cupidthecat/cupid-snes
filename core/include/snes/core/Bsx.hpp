@@ -26,7 +26,7 @@ public:
   // broadcast assets and the time provider remain installed.
   void Reset();
   void SetPal(bool pal);
-  void Advance(uint32_t masterClocks);
+  void Advance(uint32_t masterClocks, bool synchronizeProcessor = true);
   static bool Selects(uint32_t cpuAddress) noexcept;
   uint8_t ReadCpu(uint32_t cpuAddress, uint8_t openBus = 0xff);
   void WriteCpu(uint32_t cpuAddress, uint8_t value);

@@ -1,4 +1,6 @@
+#include "cartridge/BroadcastFixture.hpp"
 #include "snes/core/Bsx.hpp"
+#include "snes/core/Emulator.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -390,6 +392,36 @@ void FlashEraseAndMetadata() {
   }
 }
 
+void ClockedErasePolling() {
+  for (unsigned slot = 0; slot < 3; ++slot)
+    for (bool delayedStart : {false, true})
+      for (bool pal : {false, true}) {
+        snes::core::Emulator::Config config;
+        config.entropyMode = snes::core::EntropyMode::None;
+        snes::core::Emulator emulator(config);
+        const auto rom = broadcast_test::ErasePollingRom(pal, delayedStart, slot);
+        const std::vector<uint8_t> pack(0x100000);
+        std::string error;
+        Check(emulator.LoadBroadcastCartridge(rom, pack, &error),
+              "The erase-polling guest loads through the normal cartridge API");
+        for (unsigned pass = 0; pass < 2; ++pass) {
+          if (pass)
+            Check(emulator.Reset(), "The erase-polling guest resets normally");
+          for (unsigned field = 0; field < 24; ++field)
+            emulator.StepFrame();
+          const auto *ram = emulator.GetBus().WramData();
+          const unsigned polls = ram[0x200] | (unsigned(ram[0x201]) << 8);
+          Check(ram[0x120] == 0xa5,
+                "The guest observes erase completion and reaches its stop marker");
+          const unsigned expected = delayedStart ? (pal ? 3109u : 3771u) : (pal ? 1825u : 2443u);
+          Check(polls == expected,
+                "Cold and warm erase polling retain the regional cartridge handoff boundary");
+          Check(emulator.LoadedCartridge()->MemoryPackData()[0x1234] == (slot ? 0 : 0xff),
+                "Erase completion preserves the slot's physical write protection");
+        }
+      }
+}
+
 void RadioAndClock() {
   Fixture f;
   Check(f.chip.ReadCpu(0x2196) == 0 && f.chip.ReadCpu(0x2197) == 0,
@@ -505,6 +537,7 @@ int main() {
     MappingPriority();
     FlashCommandsAndIrq();
     FlashEraseAndMetadata();
+    ClockedErasePolling();
     RadioAndClock();
     PacketStreams();
   } catch (const std::exception &error) {

@@ -760,9 +760,9 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
   if (gameBoy_)
     gameBoy_->Advance(masterClocks, synchronizeProcessors);
   if (bsx_)
-    bsx_->Advance(masterClocks);
+    bsx_->Advance(masterClocks, synchronizeProcessors);
   if (memoryPackDevice_)
-    memoryPackDevice_->Advance(masterClocks);
+    memoryPackDevice_->Advance(masterClocks, synchronizeProcessors);
   if (competition_)
     competition_->Advance(masterClocks);
   if (spc7110_)
