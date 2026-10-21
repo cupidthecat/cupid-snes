@@ -23,7 +23,7 @@ void ConsoleClockDeadlines() {
       timing.SetInterlace(interlace);
       FramePacer pacer;
       const uint64_t epoch = 5'000'000'000;
-      pacer.Schedule(epoch, 0, timing.MasterClockHz(), 40);
+      pacer.Schedule(epoch, 0, timing.MasterClockHz(), FramePacer::kTargetAudioQueueMilliseconds);
       uint64_t clocks = 0, deadline = epoch;
       for (unsigned frame = 0; frame < 600; ++frame) {
         const auto before = timing.MasterClocksElapsed();
@@ -32,7 +32,8 @@ void ConsoleClockDeadlines() {
           timing.Tick(2);
         const auto elapsed = timing.MasterClocksElapsed() - before;
         clocks += elapsed;
-        deadline = pacer.Schedule(deadline + 3'000'000, elapsed, timing.MasterClockHz(), 40);
+        deadline = pacer.Schedule(deadline + 3'000'000, elapsed, timing.MasterClockHz(),
+                                  FramePacer::kTargetAudioQueueMilliseconds);
         const double expected = double(clocks) * 1'000'000'000 / timing.MasterClockHz();
         Check(std::abs(double(deadline - epoch) - expected) < 1.1,
               "Presentation preserves region, field lengths and fractional clock time");
@@ -45,16 +46,20 @@ void StallsAndMultipleFields() {
   FramePacer pacer;
   const uint64_t epoch = 1'000'000'000;
   const auto clocks = Timing::kMasterClocksPerFrameNTSC;
-  pacer.Schedule(epoch, clocks, Timing::kMasterClockHz, 40);
-  auto due = pacer.Schedule(epoch + 100'000'000, clocks, Timing::kMasterClockHz, 40);
+  pacer.Schedule(epoch, clocks, Timing::kMasterClockHz, FramePacer::kTargetAudioQueueMilliseconds);
+  auto due = pacer.Schedule(epoch + 100'000'000, clocks, Timing::kMasterClockHz,
+                            FramePacer::kTargetAudioQueueMilliseconds);
   Check(due == epoch + 100'000'000, "A stalled frame can be shown immediately");
-  const auto next = pacer.Schedule(due + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+  const auto next = pacer.Schedule(due + 2'000'000, clocks, Timing::kMasterClockHz,
+                                   FramePacer::kTargetAudioQueueMilliseconds);
   Check(next - due > 16'000'000, "Recovery has no burst of overdue frames");
-  due = pacer.Schedule(next + 2'000'000, uint64_t(clocks) * 4, Timing::kMasterClockHz, 40);
+  due = pacer.Schedule(next + 2'000'000, uint64_t(clocks) * 4, Timing::kMasterClockHz,
+                       FramePacer::kTargetAudioQueueMilliseconds);
   Check(due - next > 66'000'000 && due - next < 67'000'000,
         "A transfer spanning multiple fields retains all elapsed console time");
   pacer.Reset();
-  Check(pacer.Schedule(due + 500'000'000, clocks, Timing::kMasterClockHz, 40) == due + 500'000'000,
+  Check(pacer.Schedule(due + 500'000'000, clocks, Timing::kMasterClockHz,
+                       FramePacer::kTargetAudioQueueMilliseconds) == due + 500'000'000,
         "Refilling an audio stream starts a fresh presentation epoch");
 }
 
@@ -65,12 +70,15 @@ void DelayedPresentation() {
   uint64_t due = 0;
   for (uint64_t delay : {8'000'000, 20'000'000, 100'000'000}) {
     pacer.Reset();
-    due = pacer.Schedule(1'000'000'000, clocks, Timing::kMasterClockHz, 40);
+    due = pacer.Schedule(1'000'000'000, clocks, Timing::kMasterClockHz,
+                         FramePacer::kTargetAudioQueueMilliseconds);
     pacer.Presented(due);
-    due = pacer.Schedule(due + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+    due = pacer.Schedule(due + 2'000'000, clocks, Timing::kMasterClockHz,
+                         FramePacer::kTargetAudioQueueMilliseconds);
     const auto late = due + delay;
     pacer.Presented(late);
-    const auto next = pacer.Schedule(late + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+    const auto next = pacer.Schedule(late + 2'000'000, clocks, Timing::kMasterClockHz,
+                                     FramePacer::kTargetAudioQueueMilliseconds);
     if (double(delay) < period)
       Check(std::abs(double(next - due) - period) < 1.1,
             "A renderer delay within one picture retains the console clock");
@@ -82,9 +90,11 @@ void DelayedPresentation() {
   // Timer wake-up noise must not accumulate into a slower emulation clock.
   pacer.Reset();
   const uint64_t epoch = 2'000'000'000;
-  due = pacer.Schedule(epoch, clocks, Timing::kMasterClockHz, 40);
+  due = pacer.Schedule(epoch, clocks, Timing::kMasterClockHz,
+                       FramePacer::kTargetAudioQueueMilliseconds);
   for (unsigned i = 0; i < 600; ++i) {
-    due = pacer.Schedule(due + 500'000 + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+    due = pacer.Schedule(due + 500'000 + 2'000'000, clocks, Timing::kMasterClockHz,
+                         FramePacer::kTargetAudioQueueMilliseconds);
     pacer.Presented(due + 500'000);
   }
   const double expected = double(clocks) * 600 * 1'000'000'000 / Timing::kMasterClockHz;
@@ -98,16 +108,19 @@ void DelayedComputation() {
   const uint64_t epoch = 1'000'000'000;
   for (uint64_t delay : {8'000'000, 20'000'000, 100'000'000}) {
     FramePacer pacer;
-    pacer.Schedule(epoch, clocks, Timing::kMasterClockHz, 40);
+    pacer.Schedule(epoch, clocks, Timing::kMasterClockHz,
+                   FramePacer::kTargetAudioQueueMilliseconds);
     const auto ready = epoch + uint64_t(period) + delay;
-    const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz, 40);
+    const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz,
+                                    FramePacer::kTargetAudioQueueMilliseconds);
     if (double(delay) < period)
       Check(std::abs(double(due - epoch) - period) < 1.1,
             "Computation slightly past its deadline retains the console clock");
     else
       Check(due == ready, "A full-picture computation stall starts a fresh cadence");
     pacer.Presented(ready);
-    const auto next = pacer.Schedule(ready + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+    const auto next = pacer.Schedule(ready + 2'000'000, clocks, Timing::kMasterClockHz,
+                                     FramePacer::kTargetAudioQueueMilliseconds);
     const double elapsed = double(next - (double(delay) < period ? epoch : ready));
     Check(std::abs(elapsed - period * (double(delay) < period ? 2 : 1)) < 1.1,
           "Computation recovery retains short delays and clears long stalls");
@@ -126,7 +139,7 @@ void BatchedAudioDemand() {
     uint64_t shown = 1'000'000'000;
     double nextCallback = double(shown) + 21'333'333 / deviceSpeed;
     const double callbackPeriod = 21'333'333 / deviceSpeed;
-    pacer.Schedule(shown, 0, Timing::kMasterClockHz, 40);
+    pacer.Schedule(shown, 0, Timing::kMasterClockHz, FramePacer::kTargetAudioQueueMilliseconds);
     auto drain = [&](uint64_t until) {
       while (nextCallback <= double(until)) {
         queuedMs -= 21.333333;
@@ -158,7 +171,7 @@ void RendererDelaysKeepAudioFed() {
     double queuedMs = 50;
     uint64_t shown = 1'000'000'000;
     double nextCallback = double(shown) + 10'000'000 / deviceSpeed;
-    pacer.Schedule(shown, 0, Timing::kMasterClockHz, 40);
+    pacer.Schedule(shown, 0, Timing::kMasterClockHz, FramePacer::kTargetAudioQueueMilliseconds);
     const auto drain = [&](uint64_t until) {
       while (nextCallback <= double(until)) {
         queuedMs -= 10;
@@ -188,7 +201,7 @@ void VariableComputationKeepsAudioFed() {
     double queuedMs = 50;
     uint64_t shown = 1'000'000'000;
     double nextCallback = double(shown) + 10'000'000 / deviceSpeed;
-    pacer.Schedule(shown, 0, Timing::kMasterClockHz, 40);
+    pacer.Schedule(shown, 0, Timing::kMasterClockHz, FramePacer::kTargetAudioQueueMilliseconds);
     const auto drain = [&](uint64_t until) {
       while (nextCallback <= double(until)) {
         queuedMs -= 10;
@@ -208,6 +221,41 @@ void VariableComputationKeepsAudioFed() {
     }
   }
 }
+
+void PreparationSpikesKeepAudioFed() {
+  for (Region region : {Region::NTSC, Region::PAL}) {
+    Timing timing(region);
+    const auto clocks = region == Region::PAL ? Timing::kMasterClocksPerFramePAL
+                                              : Timing::kMasterClocksPerFrameNTSC;
+    const double frameNs = double(clocks) * 1'000'000'000 / timing.MasterClockHz();
+    for (double deviceSpeed : {0.996, 1.0, 1.004}) {
+      for (unsigned phase = 0; phase < 20; ++phase) {
+        FramePacer pacer;
+        double queuedMs = FramePacer::kTargetAudioQueueMilliseconds;
+        uint64_t shown = 1'000'000'000;
+        double nextCallback = double(shown) + phase * 500'000 / deviceSpeed;
+        pacer.Schedule(shown, 0, timing.MasterClockHz(), queuedMs);
+        const auto drain = [&](uint64_t until) {
+          while (nextCallback <= double(until)) {
+            queuedMs -= 10;
+            Check(queuedMs > 0, "A short preparation spike cannot drain the device callback queue");
+            nextCallback += 10'000'000 / deviceSpeed;
+          }
+        };
+        for (unsigned frame = 0; frame < 1800; ++frame) {
+          const auto ready = shown + (frame % 180 == 179 ? 24'000'000 : 6'000'000);
+          drain(ready);
+          queuedMs += frameNs / 1'000'000;
+          const auto due = pacer.Schedule(ready, clocks, timing.MasterClockHz(), queuedMs);
+          shown = std::max(ready, due) + (frame % 91 == 90 ? 2'500'000 : 0);
+          drain(shown);
+          pacer.Presented(shown);
+          Check(queuedMs < 100, "Spike recovery keeps the audio backlog bounded");
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -219,6 +267,7 @@ int main() {
     BatchedAudioDemand();
     RendererDelaysKeepAudioFed();
     VariableComputationKeepsAudioFed();
+    PreparationSpikesKeepAudioFed();
     std::puts("Console clock, audio callback, drift and stall pacing checks passed");
     return 0;
   } catch (const std::exception &error) {

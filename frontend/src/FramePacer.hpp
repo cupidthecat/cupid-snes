@@ -10,6 +10,9 @@ namespace snes::frontend {
 // follows device clock drift gradually instead of following individual callbacks.
 class FramePacer {
 public:
+  // Keep callback headroom when preparation briefly exceeds one picture interval.
+  static constexpr uint32_t kTargetAudioQueueMilliseconds = 60;
+
   void Reset() noexcept {
     active_ = false;
     queueError_ = 0;
@@ -29,7 +32,7 @@ public:
 
     // The input queue drains in device-sized blocks. Average those steps
     // before correcting playback speed, with at most a 0.5% adjustment.
-    queueError_ += (queuedMilliseconds - 40.0 - queueError_) / 64.0;
+    queueError_ += (queuedMilliseconds - kTargetAudioQueueMilliseconds - queueError_) / 64.0;
     const double adjustment = 1.0 + std::clamp(queueError_ / 2000.0, -0.005, 0.005);
     const double period =
         double(masterClocks) * 1'000'000'000.0 / clockHz * adjustment + fractionalNanoseconds_;

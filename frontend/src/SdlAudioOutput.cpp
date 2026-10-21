@@ -2,6 +2,8 @@
 
 #include "SdlAudioOutput.hpp"
 
+#include "FramePacer.hpp"
+
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -17,7 +19,8 @@ SdlAudioOutput::SdlAudioOutput(const Config &config) {
     throw std::invalid_argument("Audio requires stereo input at 1 to 192000 Hz");
   }
   sampleRate_ = config.sampleRate;
-  targetQueuedBytes_ = ((sampleRate_ * 40 + 999) / 1000) * 2 * sizeof(float);
+  targetQueuedBytes_ =
+      ((sampleRate_ * FramePacer::kTargetAudioQueueMilliseconds + 999) / 1000) * 2 * sizeof(float);
   // Describe the format we will push: stereo float at the SNES sample rate.
   SDL_AudioSpec spec{};
   spec.format = SDL_AUDIO_F32;

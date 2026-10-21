@@ -39,7 +39,7 @@ public:
 
   // Playback control
 
-  /// Request playback after at least 40 ms of input has been queued.
+  /// Request playback after at least 60 ms of input has been queued.
   void Resume();
 
   /// Pause the audio device.
