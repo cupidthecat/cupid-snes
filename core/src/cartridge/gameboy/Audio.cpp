@@ -211,6 +211,7 @@ void Audio::AccumulateClocks(uint64_t clock) {
 
 void Audio::CommitSamples() {
   for (;;) {
+    bool finishAfterSample = false;
     const auto pending = renderClock_ > phaseClock_ ? renderClock_ - phaseClock_ : 0;
     const bool due = sampleCycles_ >= clockRate_;
     if (!pending) {
@@ -220,6 +221,7 @@ void Audio::CommitSamples() {
       if (!due && !channels_.NeedsStep() && pending + renderedClocks_ < batchClocks_)
         break;
       const auto capacity = batchClocks_ > renderedClocks_ ? batchClocks_ - renderedClocks_ : 0;
+      finishAfterSample = due && renderedClocks_ == batchClocks_;
       // Finish pending sound before a late sample when activation exceeded the budget.
       if (capacity || !due || renderedClocks_ > batchClocks_) {
         auto end = phaseClock_ + std::min(pending, capacity ? uint64_t(capacity) : pending);
@@ -233,6 +235,9 @@ void Audio::CommitSamples() {
       sampleCycles_ -= clockRate_;
       Render();
       channels_.CommitPendingTrigger();
+      // A full batch renders before consuming the clocks that followed it.
+      if (finishAfterSample)
+        FlushSound(renderClock_);
     }
   }
 }

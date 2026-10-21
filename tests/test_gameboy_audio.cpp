@@ -467,6 +467,30 @@ void InactiveNoiseWritesKeepOutput() {
           "Polynomial writes to an inactive noise channel preserve its audible output");
   }
 }
+
+void ResetKeepsFullBatchRemainder() {
+  System system(true);
+  system.StepBatched(8, 16);
+  system.audio.Write(0xff26, 0x80);
+  system.StepBatched(28, 16);
+  system.StepBatched(72, 16);
+  system.audio.Write(0xff23, 0x80);
+  system.StepBatched(124, 16);
+  system.StepBatched(24, 16);
+  system.audio.Reset(true, true);
+  system.divider.Reset();
+  system.clock = 0;
+  system.samples.clear();
+  system.audio.Write(0xff26, 0x80);
+  system.audio.Write(0xff12, 0xf3);
+  system.audio.Write(0xff25, 0xf3);
+  system.StepBatched(1024, 4);
+  constexpr std::array<int16_t, 8> expected{-1, 0, -1, 0, -1, 0, -1, -1};
+  Check(system.samples.size() == expected.size(), "Reset preserves the native sample count");
+  for (unsigned i = 0; i < expected.size(); ++i)
+    Check(system.samples[i].left == expected[i] && system.samples[i].right == expected[i],
+          "Reset retains the filter phase of clocks consumed after a full sound batch");
+}
 } // namespace
 
 int main() {
@@ -487,6 +511,7 @@ int main() {
     ResetDividerSampleBoundaries();
     LateSampleConsumesPendingSound();
     InactiveNoiseWritesKeepOutput();
+    ResetKeepsFullBatchRemainder();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {
