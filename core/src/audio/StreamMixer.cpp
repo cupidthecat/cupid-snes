@@ -20,19 +20,23 @@ void StreamMixer::Stream::Write(Frame frame) {
   history[cursor] = frame;
   cursor = (cursor + 1) & 3;
   for (; next <= 1; next += interval) {
-    const double back = 1 - next;
-    const double oldWeight = (1 + 2 * next) * back * back;
-    const double newWeight = next * next * (3 - 2 * next);
-    const double oldSlope = next * back * back;
-    const double newSlope = -next * next * back;
     Frame interpolated{};
     for (unsigned side = 0; side < 2; ++side) {
       const double oldest = history[cursor][side];
       const double older = history[(cursor + 1) & 3][side];
       const double newer = history[(cursor + 2) & 3][side];
       const double newest = history[(cursor + 3) & 3][side];
-      interpolated[side] = older * oldWeight + newer * newWeight + (newer - oldest) * oldSlope +
-                           (newest - older) * newSlope;
+      const double linear = newer - oldest;
+      double cubic = newest - newer;
+      cubic -= oldest;
+      cubic += older;
+      const double quadratic = oldest - older - cubic;
+      // Keep the polynomial evaluation order stable at silence transitions.
+      double value = cubic * next * next * next;
+      value += quadratic * next * next;
+      value += linear * next;
+      value += older;
+      interpolated[side] = value;
     }
     ready.push_back(interpolated);
   }

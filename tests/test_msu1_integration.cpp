@@ -387,10 +387,26 @@ void AdapterPackFileLoading() {
         "All three streams restart after reset without stale queues");
 }
 
+void StreamRounding() {
+  audio::StreamMixer mixer;
+  std::vector<std::array<float, 2>> output;
+  mixer.SetOutput([&](float left, float right) { output.push_back({left, right}); });
+  mixer.SetRate(audio::StreamMixer::Input::Console, AudioTiming::SampleRate);
+  constexpr double input[]{0, 1, 0, 0, -1, 0, 0.5, 0, 0, -0.5, 0, 0};
+  for (auto value : input)
+    mixer.Write(audio::StreamMixer::Input::Console, value, value);
+  const float quiet = float(1e-25);
+  const float expected[]{0, 0, quiet, 1, 0, quiet, -1, 0, 0.5f, 0, quiet, -0.5f, 0};
+  Check(output.size() == std::size(expected), "Cubic stream priming preserves every output sample");
+  for (unsigned i = 0; i < output.size(); ++i)
+    Check(output[i][0] == expected[i] && output[i][1] == expected[i],
+          "Cubic polynomial evaluation preserves rounding at silence transitions");
+}
 } // namespace
 
 int main() {
   try {
+    StreamRounding();
     MappingAndLifecycle();
     ClockedPrograms();
     ThreeStreamClipping();
