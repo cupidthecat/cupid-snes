@@ -326,6 +326,32 @@ void ThreeStreamClipping() {
         "All three streams add before clipping, including cancellation after two loud inputs");
 }
 
+void StreamBurstBoundaries() {
+  using Input = audio::StreamMixer::Input;
+  for (unsigned burst : {639u, 640u}) {
+    audio::StreamMixer mixer;
+    std::vector<std::array<float, 2>> output;
+    mixer.SetOutput([&](float left, float right) { output.push_back({left, right}); });
+    for (const auto input : {Input::Console, Input::Handheld, Input::Expansion})
+      mixer.SetRate(input, AudioTiming::SampleRate);
+    for (unsigned i = 0; i < burst; ++i) {
+      const double pulse = i + 2 == burst ? 0.75 : 0;
+      mixer.Write(Input::Console, pulse, -pulse);
+    }
+    Check(output.empty(), "A producer waits for the other active sample clocks");
+    for (unsigned i = 0; i < burst; ++i) {
+      mixer.Write(Input::Handheld, 0, 0);
+      mixer.Write(Input::Expansion, 0, 0);
+    }
+    Check(output.size() == burst + 1, "A wrapped stream retains its scheduled sample count");
+    const float first = burst == 640 ? 0.75f : 0;
+    Check(output.front()[0] == first && output.front()[1] == -first,
+          "A stream burst wraps its interpolation history after twenty milliseconds");
+    Check(output.back()[0] == 0.75f && output.back()[1] == -0.75f,
+          "Draining a wrapped stream reaches the retained final sample");
+  }
+}
+
 void AdapterPackFileLoading() {
   Fixture fixture;
   SceneAssets(fixture, 2);
@@ -407,6 +433,7 @@ void StreamRounding() {
 int main() {
   try {
     StreamRounding();
+    StreamBurstBoundaries();
     MappingAndLifecycle();
     ClockedPrograms();
     ThreeStreamClipping();

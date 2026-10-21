@@ -5,8 +5,8 @@
 
 #include <array>
 #include <cstdint>
-#include <deque>
 #include <functional>
+#include <vector>
 
 namespace snes::core::audio {
 
@@ -23,8 +23,11 @@ public:
 private:
   using Frame = std::array<double, 2>;
   struct Stream {
+    static constexpr unsigned kQueueFrames = AudioTiming::SampleRate / 50;
     std::array<Frame, 4> history{};
-    std::deque<Frame> ready;
+    std::vector<Frame> ready;
+    unsigned readIndex = 0, writeIndex = 0;
+    uint64_t queued = 0;
     unsigned cursor = 0;
     uint32_t rate = 0;
     double interval = 1, next = 0;

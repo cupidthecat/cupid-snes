@@ -7,7 +7,9 @@ namespace snes::core::audio {
 
 void StreamMixer::Stream::Reset(uint32_t inputRate) {
   history = {};
-  ready.clear();
+  ready.assign(inputRate ? kQueueFrames : 0, {});
+  readIndex = writeIndex = 0;
+  queued = 0;
   cursor = 0;
   next = 0;
   rate = inputRate;
@@ -38,7 +40,10 @@ void StreamMixer::Stream::Write(Frame frame) {
       value += older;
       interpolated[side] = value;
     }
-    ready.push_back(interpolated);
+    // A producer can wrap its twenty-millisecond buffer before other clocks catch up.
+    ready[writeIndex] = interpolated;
+    writeIndex = (writeIndex + 1) % kQueueFrames;
+    ++queued;
   }
   next -= 1;
 }
@@ -73,7 +78,7 @@ void StreamMixer::MixReady() {
       if (!stream.rate)
         continue;
       active = true;
-      if (stream.ready.empty())
+      if (!stream.queued)
         return;
     }
     if (!active)
@@ -83,8 +88,9 @@ void StreamMixer::MixReady() {
       if (!stream.rate)
         continue;
       for (unsigned side = 0; side < 2; ++side)
-        mixed[side] += stream.ready.front()[side];
-      stream.ready.pop_front();
+        mixed[side] += stream.ready[stream.readIndex][side];
+      stream.readIndex = (stream.readIndex + 1) % Stream::kQueueFrames;
+      --stream.queued;
     }
     output_(float(std::clamp(mixed[0], -1.0, 1.0)), float(std::clamp(mixed[1], -1.0, 1.0)));
   }
