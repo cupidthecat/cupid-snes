@@ -526,6 +526,13 @@ void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
     armDsp_->Power(state);
 }
 
+void Cartridge::InitializeFlashPages(PowerOnState &state) {
+  if (bsx_)
+    bsx_->InitializePageBuffers(state);
+  if (memoryPackDevice_)
+    memoryPackDevice_->InitializePageBuffers(state);
+}
+
 void Cartridge::InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state) {
   if (gameBoy_)
     gameBoy_->InitializeStartup(std::move(state));

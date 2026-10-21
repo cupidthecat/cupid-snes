@@ -167,6 +167,7 @@ public:
   // and clock data.
   void Reset();
   void InitializePowerOnMemory(PowerOnState &state);
+  void InitializeFlashPages(PowerOnState &state);
   void InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state);
 
   void SetMemselFast(bool enabled) noexcept;

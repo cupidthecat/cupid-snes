@@ -116,6 +116,9 @@ void Emulator::ReplaceCartridge(Cartridge &&cartridge) {
       cx4Storage_ = std::move(*storage);
   if (cx4Storage_)
     cartridge.InitializeCx4Storage(*cx4Storage_);
+  // Cartridge page storage samples the stream left by the previous power cycle.
+  if (startupEntropy_)
+    cartridge.InitializeFlashPages(*startupEntropy_);
   cartridge_ = std::move(cartridge);
 }
 
@@ -601,7 +604,8 @@ void Emulator::ResetHardware(bool warm) {
       cartridge_->Header(), config_.ppu, config_.entropyMode, config_.gameCompatibilityFixes);
   smp_.SetSampleRate(compatibility.sampleRate);
   const uint32_t seed = config_.entropySeed ? *config_.entropySeed : uint32_t(std::clock());
-  PowerOnState startup(compatibility.entropy, seed, config_.entropySequence);
+  startupEntropy_.emplace(compatibility.entropy, seed, config_.entropySequence);
+  auto &startup = *startupEntropy_;
   if (!warm)
     startup.Fill({bus_.WramData(), MemoryBus::WramSize});
   if (compatibility.initializeWram)

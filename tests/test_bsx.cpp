@@ -422,6 +422,49 @@ void ClockedErasePolling() {
       }
 }
 
+void PageBufferStartup() {
+  struct Scene {
+    snes::core::EntropyMode mode;
+    uint32_t seed;
+    uint64_t digest;
+    bool resetBeforeReload = false;
+  };
+  constexpr uint64_t zeroPages = 0x7da144b97d054b25;
+  for (const auto scene : {Scene{snes::core::EntropyMode::None, 206, zeroPages},
+                           Scene{snes::core::EntropyMode::Low, 194, 0x7a3e5bfa6a481c32},
+                           Scene{snes::core::EntropyMode::High, 198, 0x1bdba64555c30c4e},
+                           Scene{snes::core::EntropyMode::None, 358, zeroPages, true},
+                           Scene{snes::core::EntropyMode::Low, 214, 0x70be016e39521cf5, true},
+                           Scene{snes::core::EntropyMode::High, 213, 0xd08ba3c7bccd8341, true}})
+    for (unsigned slot = 0; slot < 3; ++slot) {
+      snes::core::Emulator::Config config;
+      config.entropyMode = scene.mode;
+      config.entropySeed = scene.seed;
+      snes::core::Emulator emulator(config);
+      const auto rom = broadcast_test::PageReadRom(slot);
+      const std::vector<uint8_t> pack(0x100000);
+      std::string error;
+      const auto readPages = [&]() {
+        emulator.StepFrame();
+        const auto *ram = emulator.GetBus().WramData();
+        Check(ram[0x120] == 0xa5, "The guest reads both complete page buffers");
+        uint64_t digest = 0xcbf29ce484222325;
+        for (unsigned index = 0x300; index < 0x500; ++index)
+          digest = (digest ^ ram[index]) * 0x100000001b3;
+        return digest;
+      };
+      Check(emulator.LoadBroadcastCartridge(rom, pack, &error), "The page-read guest loads");
+      Check(readPages() == zeroPages, "First-load pages start before the first seeded power cycle");
+      if (scene.resetBeforeReload)
+        Check(emulator.Reset(), "The page-read guest resets before cartridge replacement");
+      Check(emulator.LoadBroadcastCartridge(rom, pack, &error), "The page-read guest reloads");
+      Check(readPages() == scene.digest,
+            "Reloaded pages consume the stream retained by the previous power or reset");
+      Check(emulator.Reset(), "The page-read guest resets normally");
+      Check(readPages() == scene.digest, "A processor reset retains the existing flash pages");
+    }
+}
+
 void RadioAndClock() {
   Fixture f;
   Check(f.chip.ReadCpu(0x2196) == 0 && f.chip.ReadCpu(0x2197) == 0,
@@ -538,6 +581,7 @@ int main() {
     FlashCommandsAndIrq();
     FlashEraseAndMetadata();
     ClockedErasePolling();
+    PageBufferStartup();
     RadioAndClock();
     PacketStreams();
   } catch (const std::exception &error) {

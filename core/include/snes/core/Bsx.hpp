@@ -11,6 +11,8 @@
 
 namespace snes::core {
 
+class PowerOnState;
+
 class Bsx {
 public:
   // BIOS, memory pack and battery RAM remain owned by the cartridge. Their
@@ -25,6 +27,7 @@ public:
   // Reset the controller/protocol without erasing any RAM or flash. Injected
   // broadcast assets and the time provider remain installed.
   void Reset();
+  void InitializePageBuffers(PowerOnState &state);
   void SetPal(bool pal);
   void Advance(uint32_t masterClocks, bool synchronizeProcessor = true);
   static bool Selects(uint32_t cpuAddress) noexcept;

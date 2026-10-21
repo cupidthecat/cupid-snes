@@ -239,6 +239,7 @@ private:
 
   CartridgeDatabase cartridgeDatabase_{};
   std::shared_ptr<gameboy::StartupState> handheldStartup_;
+  std::optional<PowerOnState> startupEntropy_;
   std::optional<Cartridge> cartridge_{};
   // Cache words and return-stack entries belong to this console across cartridge changes.
   std::optional<Cx4Processor::RetainedStorage> cx4Storage_;

@@ -123,6 +123,9 @@ Bsx &Bsx::operator=(Bsx &&) noexcept = default;
 void Bsx::Reset() {
   impl_->Reset();
 }
+void Bsx::InitializePageBuffers(PowerOnState &state) {
+  impl_->flash.InitializePageBuffers(state);
+}
 void Bsx::SetPal(bool pal) {
   impl_->flash.SetPal(pal);
 }
