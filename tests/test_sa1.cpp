@@ -1367,14 +1367,15 @@ void Interrupts() {
   Set(p, 0x220c, 0xabcd);
   Set(p, 0x220e, 0x9876);
   p.WriteSa1(0x2209, 0x50);
-  for (uint32_t vector : {0xffeau, 0xfffau})
-    Check(p.ReadCpu(vector) == 0xcd && p.ReadCpu(vector + 1) == 0xab,
-          "Console NMI vectors are substituted in both CPU modes");
-  for (uint32_t vector : {0xffeeu, 0xfffeu})
-    Check(p.ReadCpu(vector) == 0x76 && p.ReadCpu(vector + 1) == 0x98,
-          "Console IRQ vectors are substituted in both CPU modes");
-  Check(p.ReadCpu(0xfffc) == 0xea && p.ReadCpu(0xffe4) == 0xea,
-        "Vector control leaves reset and COP vectors intact");
+  for (const auto read : {&Sa1::ReadCpu, &Sa1::ReadSa1}) {
+    Check((p.*read)(0xffea, 0) == 0xcd && (p.*read)(0xffeb, 0) == 0xab,
+          "Both processors read the substituted native NMI vector");
+    Check((p.*read)(0xffee, 0) == 0x76 && (p.*read)(0xffef, 0) == 0x98,
+          "Both processors read the substituted native IRQ vector");
+    for (uint32_t vector : {0xfffau, 0xfffbu, 0xfffeu, 0xffffu, 0xfffcu, 0xffe4u})
+      Check((p.*read)(vector, 0) == 0xea,
+            "Vector control retains emulation, reset and COP ROM entries");
+  }
 }
 
 void NativeInterruptSampling() {

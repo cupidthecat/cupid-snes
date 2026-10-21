@@ -6,25 +6,6 @@
 
 namespace snes::core {
 
-uint8_t Sa1::ReadDmaRom(uint32_t source, uint8_t openBus) const {
-  // DMA selects the ROM port independently of the processor's RAM and open-bus windows.
-  const auto bank = uint8_t(source >> 16);
-  uint32_t portAddress = source;
-  if (!(bank & 0x40) && (source & 0x8000))
-    portAddress =
-        uint32_t(bank & 0x3f) * 0x8000 + (source & 0x7fff) + uint32_t(bank >> 7) * 0x200000;
-
-  if ((registers_[0x09] & 0x10) && (portAddress & 0xfffffe) == 0x007fea)
-    return registers_[0x0c + (portAddress & 1)];
-  if ((registers_[0x09] & 0x40) && (portAddress & 0xfffffe) == 0x007fee)
-    return registers_[0x0e + (portAddress & 1)];
-
-  const unsigned block = (portAddress >> 20) & 3;
-  const uint8_t mapping = registers_[0x20 + block];
-  const unsigned page = portAddress < 0x400000 && !(mapping & 0x80) ? block : mapping & 7;
-  return ReadRom((page << 20) | (portAddress & 0xfffff), openBus);
-}
-
 void Sa1::StartDma() {
   const auto count = RegisterWord(0x38);
   const auto route = registers_[0x30] & 7;
@@ -80,7 +61,8 @@ void Sa1::StepDma() {
     }
     uint8_t value = openBus;
     if (device == 0) {
-      value = ReadDmaRom(source, openBus);
+      // DMA selects the ROM port independently of the processor's address windows.
+      value = ReadRomPort(source, openBus);
     } else if (device == 1) {
       value = ReadBwram(source, openBus);
     } else {

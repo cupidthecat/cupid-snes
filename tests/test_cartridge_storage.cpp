@@ -1,5 +1,6 @@
 #include "ConsoleConfig.hpp"
 #include "cartridge/Sa1DmaFixture.hpp"
+#include "cartridge/Sa1VectorFixture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -243,6 +244,41 @@ void Sa1RomPortDma() {
         }
       }
 }
+void Sa1VectorReads() {
+  for (uint8_t switches : {0, 0x10, 0x40, 0x50})
+    for (bool pal : {false, true})
+      for (bool contention : {false, true})
+        for (bool bitstream : {false, true}) {
+          Emulator::Config config;
+          config.entropyMode = EntropyMode::None;
+          config.entropySeed = 0;
+          config.sa1BusContention = contention;
+          auto machine = std::make_unique<Emulator>(config);
+          const auto rom = sa1_test::VectorReads(switches, pal, bitstream);
+          Check(machine->LoadCartridge(rom),
+                "The vector-read guest loads as an ordinary cartridge");
+          for (bool warm : {false, true}) {
+            if (warm)
+              Check(machine->Reset(), "The vector-read guest resets normally");
+            machine->StepFrame();
+            const auto *ram = machine->GetBus().WramData();
+            Check(ram[0x120] == 0xa5, "Both processors complete their actual vector-table reads");
+            for (unsigned table = 0; table < 3; ++table)
+              for (unsigned byte = 0; byte < 32; ++byte) {
+                uint8_t expected = rom[(table == 1 ? 0x207fe0 : 0x7fe0) + byte];
+                if (table == 0 && (switches & 0x10) && (byte == 10 || byte == 11))
+                  expected = byte == 10 ? 0x56 : 0x78;
+                if (table == 0 && (switches & 0x40) && (byte == 14 || byte == 15))
+                  expected = byte == 14 ? 0x9a : 0xbc;
+                Check(ram[0x200 + table * 32 + byte] == expected,
+                      "Console ROM reads substitute only selected bank-zero native vectors");
+                Check(
+                    ram[0x300 + table * 32 + byte] == expected,
+                    "Cartridge processor and bitstream reads see the selected native ROM vectors");
+              }
+          }
+        }
+}
 } // namespace
 int main() {
   try {
@@ -253,6 +289,7 @@ int main() {
     ProcessorOwnedMemory();
     CommandMemoryReset();
     Sa1RomPortDma();
+    Sa1VectorReads();
     std::puts("Cartridge storage tests passed");
     return 0;
   } catch (const std::exception &error) {
