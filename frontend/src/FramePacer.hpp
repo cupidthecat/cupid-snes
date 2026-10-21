@@ -46,10 +46,10 @@ public:
   }
 
   void Presented(uint64_t now) noexcept {
-    // Event handling, save writes or the renderer can stall after Schedule.
-    // Small wake-up jitter keeps the absolute clock; a material delay starts
-    // the next interval at the picture that was actually displayed.
-    if (active_ && now > deadline_ && now - deadline_ > periodNanoseconds_ / 4)
+    // Renderer completion and timer wakeups can arrive partway through a
+    // picture interval. Retain the console clock across those delays. A full
+    // interval of lateness starts the next deadline at this picture.
+    if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_)
       deadline_ = now;
   }
 

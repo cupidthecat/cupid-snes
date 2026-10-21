@@ -147,7 +147,7 @@ jobs:
         if: matrix.mode == 'optimized'
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|super_game_boy|msu1|msu1_integration|cartridge_compatibility|bus_scheduling|sound_clocking|dsp_batch|power_on_state|ppu_background|ppu_object|ppu_port|ppu_scanline|ppu_regression|dma_timing|controller|light_gun|frame_execution|console_reset|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|srtc|srtc_timing|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          -R "^(snes_(gameboy_cpu|gameboy_host|gameboy_clocked_io|gameboy_cartridge|gameboy_camera|gameboy_tpp1|gameboy_oam|gameboy_machine|gameboy_video|gameboy_sound_channels|gameboy_audio|gameboy_peripherals|super_game_boy|msu1|msu1_integration|cartridge_compatibility|bus_scheduling|sound_clocking|dsp_batch|power_on_state|ppu_background|ppu_object|ppu_port|ppu_scanline|ppu_regression|dma_timing|controller|light_gun|frame_execution|frame_pacing|console_reset|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|srtc|srtc_timing|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
   windows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

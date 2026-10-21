@@ -375,6 +375,7 @@ add_custom_target(snes_optimized_checks
     snes_controller_tests
     snes_light_gun_tests
     snes_frame_execution_tests
+    snes_frame_pacing_tests
     snes_console_reset_tests
     snes_competition_cartridge_tests
     snes_sdl_audio_tests
