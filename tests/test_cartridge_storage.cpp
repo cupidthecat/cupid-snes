@@ -108,10 +108,11 @@ void SufamiStorage() {
   std::copy_n("SFC-ADX BACKUP", 14, bios.begin() + 0x10);
   std::vector<uint8_t> slot(0x80000);
   std::copy_n("BANDAI SFC-ADX", 14, slot.begin());
+  slot[0x37] = 4;
   auto cart = Cartridge::FromSufamiTurbo(bios, slot, slot);
   Check(cart.has_value(), "The generated Sufami Turbo cartridges load");
-  Check(cart->SlotSramData(0).size() == 0x4000 && Filled(cart->SlotSramData(0), 255) &&
-            Filled(cart->SlotSramData(1), 255),
+  Check(cart->SlotSramData(0).size() == 0x2000 && cart->SlotSramData(1).size() == 0x2000 &&
+            Filled(cart->SlotSramData(0), 255) && Filled(cart->SlotSramData(1), 255),
         "Both Sufami Turbo slots start erased");
   const std::array<uint8_t, 2> prefix{0x34, 0};
   cart->LoadSlotSram(0, prefix);
@@ -122,6 +123,24 @@ void SufamiStorage() {
   cart = Cartridge::FromSufamiTurbo(bios, {}, slot);
   Check(cart && cart->SlotSramData(0).empty() && Filled(cart->SlotSramData(1), 255),
         "An absent slot exposes no save while the occupied slot starts erased");
+  for (unsigned units : {0u, 1u, 3u, 8u, 32u, 255u}) {
+    auto other = slot;
+    other[0x37] = static_cast<uint8_t>(units);
+    cart = Cartridge::FromSufamiTurbo(bios, other, slot);
+    Check(cart && cart->SlotSramData(0).size() == units * 0x800 &&
+              cart->SlotSramData(1).size() == 0x2000 &&
+              cart->SramData().size() == units * 0x800 + 0x2000,
+          "Sufami RAM size comes from each slot header in 2 KiB units");
+    const std::array<uint8_t, 1> save{0x68};
+    cart->LoadSlotSram(1, save);
+    cart->Reset();
+    Check(cart->SlotSramData(1)[0] == 0x68 && Filled(cart->SlotSramData(0), 255),
+          "Different slot capacities keep battery storage independent after reset");
+  }
+  slot.resize(0x20000);
+  cart = Cartridge::FromSufamiTurbo(bios, slot, {});
+  Check(cart && cart->SlotSramData(0).size() == 0x2000,
+        "A 128 KiB Sufami Turbo game keeps its declared RAM");
 }
 void BroadcastStorage() {
   auto bios = Image();

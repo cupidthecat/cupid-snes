@@ -781,6 +781,8 @@ void Sufami() {
   std::vector<uint8_t> a(0x80000, 0x11), b(0x100000, 0x22);
   Signature(a, 0, "BANDAI SFC-ADX");
   Signature(b, 0, "BANDAI SFC-ADX");
+  a[0x37] = 4;
+  b[0x37] = 1;
   auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadSufamiTurbo(bios, a, b), "Load two Sufami Turbo slots");
   Check(emu->LoadedCartridge()->Header().mapping == MappingType::SufamiTurbo,
@@ -793,6 +795,9 @@ void Sufami() {
     Check(bus.Read((bank << 16) | 0x8123) == 0x11, "Sufami slot A mirrors its own ROM");
   for (unsigned bank : {0x40u, 0x5fu, 0xc0u, 0xdfu})
     Check(bus.Read((bank << 16) | 0x8123) == 0x22, "Sufami slot B bank selection");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0x400123) == 0x22 && bus.Read(0xdf0123) == 0x22,
+        "Sufami slot B ROM occupies both bank halves");
   bus.Write(0x608123, 0x57);
   bus.Write(0x708123, 0x63);
   Check(bus.Read(0xe3c123) == 0x57 && bus.Read(0xf3c123) == 0x63,
@@ -800,12 +805,21 @@ void Sufami() {
   Check(emu->LoadedCartridge()->SlotSramData(0)[0x123] == 0x57 &&
             emu->LoadedCartridge()->SlotSramData(1)[0x123] == 0x63,
         "Sufami save API exposes both slots");
+  Check(bus.Read(0x600123) == 0x57 && bus.Read(0x6fe123) == 0x57 && bus.Read(0xef0123) == 0x57 &&
+            bus.Read(0x700123) == 0x63 && bus.Read(0x7d8923) == 0x63 && bus.Read(0xff0123) == 0x63,
+        "Sufami RAM occupies full banks and mirrors each slot's capacity");
+  bus.Write(0x6f2123, 0x48);
+  bus.Write(0xff0923, 0x79);
+  Check(bus.Read(0x608123) == 0x48 && bus.Read(0x708123) == 0x79,
+        "Sufami RAM writes use lower halves and outer bank aliases");
+  bus.Write(0x608123, 0x57);
+  bus.Write(0x708123, 0x63);
   const std::vector<uint8_t> saved(emu->LoadedCartridge()->SlotSramData(0).begin(),
                                    emu->LoadedCartridge()->SlotSramData(0).end());
   bus.Write(0x7e8123, 0xa5);
   Check(bus.Read(0x7e8123) == 0xa5, "Sufami preserves WRAM");
   bus.Write(0x400123, 0x76);
-  Check(bus.Read(0x400123) == 0x76, "Sufami lower cartridge windows read open bus");
+  Check(bus.Read(0x400123) == 0x22, "Sufami ROM ignores writes in its lower bank half");
   Check(!emu->LoadSufamiTurbo(bios, bios, b), "Reject a BIOS passed as a game");
   Check(bus.Read(0x608123) == 0x57, "Failed Sufami load preserves the existing slots");
   bios.insert(bios.begin(), 512, 0);
@@ -818,6 +832,27 @@ void Sufami() {
   emu->LoadSlotSram(1, saved);
   Check(bus.Read(0xf08123) == 0x57, "A Sufami save can follow its game to the other slot");
   Check(emu->LoadSufamiTurbo(bios, {}, {}), "Sufami BIOS-only operation");
+  a[0x37] = 0;
+  Check(emu->LoadSufamiTurbo(bios, a, a), "Sufami games can omit RAM");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0x600123) == 0xa5 && bus.Read(0xff8123) == 0xa5 &&
+            emu->LoadedCartridge()->SramData().empty() && emu->SaveSlotBattery(0).empty(),
+        "RAM-free Sufami slots leave their RAM windows open");
+  Check(!emu->LoadSlotBattery(0, saved), "A RAM-free slot has no battery storage to restore");
+  a.resize(0x300000, 0x11);
+  std::fill(a.begin() + 0x100000, a.begin() + 0x200000, 0x52);
+  std::fill(a.begin() + 0x200000, a.end(), 0x73);
+  a[0x37] = 3;
+  Check(emu->LoadSufamiTurbo(bios, a, a), "Sufami accepts larger slot images");
+  Check(bus.Read(0x208123) == 0x52 && bus.Read(0xa08123) == 0x52 && bus.Read(0x400123) == 0x73 &&
+            bus.Read(0xc00123) == 0x73,
+        "Sufami ROM mirroring retains the slot's bank address lines");
+  bus.Write(0x601123, 0x49);
+  bus.Write(0x600923, 0x61);
+  Check(bus.Read(0xef1923) == 0x49 && bus.Read(0x608923) == 0x61,
+        "Sufami non-power-of-two RAM mirrors its populated blocks");
+  Check(emu->Reset() && bus.Read(0x601923) == 0x49 && bus.Read(0xe08923) == 0x61,
+        "Sufami RAM retains writes through console reset");
 }
 
 std::array<uint8_t, 13> ReadClock(Srtc &clock) {
@@ -931,6 +966,7 @@ void CombinedSufami() {
   for (const auto offset : {0x100000u, 0x200000u}) {
     std::fill_n(combined.begin() + offset, 0x100000, offset == 0x100000 ? 0x31 : 0x72);
     std::copy(signature.begin(), signature.end(), combined.begin() + offset);
+    combined[offset + 0x37] = offset == 0x100000 ? 4 : 1;
   }
   auto emu = Load(combined);
   Check(emu->LoadedCartridge()->Header().mapping == MappingType::SufamiTurbo,
@@ -942,7 +978,7 @@ void CombinedSufami() {
   bus.Write(0x708010, 0x83);
   const auto save = emu->LoadedCartridge()->SramData();
   const std::vector<uint8_t> saved(save.begin(), save.end());
-  Check(saved.size() == 0x8000 && saved[0x10] == 0x19 && saved[0x4010] == 0x83,
+  Check(saved.size() == 0x2800 && saved[0x10] == 0x19 && saved[0x2010] == 0x83,
         "Combined saves contain two independent SRAM regions");
   combined.insert(combined.begin(), 512, 0);
   RomNormalizationInfo info;

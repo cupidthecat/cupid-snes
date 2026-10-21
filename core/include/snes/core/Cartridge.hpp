@@ -258,6 +258,8 @@ private:
   bool boardConnected_ = true;
   size_t slotSize_[2]{};
   size_t slotOffset_[2]{};
+  size_t slotSramSize_[2]{};
+  size_t slotSramOffset_[2]{};
   std::vector<uint8_t> memoryPack_;
   bool memoryPackReadOnly_ = false;
   std::unique_ptr<BsMemory> memoryPackDevice_;

@@ -488,11 +488,10 @@ std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bio
     return std::nullopt;
   }
   for (const auto &slot : slots) {
-    if (!slot.empty() &&
-        (slot.size() < 0x80000 || slot.size() > 0x100000 ||
-         !HasSignature(slot, 0, "BANDAI SFC-ADX") || HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
+    if (!slot.empty() && (slot.size() < 0x20000 || !HasSignature(slot, 0, "BANDAI SFC-ADX") ||
+                          HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
       if (error)
-        *error = "Invalid Sufami Turbo slot image (expected a 512 KiB to 1 MiB game)";
+        *error = "Invalid Sufami Turbo slot image (expected a game of at least 128 KiB)";
       return std::nullopt;
     }
   }
@@ -501,11 +500,13 @@ std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bio
     return std::nullopt;
   cart->header_.mapping = MappingType::SufamiTurbo;
   cart->header_.chip = EnhancementChip::None;
-  // A stable 16 KiB region per slot keeps saves independent of slot occupancy.
-  cart->sram_.assign(0x8000, 0xff);
+  cart->sram_.clear();
   for (unsigned i = 0; i < 2; ++i) {
     cart->slotOffset_[i] = cart->rom_.size();
     cart->slotSize_[i] = slots[i].size();
+    cart->slotSramOffset_[i] = cart->sram_.size();
+    cart->slotSramSize_[i] = slots[i].empty() ? 0 : size_t(slots[i][0x37]) * 0x800;
+    cart->sram_.resize(cart->sram_.size() + cart->slotSramSize_[i], 0xff);
     cart->rom_.insert(cart->rom_.end(), slots[i].begin(), slots[i].end());
   }
   cart->romCrc32_ = ComputeCrc32(cart->rom_);
@@ -903,15 +904,15 @@ bool Cartridge::MapCx4Processor(MemoryBus &bus, uint8_t slot) const {
 }
 
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {
-  if (header_.mapping != MappingType::SufamiTurbo || slot >= 2 || slotSize_[slot] == 0)
+  if (header_.mapping != MappingType::SufamiTurbo || slot >= 2)
     return {};
-  return std::span<const uint8_t>(sram_).subspan(slot * 0x4000, 0x4000);
+  return std::span<const uint8_t>(sram_).subspan(slotSramOffset_[slot], slotSramSize_[slot]);
 }
 
 void Cartridge::LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
   const auto size = SlotSramData(slot).size();
   if (size)
-    std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slot * 0x4000);
+    std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slotSramOffset_[slot]);
 }
 
 std::vector<uint8_t> Cartridge::SaveSlotBattery(unsigned slot) const {
@@ -980,10 +981,10 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
       return std::nullopt;
     return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
   case MappingType::SufamiTurbo: {
-    if (addr < 0x8000 || (bank & 0x7f) >= 0x60)
+    if ((bank & 0x7f) >= 0x60 || ((bank & 0x7f) < 0x40 && addr < 0x8000))
       return std::nullopt;
     const unsigned window = (bank & 0x7f) / 0x20;
-    const size_t linear = (size_t(bank & 0x1f) << 15) | (addr & 0x7fff);
+    const size_t linear = (size_t(bank) << 15) | (addr & 0x7fff);
     if (window == 0)
       return MirrorOffset(linear, std::min(rom_.size(), size_t(0x40000)));
     const unsigned slot = window - 1;
@@ -1117,14 +1118,14 @@ std::optional<size_t> Cartridge::ResolveSramOffset(uint32_t cpuAddress) const {
   case MappingType::Sdd1:
     return std::nullopt;
   case MappingType::SufamiTurbo: {
-    const unsigned mirroredBank = bank & 0x7f;
-    if (addr < 0x8000 || !((mirroredBank >= 0x60 && mirroredBank <= 0x63) ||
-                           (mirroredBank >= 0x70 && mirroredBank <= 0x73)))
+    const bool first = (bank >= 0x60 && bank <= 0x6f) || (bank >= 0xe0 && bank <= 0xef);
+    const bool second = (bank >= 0x70 && bank <= 0x7d) || bank >= 0xf0;
+    if (!first && !second)
       return std::nullopt;
-    const unsigned slot = mirroredBank >= 0x70 ? 1 : 0;
-    if (slotSize_[slot] == 0)
+    const unsigned slot = second ? 1 : 0;
+    if (slotSramSize_[slot] == 0)
       return std::nullopt;
-    return slot * 0x4000 + (addr & 0x3fff);
+    return slotSramOffset_[slot] + MirrorOffset(cpuAddress & 0xffffff, slotSramSize_[slot]);
   }
   case MappingType::LoRomLargeSram:
     if (bank >= 0x70 && bank <= 0x73) {
