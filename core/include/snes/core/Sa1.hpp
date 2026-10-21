@@ -130,6 +130,7 @@ private:
   void StoreAddress(uint8_t offset, uint32_t address) noexcept;
   bool RomOffset(uint32_t address, uint32_t &offset) const noexcept;
   uint8_t ReadRom(uint32_t offset, uint8_t openBus) const;
+  uint8_t ReadDmaRom(uint32_t source, uint8_t openBus) const;
   static size_t Mirror(size_t address, size_t size) noexcept;
   uint8_t ReadBwram(uint32_t offset, uint8_t openBus = 0) const;
   void WriteBwram(uint32_t offset, uint8_t value, Side side, bool dma = false);

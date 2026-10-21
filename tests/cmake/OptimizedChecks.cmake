@@ -17,6 +17,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_msu1_tests
   snes_msu1_integration_tests
   snes_cartridge_compatibility_tests
+  snes_cartridge_storage_tests
   snes_bus_scheduling_tests
   snes_sound_clocking_tests
   snes_dsp_batch_tests

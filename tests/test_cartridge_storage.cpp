@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "cartridge/Sa1DmaFixture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -186,6 +187,62 @@ void CommandMemoryReset() {
   cart->Reset();
   Check(Filled(cart->SramData(), 0), "Reset clears ST010 command work RAM");
 }
+
+void Sa1RomPortDma() {
+  struct Scene {
+    uint32_t source;
+    uint16_t count;
+    uint8_t mapping;
+    uint8_t first;
+    uint8_t second;
+    uint8_t vectorPattern = 0;
+    bool bwram = false;
+  };
+  for (const auto scene : {Scene{0x000100, 1, 0, 0x31, 0x31},
+                           {0x006100, 1, 0, 0x31, 0x31},
+                           {0x400100, 1, 0, 0x31, 0x31},
+                           {0x800100, 1, 0, 0x31, 0x31},
+                           {0x000100, 1, 0x84, 0x83, 0x83},
+                           {0x008100, 1, 0, 0x31, 0x31},
+                           {0xc00100, 1, 0, 0x31, 0x31},
+                           {0xffff80, 256, 0, 0x54, 0x31},
+                           {0x3f7f80, 256, 0, 0x54, 0xb4},
+                           {0x00ffea, 6, 0, 0, 0, 1},
+                           {0x007fea, 6, 0, 0, 0, 1},
+                           {0x00fffa, 6, 0, 0, 0, 2},
+                           {0x000100, 1, 0, 0x31, 0x31, 0, true},
+                           {0x00ffea, 6, 0, 0, 0, 1, true},
+                           {0xffff80, 256, 0, 0x54, 0x31, 0, true}})
+    for (bool pal : {false, true})
+      for (bool contention : {false, true}) {
+        Emulator::Config config;
+        config.entropyMode = EntropyMode::None;
+        config.entropySeed = 0;
+        config.sa1BusContention = contention;
+        auto machine = std::make_unique<Emulator>(config);
+        const auto fixture = sa1_test::RomPortDma(scene.source, scene.count, scene.mapping, pal,
+                                                  scene.vectorPattern != 0, scene.bwram);
+        Check(machine->LoadBroadcastCartridge(fixture.rom, fixture.pack),
+              "The ROM-port DMA guest loads through the cartridge slot");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(machine->Reset(), "The ROM-port DMA guest resets normally");
+          machine->StepFrame();
+          const auto *ram = machine->GetBus().WramData();
+          Check(ram[0x120] == 0xa5, "The cartridge DMA completes and the console reads its result");
+          constexpr std::array<uint8_t, 6> nativeVectors{0x56, 0x78, 0, 0, 0x9a, 0xbc};
+          constexpr std::array<uint8_t, 6> emulationVectors{0, 0, 0, 0xa0, 0, 0};
+          for (unsigned byte = 0; byte < scene.count; ++byte) {
+            const auto expected = scene.vectorPattern == 1   ? nativeVectors[byte]
+                                  : scene.vectorPattern == 2 ? emulationVectors[byte]
+                                  : byte < 128               ? scene.first
+                                                             : scene.second;
+            Check(ram[0x200 + byte] == expected,
+                  "ROM-source DMA uses its dedicated port across CPU windows and bank boundaries");
+          }
+        }
+      }
+}
 } // namespace
 int main() {
   try {
@@ -195,6 +252,7 @@ int main() {
     BroadcastStorage();
     ProcessorOwnedMemory();
     CommandMemoryReset();
+    Sa1RomPortDma();
     std::puts("Cartridge storage tests passed");
     return 0;
   } catch (const std::exception &error) {
