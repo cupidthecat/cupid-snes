@@ -636,8 +636,10 @@ void Emulator::ResetHardware(bool warm) {
   timing_.SetRenderCycle(ppu_.Configuration().model == Ppu::RenderModel::Scanline
                              ? ppu_.Configuration().renderCycle
                              : Timing::kRenderCycle);
-  const bool pal = detail::PalCountry(cartridge_->Header().country);
-  timing_.SetRegion(pal ? Region::PAL : Region::NTSC);
+  const auto region = config_.regionOverride.value_or(
+      detail::PalCountry(cartridge_->Header().country) ? Region::PAL : Region::NTSC);
+  const bool pal = region == Region::PAL;
+  timing_.SetRegion(region);
   cartridge_->SetPal(pal);
   cartridge_->SetGameBoyMixedAudioOutput([this](float left, float right) {
     if (collectingAudio_) {

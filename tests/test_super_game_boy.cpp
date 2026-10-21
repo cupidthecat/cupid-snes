@@ -420,17 +420,24 @@ void ConsoleClockBoundaries() {
   for (bool secondModel : {false, true})
     for (bool pal : {false, true})
       for (uint8_t divider = 0; divider < 4; ++divider, ++fixture) {
-        auto emulator = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
-        Check(emulator->LoadSuperGameBoy(Bios(secondModel, pal, uint8_t(0x80 | divider)),
-                                         Game(true), Boot()),
-              "A generated console program selects the adapter model, region and oscillator");
-        std::vector<uint8_t> battery(8192, 0);
-        Check(emulator->LoadSlotBattery(0, battery), "The timing fixture starts with a known save");
-        for (unsigned frame = 0; frame < 3; ++frame) {
-          emulator->StepFrame();
-          battery[0] = expected[fixture][frame];
-          Check(emulator->SaveSlotBattery(0) == battery,
-                "Console frame pauses retain the handheld's pending CPU bus interval");
+        for (bool overrideRegion : {false, true}) {
+          auto config = snes::tests::DeterministicConsoleConfig();
+          if (overrideRegion)
+            config.regionOverride = pal ? Region::PAL : Region::NTSC;
+          auto emulator = std::make_unique<Emulator>(config);
+          Check(emulator->LoadSuperGameBoy(
+                    Bios(secondModel, overrideRegion ? !pal : pal, uint8_t(0x80 | divider)),
+                    Game(true), Boot()),
+                "A generated console program selects the adapter model, region and oscillator");
+          std::vector<uint8_t> battery(8192, 0);
+          Check(emulator->LoadSlotBattery(0, battery),
+                "The timing fixture starts with a known save");
+          for (unsigned frame = 0; frame < 3; ++frame) {
+            emulator->StepFrame();
+            battery[0] = expected[fixture][frame];
+            Check(emulator->SaveSlotBattery(0) == battery,
+                  "Console frame pauses retain the handheld's pending CPU bus interval");
+          }
         }
       }
 }

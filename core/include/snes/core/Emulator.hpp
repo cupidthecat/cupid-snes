@@ -77,6 +77,8 @@ public:
     Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
     bool gameCompatibilityFixes = true;
     ExpansionDevice expansionDevice = ExpansionDevice::None;
+    // Unset selects the cartridge's declared region.
+    std::optional<Region> regionOverride;
   };
 
   explicit Emulator();

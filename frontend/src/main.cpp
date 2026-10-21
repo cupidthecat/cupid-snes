@@ -34,9 +34,24 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
   std::optional<uint8_t> competitionDip;
+  std::optional<snes::core::Region> regionOverride;
   auto expansion = snes::core::Emulator::ExpansionDevice::None;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
+    if (value.starts_with("--region=")) {
+      const auto name = value.substr(9);
+      if (name == "auto")
+        regionOverride.reset();
+      else if (name == "ntsc")
+        regionOverride = snes::core::Region::NTSC;
+      else if (name == "pal")
+        regionOverride = snes::core::Region::PAL;
+      else {
+        std::cerr << "Region must be auto, ntsc, or pal\n";
+        return EXIT_FAILURE;
+      }
+      continue;
+    }
     if (value.starts_with("--expansion=")) {
       const auto name = value.substr(12);
       if (name == "none")
@@ -117,6 +132,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "       Port 2 also supports scope, justifier, justifiers, and rifle\n";
     std::cerr << "       --firmware-dir=<directory> supplies cartridge processor firmware\n";
     std::cerr << "       --expansion=none|satellaview selects the console expansion device\n";
+    std::cerr << "       --region=auto|ntsc|pal selects the console hardware region\n";
     return EXIT_FAILURE;
   }
   if (devices[0] == ControllerDevice::Mouse && devices[1] == ControllerDevice::Mouse) {
@@ -136,6 +152,7 @@ int main(int argc, char *argv[]) {
                                              sufami && arguments.size() == 4 ? arguments[3] : ""};
 
   snes::core::Emulator::Config emulatorConfig;
+  emulatorConfig.regionOverride = regionOverride;
   emulatorConfig.expansionDevice = expansion;
   if (!firmwareDirectory.empty()) {
     auto firmware = std::make_shared<snes::core::CartridgeFirmware>();

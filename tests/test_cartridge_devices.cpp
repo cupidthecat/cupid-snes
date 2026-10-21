@@ -955,6 +955,43 @@ void Regions() {
   }
 }
 
+void RegionOverride() {
+  for (Region region : {Region::NTSC, Region::PAL}) {
+    auto config = snes::tests::DeterministicConsoleConfig();
+    config.regionOverride = region;
+    auto emu = std::make_unique<Emulator>(config);
+    for (uint8_t country : {uint8_t(1), uint8_t(2)}) {
+      auto image = Rom();
+      image[0] = 0x80;
+      image[1] = 0xfe;
+      image[0x7fd9] = country;
+      Check(emu->LoadCartridge(image), "Load a cartridge on selected regional hardware");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(emu->Reset(), "Selected regional hardware survives reset");
+        const bool pal = region == Region::PAL;
+        Check(emu->LoadedCartridge()->Header().country == country,
+              "Hardware selection preserves the cartridge region metadata");
+        Check(emu->GetTiming().GetRegion() == region &&
+                  emu->GetTiming().MasterClockHz() ==
+                      (pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz) &&
+                  emu->GetTiming().VPeriod() == (pal ? 312 : 262),
+              "Startup selection overrides the header's console clock and field length");
+        Check((emu->GetBus().Read(0x213f) & 0x10) == (pal ? 0x10 : 0),
+              "PPU status reports the selected hardware region");
+        const auto first = emu->StepFrame();
+        const auto second = emu->StepFrame();
+        Check(second.masterCycles - first.masterCycles == (pal ? 425568 : 357368),
+              "Selected hardware retains its frame timing after reload and reset");
+        const auto target =
+            second.masterCycles * Smp::kClockFrequency / emu->GetTiming().MasterClockHz();
+        Check(emu->GetSmp().CycleCount() >= target && emu->GetSmp().CycleCount() < target + 20,
+              "Sound synchronization uses the selected hardware clock");
+      }
+    }
+  }
+}
+
 void CombinedSufami() {
   auto bios = Rom(0x40000);
   const std::string_view signature = "BANDAI SFC-ADX";
@@ -1147,6 +1184,7 @@ int main() {
     Sufami();
     Clock();
     Regions();
+    RegionOverride();
     CombinedSufami();
     BroadcastBoards();
     InvalidMapperMetadata();
