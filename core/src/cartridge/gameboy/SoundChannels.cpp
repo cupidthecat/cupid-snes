@@ -188,7 +188,8 @@ void SoundChannels::PulseNoise(bool narrow) {
   if (narrow)
     noise_ = uint16_t((noise_ & ~0x40) | (feedback << 6));
   channels_[3].high = !(noise_ & 1);
-  UpdateAmplitude(3);
+  if (channels_[3].enabled)
+    UpdateAmplitude(3);
 }
 
 uint16_t SoundChannels::NoiseTaps() const noexcept {

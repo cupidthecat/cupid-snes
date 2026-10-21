@@ -440,6 +440,33 @@ void LateSampleConsumesPendingSound() {
           "A late sample consumes pending sound after delayed activation exceeds the batch budget");
     }
 }
+
+void InactiveNoiseWritesKeepOutput() {
+  for (bool secondModel : {false, true}) {
+    System written(secondModel), control(secondModel);
+    for (System *system : {&written, &control}) {
+      system->audio.Write(0xff26, 0x80);
+      system->audio.Write(0xff24, 0x77);
+      system->audio.Write(0xff25, 0x88);
+      system->audio.Write(0xff20, 0x3f);
+      system->audio.Write(0xff21, 0x90);
+      system->audio.Write(0xff22, 0);
+      system->audio.Write(0xff23, 0xc0);
+      system->Step(8192);
+      Check((system->audio.Read(0xff26) & 8) == 0,
+            "The noise length expires while its DAC remains enabled");
+    }
+    for (unsigned i = 0; i < 64; ++i) {
+      written.audio.Write(0xff22, i & 1 ? 8 : 0);
+      written.Step(4);
+      control.Step(4);
+    }
+    written.Step(8192);
+    control.Step(8192);
+    Check(written.samples == control.samples,
+          "Polynomial writes to an inactive noise channel preserve its audible output");
+  }
+}
 } // namespace
 
 int main() {
@@ -459,6 +486,7 @@ int main() {
     SweepOverflowAcrossBusBatches();
     ResetDividerSampleBoundaries();
     LateSampleConsumesPendingSound();
+    InactiveNoiseWritesKeepOutput();
     std::puts("Handheld stereo rendering, filtering and clock checks passed");
     return 0;
   } catch (const std::exception &error) {
