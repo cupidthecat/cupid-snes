@@ -59,12 +59,9 @@ void SdlAudioOutput::Submit(const snes::core::AudioBuffer &buffer) {
     throw std::length_error("Audio buffer is too large");
   }
   // After a stall, collect a fresh buffer before restarting the device.
-  const int available = SDL_GetAudioStreamAvailable(stream_);
-  if (available < 0) {
-    throw std::runtime_error(std::string("Audio availability query failed: ") + SDL_GetError());
-  }
+  const bool pendingOutput = HasPendingOutput();
   // SDL may retain a few input frames for the resampler even after output drains.
-  if (playing_ && available == 0) {
+  if (playing_ && !pendingOutput) {
     if (!SDL_PauseAudioStreamDevice(stream_)) {
       throw std::runtime_error(std::string("Audio pause failed: ") + SDL_GetError());
     }
@@ -101,6 +98,15 @@ int SdlAudioOutput::QueuedBytes() const {
     throw std::runtime_error(std::string("Audio queue query failed: ") + SDL_GetError());
   }
   return bytes;
+}
+
+bool SdlAudioOutput::HasPendingOutput() const {
+  if (!stream_)
+    return false;
+  const int available = SDL_GetAudioStreamAvailable(stream_);
+  if (available < 0)
+    throw std::runtime_error(std::string("Audio availability query failed: ") + SDL_GetError());
+  return available != 0;
 }
 
 bool SdlAudioOutput::NeedsSamples() const {

@@ -53,6 +53,9 @@ public:
   /// Returns queued bytes in the input format (stereo float).
   int QueuedBytes() const;
 
+  /// Whether the stream can currently supply samples to the device.
+  bool HasPendingOutput() const;
+
   /// The frame loop should wait while enough audio is already queued.
   bool NeedsSamples() const;
 
