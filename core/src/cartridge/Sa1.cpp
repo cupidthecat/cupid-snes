@@ -21,6 +21,10 @@ bool IramAddress(uint32_t address) noexcept {
   const auto offset = address & 0xffff;
   return !(address & 0x400000) && (offset < 0x800 || (offset >= 0x3000 && offset < 0x3800));
 }
+bool CpuSharedAddress(uint32_t address) noexcept {
+  return (address & 0x40fe00) == 0x002200 || (address & 0x40f800) == 0x003000 ||
+         (address & 0x40e000) == 0x006000 || (address & 0xf00000) == 0x400000;
+}
 } // namespace
 
 Sa1::Sa1(std::span<const uint8_t> rom, std::span<uint8_t> bwram) : rom_(rom), bwram_(bwram) {
@@ -69,10 +73,14 @@ void Sa1::SetPal(bool enabled) noexcept {
 }
 
 uint8_t Sa1::ReadCpu(uint32_t address, uint8_t openBus) {
+  if (CpuSharedAddress(address))
+    RunPending();
   return ReadMemory(address & 0xffffff, openBus, Side::Cpu);
 }
 
 void Sa1::WriteCpu(uint32_t address, uint8_t value) {
+  if (CpuSharedAddress(address))
+    RunPending();
   WriteMemory(address & 0xffffff, value, Side::Cpu);
 }
 
@@ -123,10 +131,17 @@ uint8_t Sa1::ReadBitByte(uint32_t address) const {
   return 0xff;
 }
 
-void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing,
+                  bool synchronize) {
   cpuAddress_ = cpuAddress & 0xffffff;
   cpuRefreshing_ = cpuRefreshing;
   requestedClocks_ += masterClocks;
+  if (!synchronize && !busContention_)
+    return;
+  RunPending();
+}
+
+void Sa1::RunPending() {
   if (executedClocks_ >= requestedClocks_)
     return;
   if (!execution_) {

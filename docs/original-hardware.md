@@ -64,6 +64,8 @@ SPC7110 calendar state uses a separate 24-byte `.rtc` representation: sixteen ni
 
 Console startup disables SA-1 shared-bus contention by default. `Emulator::Config::sa1BusContention` enables conflict waits for ROM, BW-RAM and IRAM. Cold power, warm reset and cartridge reload apply the selection. Direct `Sa1` users keep contention enabled unless they call `SetBusContention(false)`.
 
+Without contention, console bus intervals accumulate SA-1 clock credit. The processor runs at scanline handoffs and before CPU or DMA accesses to its registers, IRAM or BW-RAM. Ordinary ROM reads retain the deferred work. Contention mode runs the processor after each console bus interval. Standalone `Sa1::Advance` calls synchronize by default; callers can defer execution explicitly without losing elapsed time. Generated console programs check interrupt raster counters and shared-memory DMA reads across both regions, timing modes and cold or warm starts.
+
 ## CPU, DMA, and audio timing
 
 CPU reads, writes, and internal cycles advance hardware individually. Registers can observe an event reached during an earlier access in the same instruction. IRQ entry uses the interrupt-mask value sampled before the final cycle, including CLI, SEI, REP, SEP, and PLP. Masked IRQs still release WAI.

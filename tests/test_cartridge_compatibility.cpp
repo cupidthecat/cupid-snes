@@ -2,6 +2,7 @@
 #include "audio/MsuFixture.hpp"
 #include "gsu/IrqProgram.hpp"
 #include "gsu/IrqSignalProgram.hpp"
+#include "sa1/DeferredIrqProgram.hpp"
 #include "sa1/MailboxProgram.hpp"
 #include "snes/core/SnesCpu.hpp"
 
@@ -282,6 +283,73 @@ void StartupEntropyProfiles() {
     }
   }
 }
+void Sa1DeferredDma() {
+  constexpr std::array<std::array<uint8_t, 12>, 2> expected{
+      {{0x5a, 0x5a, 0x5a, 0x5a, 0, 0x5a, 0x5a, 0x5a, 0, 0, 0, 0x5a},
+       {0x5a, 0x5a, 0x5a, 0x5a, 0, 0, 0x5a, 0x5a, 0, 0, 0, 0x5a}}};
+  for (bool contention : {false, true})
+    for (bool pal : {false, true}) {
+      unsigned scene = 0;
+      for (uint8_t count : {1, 7, 31})
+        for (unsigned delay : {0, 5, 19, 63}) {
+          auto config = snes::tests::DeterministicConsoleConfig();
+          config.sa1BusContention = contention;
+          auto machine = std::make_unique<Emulator>(config);
+          Check(machine->LoadCartridge(snes::tests::sa1::DeferredDmaProgram(count, delay, pal)),
+                "The deferred shared-memory DMA cartridge loads");
+          for (bool warm : {false, true}) {
+            if (warm)
+              Check(machine->Reset(), "Reset repeats DMA handoffs with the selected timing");
+            machine->StepFrame({false, false, false});
+            Check(machine->GetCpu()->regs().stp &&
+                      machine->GetBus().WramData()[0x1000] == expected[contention ? 1 : 0][scene],
+                  "DMA reads synchronize shared memory independently of the last CPU bus address");
+          }
+          ++scene;
+        }
+    }
+}
+
+void Sa1DeferredInterrupts() {
+  constexpr std::array<std::array<std::array<uint8_t, 4>, 24>, 2> expected{
+      {{{{23, 22, 3, 2}, {26, 26, 3, 2}, {24, 24, 3, 2}, {23, 22, 3, 2}, {25, 24, 1, 0},
+         {23, 22, 1, 0}, {26, 26, 1, 0}, {24, 24, 1, 0}, {25, 24, 1, 0}, {23, 22, 1, 0},
+         {26, 26, 1, 0}, {24, 24, 1, 0}, {24, 24, 2, 2}, {22, 22, 2, 2}, {25, 24, 2, 2},
+         {24, 24, 2, 2}, {24, 24, 2, 2}, {22, 22, 2, 2}, {25, 24, 2, 2}, {24, 24, 2, 2},
+         {23, 22, 3, 2}, {26, 26, 3, 2}, {24, 24, 3, 2}, {23, 22, 3, 2}}},
+       {{{0, 0, 4, 4},     {3, 2, 4, 4},     {1, 0, 4, 4},     {0, 0, 4, 4},     {3, 2, 1, 0},
+         {6, 6, 1, 0},     {3, 2, 1, 0},     {3, 2, 1, 0},     {30, 30, 1, 0},   {28, 28, 1, 0},
+         {31, 30, 1, 0},   {27, 26, 1, 0},   {124, 124, 1, 0}, {127, 126, 1, 0}, {125, 124, 1, 0},
+         {124, 124, 1, 0}, {171, 170, 2, 2}, {169, 168, 2, 2}, {167, 166, 2, 2}, {172, 172, 2, 2},
+         {0, 0, 4, 4},     {82, 83, 3, 2},   {79, 79, 3, 2},   {0, 0, 4, 4}}}}};
+  for (bool contention : {false, true})
+    for (bool pal : {false, true}) {
+      unsigned scene = 0;
+      for (uint8_t count : {0, 1, 7, 31, 127, 255})
+        for (unsigned delay : {0, 1, 5, 19}) {
+          auto config = snes::tests::DeterministicConsoleConfig();
+          config.sa1BusContention = contention;
+          auto machine = std::make_unique<Emulator>(config);
+          Check(machine->LoadCartridge(snes::tests::sa1::DeferredIrqProgram(count, delay, pal)),
+                "The deferred interrupt cartridge loads");
+          for (bool warm : {false, true}) {
+            if (warm)
+              Check(machine->Reset(), "Reset restarts deferred interrupt delivery");
+            machine->StepFrame({false, false, false});
+            const auto *memory = machine->GetBus().WramData() + 0x1000;
+            const auto &counters = expected[contention ? 1 : 0][scene];
+            Check(std::equal(counters.begin(), counters.end(), memory) && memory[8] == 0xa5 &&
+                      machine->GetCpu()->regs().stp && !machine->LoadedCartridge()->CpuIrqPending(),
+                  "Interrupt delivery preserves raster timing, acknowledgement and completion");
+            for (unsigned byte = 4; byte < 16; ++byte)
+              Check(memory[byte] == (byte == 8 ? 0xa5 : 0),
+                    "Interrupt results preserve the complete guest output area");
+          }
+          ++scene;
+        }
+    }
+}
+
 void Sa1ConsoleMailbox() {
   constexpr std::array<std::array<uint8_t, 3>, 32> expected{
       {{1, 1, 170},  {1, 1, 174},  {1, 1, 177},  {1, 1, 181}, {2, 1, 187}, {1, 1, 174}, {1, 1, 177},
@@ -399,6 +467,8 @@ int main() {
   try {
     SuperFxIrqOutput();
     SuperFxIrqHandoffs();
+    Sa1DeferredDma();
+    Sa1DeferredInterrupts();
     Sa1ConsoleMailbox();
     StartupAndSound();
     SelectionAndReload();

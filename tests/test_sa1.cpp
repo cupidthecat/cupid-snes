@@ -53,6 +53,51 @@ struct Fixture {
   }
 };
 
+void DeferredExecution() {
+  for (uint32_t address :
+       {0x7e1000u, 0x008000u, 0xc00000u, 0x503000u, 0x600000u, 0x002200u, 0x8023ffu, 0x003000u,
+        0xbf37ffu, 0x006000u, 0xbf7fffu, 0x400000u, 0x4fffffu}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(false);
+    f.chip.Advance(128, address, false, false);
+    Check(f.chip.ReadSa1(0x3000) == 0, "Charging clocks does not execute the deferred processor");
+    f.chip.ReadCpu(address);
+    const bool shared = address == 0x002200 || address == 0x8023ff || address == 0x003000 ||
+                        address == 0xbf37ff || address == 0x006000 || address == 0xbf7fff ||
+                        address == 0x400000 || address == 0x4fffff;
+    Check(f.chip.ReadSa1(0x3000) == (shared ? 0x5a : 0),
+          "Deferred execution resumes for CPU shared memory and registers only");
+    Check(f.chip.MasterClocks() == 128, "Deferring execution retains every requested clock");
+    f.chip.Advance(0, 0x7e1000, false, true);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a && f.chip.MasterClocks() == 128,
+          "A forced handoff consumes retained debt without adding time");
+  }
+  for (uint32_t address : {0x003001u, 0x006000u, 0x400000u}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(false);
+    f.chip.Advance(128, 0x7e1000, false, false);
+    f.chip.WriteCpu(address, 0);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a,
+          "A mapped write consumes debt independently of the last CPU address");
+  }
+  for (bool contention : {false, true}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(contention);
+    f.chip.Advance(128, 0x7e1000, false, contention ? false : true);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a,
+          "Standalone advancement and contended execution retain immediate handoffs");
+  }
+}
+
 void ResetControlFlow() {
   for (bool native : {false, true}) {
     for (uint8_t opcode : {uint8_t{0}, uint8_t{2}}) {
@@ -1520,6 +1565,7 @@ void ExecutableDmaAndTimer() {
 int main() {
   try {
     ResetControlFlow();
+    DeferredExecution();
     BusPhases();
     ExecutionLifecycle();
     ResetControl();

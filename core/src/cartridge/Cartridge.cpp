@@ -741,9 +741,9 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
 }
 
 void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing,
-                                bool synchronizeHandheld) {
+                                bool synchronizeProcessors) {
   if (gameBoy_)
-    gameBoy_->Advance(masterClocks, synchronizeHandheld);
+    gameBoy_->Advance(masterClocks, synchronizeProcessors);
   if (bsx_)
     bsx_->Advance(masterClocks);
   if (memoryPackDevice_)
@@ -759,7 +759,7 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
   if (necDsp_)
     necDsp_->Advance(masterClocks);
   if (sa1_)
-    sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing);
+    sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing, synchronizeProcessors);
   if (superFx_)
     superFx_->AdvanceMasterClocks(masterClocks);
 }

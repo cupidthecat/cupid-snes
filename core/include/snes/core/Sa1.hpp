@@ -29,7 +29,9 @@ public:
   void WriteCpu(uint32_t address, uint8_t value);
   // The console address latch determines contention with cartridge memory.
   // After the first Advance, advancement, Reset and destruction use that thread.
-  void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
+  // Deferred calls without contention retain work until shared access or a handoff.
+  void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
+               bool synchronize = true);
   bool CpuIrqPending() const noexcept;
   void SetPal(bool enabled) noexcept;
   void SetBusContention(bool enabled) noexcept {
@@ -57,6 +59,7 @@ public:
   }
 
 private:
+  void RunPending();
   enum class Side { Cpu, Sa1 };
   static constexpr uint64_t AccumulatorMask = (uint64_t{1} << 40) - 1;
 
