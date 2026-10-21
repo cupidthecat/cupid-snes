@@ -65,6 +65,18 @@ void ImmediatePresentation() {
   video.Present(frame);
   Check(ReadPixel(video.Renderer()) == 0xff0000, "Default output still presents synchronously");
 }
+
+void ExplicitVsyncSelection() {
+  SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
+  SdlVideoOutput::Config config;
+  config.scale = 1;
+  config.vsync = false;
+  SdlVideoOutput video(config);
+  int interval = -1;
+  Check(SDL_GetRenderVSync(video.Renderer(), &interval) && interval == 0,
+        "Explicit pacing disables renderer synchronization despite a global hint");
+  SDL_ResetHint(SDL_HINT_RENDER_VSYNC);
+}
 } // namespace
 
 int main() {
@@ -78,6 +90,7 @@ int main() {
   try {
     DeferredPresentation();
     ImmediatePresentation();
+    ExplicitVsyncSelection();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     result = 1;

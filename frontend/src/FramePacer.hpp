@@ -38,9 +38,10 @@ public:
     periodNanoseconds_ = whole;
     deadline_ += whole;
 
-    // A slow frame or suspended window starts a fresh cadence. Replaying a
-    // backlog of deadlines would display several pictures almost at once.
-    if (deadline_ < now)
+    // Keep the clock phase when computation runs slightly past its deadline.
+    // A full interval of lateness starts a fresh cadence, preventing a backlog
+    // of overdue pictures after a slow frame or suspended window.
+    if (deadline_ < now && now - deadline_ >= whole)
       deadline_ = now;
     return deadline_;
   }

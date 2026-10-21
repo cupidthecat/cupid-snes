@@ -92,6 +92,28 @@ void DelayedPresentation() {
         "Small presentation jitter does not accumulate as clock drift");
 }
 
+void DelayedComputation() {
+  const auto clocks = Timing::kMasterClocksPerFrameNTSC;
+  const double period = double(clocks) * 1'000'000'000 / Timing::kMasterClockHz;
+  const uint64_t epoch = 1'000'000'000;
+  for (uint64_t delay : {8'000'000, 20'000'000, 100'000'000}) {
+    FramePacer pacer;
+    pacer.Schedule(epoch, clocks, Timing::kMasterClockHz, 40);
+    const auto ready = epoch + uint64_t(period) + delay;
+    const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz, 40);
+    if (double(delay) < period)
+      Check(std::abs(double(due - epoch) - period) < 1.1,
+            "Computation slightly past its deadline retains the console clock");
+    else
+      Check(due == ready, "A full-picture computation stall starts a fresh cadence");
+    pacer.Presented(ready);
+    const auto next = pacer.Schedule(ready + 2'000'000, clocks, Timing::kMasterClockHz, 40);
+    const double elapsed = double(next - (double(delay) < period ? epoch : ready));
+    Check(std::abs(elapsed - period * (double(delay) < period ? 2 : 1)) < 1.1,
+          "Computation recovery retains short delays and clears long stalls");
+  }
+}
+
 // Simulate audio callbacks that drain a 21.3 ms block at once, with a device
 // clock slightly faster or slower than the console. This used to release
 // multiple frames at one callback followed by a long wait at the next one.
@@ -157,6 +179,35 @@ void RendererDelaysKeepAudioFed() {
     }
   }
 }
+
+void VariableComputationKeepsAudioFed() {
+  const auto clocks = Timing::kMasterClocksPerFrameNTSC;
+  const double frameNs = double(clocks) * 1'000'000'000 / Timing::kMasterClockHz;
+  for (double deviceSpeed : {0.996, 1.0, 1.004}) {
+    FramePacer pacer;
+    double queuedMs = 50;
+    uint64_t shown = 1'000'000'000;
+    double nextCallback = double(shown) + 10'000'000 / deviceSpeed;
+    pacer.Schedule(shown, 0, Timing::kMasterClockHz, 40);
+    const auto drain = [&](uint64_t until) {
+      while (nextCallback <= double(until)) {
+        queuedMs -= 10;
+        Check(queuedMs > 0, "Variable computation within the average budget keeps audio fed");
+        nextCallback += 10'000'000 / deviceSpeed;
+      }
+    };
+    for (unsigned frame = 0; frame < 12'000; ++frame) {
+      const auto ready = shown + (15 + frame % 3) * 1'000'000;
+      drain(ready);
+      queuedMs += frameNs / 1'000'000;
+      const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz, queuedMs);
+      shown = std::max(ready, due) + 350'000;
+      drain(shown);
+      pacer.Presented(shown);
+      Check(queuedMs < 80, "Variable computation keeps the audio backlog bounded");
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -164,8 +215,10 @@ int main() {
     ConsoleClockDeadlines();
     StallsAndMultipleFields();
     DelayedPresentation();
+    DelayedComputation();
     BatchedAudioDemand();
     RendererDelaysKeepAudioFed();
+    VariableComputationKeepsAudioFed();
     std::puts("Console clock, audio callback, drift and stall pacing checks passed");
     return 0;
   } catch (const std::exception &error) {
