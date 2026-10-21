@@ -188,12 +188,15 @@ void Emulator::AttachMsu1(const std::string &path) {
   auto msu1 = std::make_unique<Msu1>();
   if (msu1->Open(path)) {
     msu1_ = std::move(msu1);
+    // Complete pending cartridge work before accessing the shared audio timeline.
     const auto slot = bus_.RegisterHandler(
         [this](uint32_t address, uint8_t openBus) {
+          SynchronizeCoprocessors(true);
           SynchronizeExpansionAudio(timing_.MasterClocksElapsed());
           return msu1_->Read(address, openBus);
         },
         [this](uint32_t address, uint8_t value) {
+          SynchronizeCoprocessors(true);
           SynchronizeExpansionAudio(timing_.MasterClocksElapsed());
           msu1_->Write(address, value);
         });

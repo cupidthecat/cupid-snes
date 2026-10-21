@@ -1,9 +1,11 @@
 #include "ConsoleConfig.hpp"
+#include "audio/AdapterMsuFixture.hpp"
 #include "audio/MsuFixture.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -364,26 +366,9 @@ void AdapterPackFileLoading() {
   bios[0x7fd6] = 0xe3;
   bios[0x7fd7] = 9;
   const auto path = fixture.Write("game.sfc", bios);
-  std::array<uint8_t, 256> boot{};
-  boot[0] = 0xc3;
-  boot[1] = 0xfc;
-  boot[0xfc] = 0x3e;
-  boot[0xfd] = 1;
-  boot[0xfe] = 0xe0;
-  boot[0xff] = 0x50;
+  const auto boot = msu_test::AdapterBoot();
   const auto bootPath = fixture.Write("boot.bin", boot);
-  std::vector<uint8_t> game(32768);
-  std::vector<uint8_t> sound;
-  for (const auto [reg, value] : std::initializer_list<std::pair<uint8_t, uint8_t>>{{0x26, 0x80},
-                                                                                    {0x24, 0x77},
-                                                                                    {0x25, 0xff},
-                                                                                    {0x11, 0x40},
-                                                                                    {0x12, 0xf3},
-                                                                                    {0x13, 0x87},
-                                                                                    {0x14, 0x83}})
-    sound.insert(sound.end(), {0x3e, value, 0xe0, reg});
-  sound.insert(sound.end(), {0x18, 0xfe});
-  std::copy(sound.begin(), sound.end(), game.begin() + 0x100);
+  const auto game = msu_test::AdapterGame();
   const auto gamePath = fixture.Write("handheld.gb", game);
   auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadSuperGameBoyFromFiles(path.string(), gamePath.string(), bootPath.string()),
@@ -413,6 +398,50 @@ void AdapterPackFileLoading() {
         "All three streams restart after reset without stale queues");
 }
 
+void CoupledClockChanges() {
+  constexpr uint64_t expected[2][2][2]{
+      {{0x88a3da94088690d4, 0xca96f9d9ba2c2d06}, {0x9d50c92b33630286, 0x211eef054c7fe5d6}},
+      {{0x958672057bf3838f, 0x7475398b6858728c}, {0x6216bbfda0892c03, 0xc11a49eb039d50f5}}};
+  for (unsigned reads = 0; reads < 2; ++reads)
+    for (unsigned pal = 0; pal < 2; ++pal) {
+      Fixture fixture;
+      SceneAssets(fixture, 2);
+      const auto bios =
+          fixture.Write("game.sfc", msu_test::ClockedAdapterRom(pal != 0, reads != 0));
+      const auto game = fixture.Write("handheld.gb", msu_test::AdapterGame());
+      const auto boot = fixture.Write("boot.bin", msu_test::AdapterBoot());
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+      Check(machine->LoadSuperGameBoyFromFiles(bios.string(), game.string(), boot.string()),
+            "Load three sound clocks and guest-driven divider changes");
+      Audio audio;
+      machine->AttachAudioOutput(&audio);
+      for (unsigned warm = 0; warm < 2; ++warm) {
+        if (warm)
+          Check(machine->Reset(), "Reset the coupled sound clocks");
+        audio.samples.clear();
+        for (unsigned field = 0; field < 16; ++field)
+          machine->StepFrame();
+        Check(machine->GetBus().Read(0x7e01ff) == 0xa5,
+              "The console guest finishes all running divider changes");
+        Check(audio.samples.size() == (pal     ? 10073u
+                                       : reads ? 8455u
+                                               : 8454u) *
+                                          2,
+              "Expansion accesses synchronize queued handheld output before divider changes");
+        uint64_t digest = 0xcbf29ce484222325;
+        for (const auto sample : audio.samples) {
+          const auto bits = std::bit_cast<uint32_t>(sample);
+          for (unsigned byte = 0; byte < 4; ++byte) {
+            digest ^= uint8_t(bits >> (byte * 8));
+            digest *= 0x100000001b3;
+          }
+        }
+        Check(digest == expected[reads][pal][warm],
+              "All three streams retain exact samples through clock changes and reset");
+      }
+    }
+}
+
 void StreamRounding() {
   audio::StreamMixer mixer;
   std::vector<std::array<float, 2>> output;
@@ -434,6 +463,7 @@ int main() {
   try {
     StreamRounding();
     StreamBurstBoundaries();
+    CoupledClockChanges();
     MappingAndLifecycle();
     ClockedPrograms();
     ThreeStreamClipping();
