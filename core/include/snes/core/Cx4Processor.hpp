@@ -20,7 +20,10 @@ public:
   ~Cx4Processor();
   void Reset();
   void SetPal(bool pal);
-  void Advance(uint32_t masterClocks);
+  void SetDelayedSync(bool enabled) noexcept {
+    delayedSync_ = enabled;
+  }
+  void Advance(uint32_t masterClocks, bool synchronize = true);
   uint8_t Read(uint32_t address, uint8_t openBus);
   void Write(uint32_t address, uint8_t value);
   void MapCpu(MemoryBus &bus, uint8_t slot) const;
@@ -51,6 +54,7 @@ private:
   uint32_t masterFrequency_ = 21'477'272;
   int64_t balance_ = 0;
   bool irqLine_ = false;
+  bool delayedSync_ = false;
 };
 
 } // namespace snes::core

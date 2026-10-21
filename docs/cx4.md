@@ -6,7 +6,9 @@ With a supplied data ROM, Cx4 cartridges execute their HG51B program from the ga
 
 `cx4.data.rom` contains 1,024 little-endian 24-bit words, for 3,072 bytes total. Put it in the adjacent `firmware` directory or select a directory with `--firmware-dir`. Core callers can populate `CartridgeFirmware` with `FirmwareKind::Cx4`. A data ROM appended to the game takes precedence over the catalog and is removed before calculating the cartridge CRC. Firmware assets are not included.
 
-The processor runs at 20 MHz against the console's NTSC or PAL master clock. Execution can suspend within instructions, cache fills, delayed bus accesses, DMA, and timed suspension. CPU accesses observe state at the current clock rather than waiting for a whole operation to finish.
+The processor runs at 20 MHz against the console's NTSC or PAL master clock. Default console execution accumulates clock credit during CPU bus intervals and runs the processor at scanline handoffs. CPU ROM, RAM and register accesses use the state already reached by the worker; they do not force pending execution. `Emulator::Config::cx4DelayedSync = false` selects execution at every CPU bus interval and access. Cold power, warm reset and cartridge replacement retain the selection.
+
+Execution can suspend within instructions, cache fills, delayed bus accesses, DMA, and timed suspension. Standalone `Cx4Processor::Advance` and `Cartridge::AdvanceHardware` calls synchronize by default. A deferred call retains all elapsed time for the next forced handoff. Direct processor instances keep per-access synchronization unless delayed mode is selected explicitly.
 
 When the worker is suspended in a halted idle cycle with no pending activity, clock intervals advance arithmetically to the same final processor-clock edge. Active operations still execute their individual clocks. A stop request does not discard an instruction already fetched before that request.
 

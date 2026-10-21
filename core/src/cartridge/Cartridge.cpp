@@ -535,6 +535,11 @@ void Cartridge::SetSa1BusContention(bool enabled) {
     sa1_->SetBusContention(enabled);
 }
 
+void Cartridge::SetCx4DelayedSync(bool enabled) {
+  if (cx4Processor_)
+    cx4Processor_->SetDelayedSync(enabled);
+}
+
 void Cartridge::Reset() {
   if (gameBoy_)
     gameBoy_->Reset();
@@ -753,7 +758,7 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
   if (spc7110_)
     spc7110_->Advance(masterClocks);
   if (cx4Processor_)
-    cx4Processor_->Advance(masterClocks);
+    cx4Processor_->Advance(masterClocks, synchronizeProcessors);
   if (armDsp_)
     armDsp_->Advance(masterClocks);
   if (necDsp_)

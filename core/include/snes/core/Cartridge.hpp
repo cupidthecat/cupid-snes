@@ -181,6 +181,7 @@ public:
   void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
                        bool synchronizeProcessors = true);
   void SetSa1BusContention(bool enabled);
+  void SetCx4DelayedSync(bool enabled);
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {

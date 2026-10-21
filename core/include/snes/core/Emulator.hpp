@@ -72,6 +72,7 @@ public:
     uint8_t cpuRevision = 2;
     bool sa1BusContention = false;
     bool superFxDelayedSync = true;
+    bool cx4DelayedSync = true;
     Smp::DspMode dspMode = Smp::DspMode::Batch32;
     Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
     bool gameCompatibilityFixes = true;

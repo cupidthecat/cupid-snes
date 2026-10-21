@@ -1,5 +1,7 @@
 #include "ConsoleConfig.hpp"
+#include "cx4/IrqProgram.hpp"
 #include "snes/core/Cartridge.hpp"
+#include "snes/core/SnesCpu.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -12,6 +14,107 @@ namespace {
 void Check(bool value, const char *message) {
   if (!value)
     throw std::runtime_error(message);
+}
+void ConsoleInterruptTiming() {
+  constexpr std::array<std::array<uint8_t, 5>, 240> expected{
+      {{23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {15, 15, 5, 4, 0},    {49, 49, 5, 4, 0},    {113, 112, 6, 6, 0},  {8, 9, 7, 6, 0},
+       {15, 15, 5, 4, 0},    {49, 49, 5, 4, 0},    {113, 112, 6, 6, 0},  {8, 9, 7, 6, 0},
+       {15, 15, 5, 4, 0},    {49, 49, 5, 4, 0},    {113, 112, 6, 6, 0},  {8, 9, 7, 6, 0},
+       {20, 21, 5, 4, 0},    {55, 55, 5, 4, 0},    {119, 118, 6, 6, 0},  {14, 15, 7, 6, 0},
+       {48, 49, 5, 4, 0},    {81, 81, 5, 4, 0},    {156, 156, 6, 6, 0},  {41, 41, 7, 6, 0},
+       {80, 81, 5, 4, 0},    {30, 30, 6, 6, 0},    {178, 178, 6, 6, 0},  {73, 73, 7, 6, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {23, 22, 6, 6, 0},    {25, 24, 6, 6, 0},    {25, 24, 6, 6, 0},    {22, 22, 8, 8, 0},
+       {9, 9, 5, 4, 0},      {44, 45, 5, 4, 0},    {108, 108, 6, 6, 0},  {3, 3, 7, 6, 0},
+       {9, 9, 5, 4, 0},      {44, 45, 5, 4, 0},    {108, 108, 6, 6, 0},  {3, 3, 7, 6, 0},
+       {9, 9, 5, 4, 0},      {44, 45, 5, 4, 0},    {108, 108, 6, 6, 0},  {3, 3, 7, 6, 0},
+       {15, 15, 5, 4, 0},    {49, 49, 5, 4, 0},    {113, 112, 6, 6, 0},  {8, 9, 7, 6, 0},
+       {42, 43, 5, 4, 0},    {76, 77, 5, 4, 0},    {151, 150, 6, 6, 0},  {36, 37, 7, 6, 0},
+       {74, 75, 5, 4, 0},    {25, 24, 6, 6, 0},    {173, 172, 6, 6, 0},  {68, 69, 7, 6, 0},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {192, 192, 6, 6, 24}, {186, 186, 8, 8, 24},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {187, 186, 6, 6, 24}, {180, 180, 8, 8, 24},
+       {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},   {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},
+       {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},   {163, 162, 6, 6, 20}, {157, 156, 8, 8, 20},
+       {175, 174, 6, 6, 21}, {168, 168, 8, 8, 21}, {229, 228, 6, 6, 23}, {222, 222, 8, 8, 23},
+       {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},   {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},
+       {30, 30, 6, 6, 16},   {23, 22, 8, 8, 16},   {163, 162, 6, 6, 20}, {157, 156, 8, 8, 20},
+       {163, 162, 6, 6, 20}, {157, 156, 8, 8, 20}, {217, 216, 6, 6, 22}, {211, 210, 8, 8, 22},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {192, 192, 6, 6, 24}, {186, 186, 8, 8, 24},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {187, 186, 6, 6, 24}, {180, 180, 8, 8, 24},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19},
+       {192, 192, 6, 6, 19}, {185, 184, 8, 8, 19}, {2, 3, 6, 6, 21},     {251, 250, 8, 8, 21},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19},
+       {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19}, {250, 250, 6, 6, 21}, {243, 242, 8, 8, 21},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19},
+       {192, 192, 6, 6, 19}, {185, 184, 8, 8, 19}, {2, 3, 6, 6, 21},     {251, 250, 8, 8, 21},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},
+       {21, 20, 6, 6, 13},   {26, 26, 8, 8, 14},   {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19},
+       {188, 188, 6, 6, 19}, {181, 180, 8, 8, 19}, {250, 250, 6, 6, 21}, {243, 242, 8, 8, 21},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {192, 192, 6, 6, 24}, {186, 186, 8, 8, 24},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},
+       {27, 26, 6, 6, 18},   {26, 26, 8, 8, 18},   {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22},
+       {127, 126, 6, 6, 22}, {120, 120, 8, 8, 22}, {187, 186, 6, 6, 24}, {180, 180, 8, 8, 24}}};
+  unsigned scene = 0;
+  for (unsigned probe = 0; probe < 7; ++probe)
+    for (bool pal : {false, true})
+      for (bool immediate : {false, true}) {
+        constexpr std::array<uint8_t, 6> counts{0, 1, 7, 31, 127, 251};
+        constexpr std::array<uint8_t, 3> probeCounts{0, 7, 251};
+        constexpr std::array<unsigned, 4> delays{0, 1, 5, 19};
+        constexpr std::array<unsigned, 2> probeDelays{0, 19};
+        const auto selectedCounts =
+            probe == 0 ? std::span<const uint8_t>(counts) : std::span<const uint8_t>(probeCounts);
+        const auto selectedDelays =
+            probe == 0 ? std::span<const unsigned>(delays) : std::span<const unsigned>(probeDelays);
+        for (uint8_t count : selectedCounts)
+          for (unsigned delay : selectedDelays) {
+            auto config = snes::tests::DeterministicConsoleConfig();
+            config.cx4DelayedSync = !immediate;
+            auto machine = std::make_unique<Emulator>(config);
+            Check(machine->LoadCartridge(snes::tests::cx4::IrqProgram(
+                      count, delay, pal, snes::tests::cx4::Probe(probe))),
+                  "The graphics interrupt cartridge loads");
+            for (bool warm : {false, true}) {
+              if (warm)
+                Check(machine->Reset(), "Warm reset restarts graphics interrupt timing");
+              machine->StepFrame({false, false, false});
+              const auto *memory = machine->GetBus().WramData() + 0x1100;
+              const auto &result = expected[scene];
+              Check(std::equal(result.begin(), result.end(), memory) && memory[8] == 0xa5 &&
+                        machine->GetCpu()->regs().stp &&
+                        !machine->LoadedCartridge()->CpuIrqPending(),
+                    "Graphics IRQ timing and CPU polling follow the selected handoffs");
+              for (unsigned byte = 5; byte < 16; ++byte)
+                Check(memory[byte] == (byte == 8 ? 0xa5 : 0),
+                      "Graphics interrupt results retain the complete guest output area");
+            }
+            ++scene;
+          }
+      }
+  Check(scene == expected.size(), "Every interrupt timing and CPU access case executes");
 }
 std::vector<uint8_t> Image() {
   std::vector<uint8_t> image(0x80c00, 0);
@@ -51,6 +154,29 @@ void ProgramExecution() {
     cart->Write(0x7f51, 1);
     Check(!cart->CpuIrqPending(), "Disabling processor IRQ clears the CPU IRQ line");
   }
+}
+void DeferredHandoffs() {
+  for (bool delayed : {false, true})
+    for (bool pal : {false, true}) {
+      auto cart = Cartridge::FromRomImage(Image(), nullptr, nullptr, nullptr);
+      cart->SetCx4DelayedSync(delayed);
+      cart->SetPal(pal);
+      for (bool warm : {false, true}) {
+        if (warm)
+          cart->Reset();
+        cart->Write(0x7f4a, 0x90);
+        cart->Write(0x7f4f, 2);
+        cart->AdvanceHardware(5000, 0x7e0000, false, false);
+        Check(cart->Read(0x7f80) == (delayed ? 0 : 0x2a) && cart->CpuIrqPending() == !delayed,
+              "Deferred CPU reads retain pending graphics work until a forced handoff");
+        cart->Write(0x7f80, 0xa5);
+        Check(cart->Read(0x7f80) == 0xa5 && cart->CpuIrqPending() == !delayed,
+              "CPU writes preserve their order ahead of deferred processor execution");
+        cart->AdvanceHardware(0, 0x7e0000, false, true);
+        Check(cart->Read(0x7f80) == (delayed ? 0x2a : 0xa5) && cart->CpuIrqPending(),
+              "A zero-clock handoff consumes retained debt without replacing elapsed time");
+      }
+    }
 }
 void DmaLengthLatch() {
   auto cart = Cartridge::FromRomImage(Image(), nullptr, nullptr, nullptr);
@@ -234,6 +360,8 @@ void IdleResumeAndPendingInstruction() {
 } // namespace
 int main() {
   try {
+    ConsoleInterruptTiming();
+    DeferredHandoffs();
     ProgramExecution();
     DmaLengthLatch();
     MappingAndRomOwnership();
