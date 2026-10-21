@@ -769,7 +769,7 @@ void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool
   if (cx4Processor_)
     cx4Processor_->Advance(masterClocks, synchronizeProcessors);
   if (armDsp_)
-    armDsp_->Advance(masterClocks);
+    armDsp_->Advance(masterClocks, synchronizeProcessors);
   if (necDsp_)
     necDsp_->Advance(masterClocks);
   if (sa1_)

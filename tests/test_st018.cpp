@@ -3,6 +3,7 @@
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -164,6 +165,67 @@ void WorkRamReset() {
         "Console reset clears ST018 work RAM while retaining battery RAM");
 }
 
+void ScanlineExecution() {
+  constexpr uint32_t expected[2][5]{{40138, 99597, 159054, 218511, 277968},
+                                    {40608, 112065, 183522, 254978, 326435}};
+  for (unsigned pal = 0; pal < 2; ++pal) {
+    auto image = Image();
+    image[0x7fd9] = pal ? 2 : 1;
+    const uint8_t console[]{0x78, 0xa9, 0x80, 0x8d, 0x00, 0x21, 0xdb};
+    std::copy(std::begin(console), std::end(console), image.begin());
+    const uint32_t firmware[]{0xe3a0020e, 0xe3a01000, 0xe2811001, 0xe5801000, 0xeafffffc};
+    for (unsigned i = 0; i < std::size(firmware); ++i)
+      for (unsigned byte = 0; byte < 4; ++byte)
+        image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+    for (bool scanline : {false, true}) {
+      auto config = snes::tests::DeterministicConsoleConfig();
+      if (scanline) {
+        config.ppu.model = Ppu::RenderModel::Scanline;
+        config.dspMode = Smp::DspMode::Batch32;
+      }
+      auto machine = std::make_unique<Emulator>(config);
+      Check(machine->LoadCartridge(image), "The continuously running ARM firmware loads");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(machine->Reset(), "The counter cartridge resets");
+        for (auto count : expected[pal]) {
+          machine->StepFrame();
+          const auto ram = machine->LoadedCartridge()->ArmWorkRamData();
+          Check(ram.size() == 16384, "ARM work RAM is available without a bridge access");
+          const uint32_t actual = uint32_t(ram[0]) | (uint32_t(ram[1]) << 8) |
+                                  (uint32_t(ram[2]) << 16) | (uint32_t(ram[3]) << 24);
+          Check(actual == count, "Scanline handoffs complete pending ARM work before each frame");
+        }
+      }
+    }
+  }
+}
+
+void ProcessorHandoffs() {
+  auto image = Image();
+  const uint32_t firmware[]{0xe3a0020e, 0xe3a01000, 0xe2811001, 0xe5801000, 0xeafffffc};
+  for (unsigned i = 0; i < std::size(firmware); ++i)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+  for (bool pal : {false, true}) {
+    St018Processor chip{std::span(image).subspan(0x80000)};
+    chip.SetPal(pal);
+    chip.Advance(70000, true);
+    const auto ram = chip.RamData();
+    const auto before = std::array<uint8_t, 4>{ram[0], ram[1], ram[2], ram[3]};
+    chip.Advance(100);
+    Check(std::equal(before.begin(), before.end(), ram.begin()),
+          "Independent ARM work can remain deferred between handoffs");
+    chip.Advance(0, true);
+    Check(!std::equal(before.begin(), before.end(), ram.begin()),
+          "A zero-clock handoff completes work accrued since the preceding handoff");
+    const auto after = std::array<uint8_t, 4>{ram[0], ram[1], ram[2], ram[3]};
+    chip.Advance(0, true);
+    Check(std::equal(after.begin(), after.end(), ram.begin()),
+          "Repeated handoffs do not advance a caught-up processor");
+  }
+}
+
 void WorkRamEntropy() {
   constexpr uint32_t seeds[]{0, 1, 0x12345678};
   constexpr uint8_t expected[3][3][2]{{{0, 0}, {0, 0}, {0, 0}},
@@ -209,6 +271,8 @@ int main() {
     MappedFirmwarePorts();
     ConsoleMailboxExchange();
     WorkRamReset();
+    ScanlineExecution();
+    ProcessorHandoffs();
     WorkRamEntropy();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

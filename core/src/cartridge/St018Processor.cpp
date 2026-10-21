@@ -40,12 +40,12 @@ void St018Processor::SetPal(bool pal) {
   masterFrequency_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
 }
 
-void St018Processor::Advance(uint32_t masterClocks) {
+void St018Processor::Advance(uint32_t masterClocks, bool synchronize) {
   balance_ -= int64_t(masterClocks) * 21'440'000;
   // Only the bridge is shared with the CPU. Batch independent execution between
-  // bridge accesses, with a bounded clock debt to keep each catch-up interval small.
+  // bridge accesses and scanline handoffs, with a bounded clock debt.
   constexpr int64_t maximumDebt = int64_t(4096) * 21'440'000;
-  if (balance_ < -maximumDebt)
+  if (synchronize || balance_ < -maximumDebt)
     Synchronize();
 }
 

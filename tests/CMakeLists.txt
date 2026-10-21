@@ -391,4 +391,5 @@ add_custom_target(snes_optimized_checks
     snes_cartridge_processor_tests
     snes_cx4_processor_tests
     snes_sa1_tests
+    snes_st018_tests
 )

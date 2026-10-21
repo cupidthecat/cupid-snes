@@ -192,6 +192,9 @@ public:
   bool HasArmProcessor() const noexcept {
     return bool(armDsp_);
   }
+  std::span<const uint8_t> ArmWorkRamData() const noexcept {
+    return armDsp_ ? armDsp_->RamData() : std::span<const uint8_t>{};
+  }
   bool HasCx4Processor() const noexcept {
     return bool(cx4Processor_);
   }
