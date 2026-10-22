@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "cartridge/Spc7110DmaFixture.hpp"
 #include "snes/core/Cartridge.hpp"
 
 #include <algorithm>
@@ -137,6 +138,111 @@ void ReverseDmaParameters() {
         }
       }
 }
+
+void InterleavedDmaAndHdma() {
+  constexpr std::array<uint64_t, 48> expected{
+      0xef29b4c383e56d78ULL, 0x657d2c99b2f7820bULL, 0x99e6c0a583caa8e3ULL, 0xd1c563928d8e3cf7ULL,
+      0x9a351069f1832a5eULL, 0x37e7ba8ad7615ca1ULL, 0xfd57c16b44fc603dULL, 0x4227ee4f6b57d501ULL,
+      0xf1e7b4b4d5691172ULL, 0xbc87ec7a0d8bb513ULL, 0xb9017e20a8cd2e73ULL, 0xbbc6ce3fe6b7511fULL,
+      0xfda8e63f5e39fabbULL, 0x2340d23da7252aacULL, 0x6f7ef6091d971cddULL, 0x4d3225c2c5595a3fULL,
+      0x89e4d87d000395f4ULL, 0xd46be306df99be5bULL, 0xd9ac2d579823cf26ULL, 0xe41ae87a41af79c4ULL,
+      0x35521fdafe24c311ULL, 0xa75270bc45728052ULL, 0x45d2e5c60e7cdb5bULL, 0x6cb77f17cbd57a25ULL,
+      0xd223cfeeab6298f1ULL, 0x9b0e6052ad9f3cdaULL, 0xc6dd8735a5d96c2bULL, 0x9647a9f0933caf85ULL,
+      0xa5056c827708d9c2ULL, 0x570e6f0c39972d31ULL, 0x35c33b91fbc44b94ULL, 0x2623602a2f2df532ULL,
+      0xa35e172f5c8c9f87ULL, 0x7fe82a7b69e741d8ULL, 0x91068e7127f392f9ULL, 0xa487e11b47c4c85bULL,
+      0xa6d312d03408f141ULL, 0xa6d312d03408f141ULL, 0x4f4dbea0427bbbd7ULL, 0x4f4dbea0427bbbd7ULL,
+      0x6a52a4b40cc80a19ULL, 0x6a52a4b40cc80a19ULL, 0x42376c600ae35503ULL, 0x42376c600ae35503ULL,
+      0xeb32c0a76f3581a1ULL, 0xeb32c0a76f3581a1ULL, 0x76ab9ac7b1aea7e7ULL, 0x76ab9ac7b1aea7e7ULL};
+  for (unsigned index = 0; index < expected.size(); ++index) {
+    const auto transfer = static_cast<spc7110_test::Transfer>(index / 12);
+    const unsigned mode = (index / 4) % 3;
+    const unsigned alignment = (index / 2) % 2 ? 18 : 0;
+    const bool pal = index & 1;
+    const auto program = spc7110_test::DmaTimeProgram(transfer, mode, alignment, pal);
+    Emulator::Config config;
+    config.entropyMode = EntropyMode::None;
+    config.entropySeed = 0;
+    auto machine = std::make_unique<Emulator>(config);
+    Check(machine->LoadCartridge(program.image), "The interleaved cartridge DMA guest loads");
+    Check(machine->LoadedCartridge()->Header().chip == EnhancementChip::Spc7110,
+          "The guest selects the clocked cartridge processor");
+    for (bool warm : {false, true}) {
+      if (warm)
+        Check(machine->Reset(), "The interleaved cartridge DMA guest resets");
+      for (unsigned field = 0; field < 8; ++field)
+        machine->StepFrame();
+      const auto *ram = machine->GetBus().WramData();
+      Check(ram[0x120] == 0xa5, "The interleaved cartridge DMA guest completes");
+      const auto *control = ram + 0x10000 + program.controlOffset;
+      Check(control[0] == 0x62 && control[1] == 0xe0 && control[2] == 0,
+            "HDMA consumes every descriptor and the indirect byte after termination");
+      if (transfer != spc7110_test::Transfer::Hdma) {
+        const uint16_t cursor = transfer == spc7110_test::Transfer::Reverse ? 0x4830 : 0x4800;
+        Check(control[3] == uint8_t(cursor) && control[4] == uint8_t(cursor >> 8) &&
+                  control[5] == 0 && control[6] == 0 && control[7] == 0,
+              "DMA retains the selected address direction and consumes its entire byte count");
+      }
+      uint64_t digest = 0xcbf29ce484222325;
+      for (unsigned offset = 0; offset < 0x20000; ++offset)
+        digest = (digest ^ ram[offset]) * 0x100000001b3;
+      if (digest != expected[index]) {
+        std::fprintf(stderr, "DMA guest %u (%s) work RAM: %016llx\n", index, warm ? "warm" : "cold",
+                     static_cast<unsigned long long>(digest));
+        throw std::runtime_error("Interleaved cartridge operations retain complete guest work RAM");
+      }
+    }
+  }
+}
+
+void ArithmeticDmaEdges() {
+  constexpr std::array<uint64_t, 48> expected{
+      0x95ca40db136b0f2aULL, 0x95ca40db136b0f2aULL, 0xa79e1a8605f86c4cULL, 0xa79e1a8605f86c4cULL,
+      0x337bc9faf9b11b69ULL, 0x337bc9faf9b11b69ULL, 0xc65d0c6639e09ed3ULL, 0xc65d0c6639e09ed3ULL,
+      0x8bd616df674c6ad4ULL, 0x8bd616df674c6ad4ULL, 0x98250145ae83f832ULL, 0x98250145ae83f832ULL,
+      0xe088e647ffa3ced7ULL, 0xe088e647ffa3ced7ULL, 0x54ac73041917230dULL, 0x54ac73041917230dULL,
+      0x2bc70b7efccfe2c5ULL, 0x2bc70b7efccfe2c5ULL, 0xa1be19e6b5d1386fULL, 0xa1be19e6b5d1386fULL,
+      0xb041301ca5fd786aULL, 0xb041301ca5fd786aULL, 0xa66cd6a9cf0d8becULL, 0xa66cd6a9cf0d8becULL,
+      0xa2a051509530c74cULL, 0xa2a051509530c74cULL, 0x8b0e734caea76ab2ULL, 0x8b0e734caea76ab2ULL,
+      0xb410e862022b5cbfULL, 0xb410e862022b5cbfULL, 0xfa139fff09fa12cdULL, 0xfa139fff09fa12cdULL,
+      0xa2a051509530c74cULL, 0xa2a051509530c74cULL, 0x8b0e734caea76ab2ULL, 0x8b0e734caea76ab2ULL,
+      0xb410e862022b5cbfULL, 0xb410e862022b5cbfULL, 0xfa139fff09fa12cdULL, 0xfa139fff09fa12cdULL,
+      0xf349c1556bf2e29cULL, 0xf349c1556bf2e29cULL, 0x199311c2f83569d6ULL, 0x199311c2f83569d6ULL,
+      0xc707248fcc9216cfULL, 0xc707248fcc9216cfULL, 0x4be0ad9c39de5979ULL, 0x4be0ad9c39de5979ULL};
+  for (unsigned index = 0; index < expected.size(); ++index) {
+    const bool divide = index >= 24;
+    const unsigned mode = (index % 24) / 8;
+    const unsigned alignment = (index / 2) % 4;
+    const bool pal = index & 1;
+    const auto program = spc7110_test::ArithmeticDmaProgram(divide, mode, alignment, pal);
+    Emulator::Config config;
+    config.entropyMode = EntropyMode::None;
+    config.entropySeed = 0;
+    auto machine = std::make_unique<Emulator>(config);
+    Check(machine->LoadCartridge(program.image), "The chained arithmetic DMA guest loads");
+    for (bool warm : {false, true}) {
+      if (warm)
+        Check(machine->Reset(), "The chained arithmetic DMA guest resets");
+      for (unsigned field = 0; field < 8; ++field)
+        machine->StepFrame();
+      const auto *ram = machine->GetBus().WramData();
+      Check(ram[0x120] == 0xa5, "The chained arithmetic DMA guest completes");
+      for (unsigned sample = 0; sample < 16; ++sample) {
+        const uint8_t status = uint8_t((sample < (divide ? 4u : 3u) ? 0x80 : 0) | (divide ? 0 : 1));
+        Check(ram[0x1201 + sample] == status,
+              "Chained DMA observes arithmetic completion at the expected byte");
+      }
+      const auto *control = ram + 0x10000 + program.controlOffset;
+      const std::array<uint8_t, 8> completed{
+          uint8_t(divide ? 0x27 : 0x25), 0x48, 0, 0, 0x2f, 0x48, 0, 0};
+      Check(std::equal(completed.begin(), completed.end(), control),
+            "Both chained DMA channels finish their fixed-address transfers");
+      uint64_t digest = 0xcbf29ce484222325;
+      for (unsigned offset = 0; offset < 0x20000; ++offset)
+        digest = (digest ^ ram[offset]) * 0x100000001b3;
+      Check(digest == expected[index], "Chained arithmetic DMA retains complete guest work RAM");
+    }
+  }
+}
 } // namespace
 int main() {
   try {
@@ -145,9 +251,12 @@ int main() {
     HeaderSpeedFlags();
     ReservedMode();
     ReverseDmaParameters();
+    InterleavedDmaAndHdma();
+    ArithmeticDmaEdges();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }
   std::puts("SPC7110 timing tests passed");
+  return 0;
 }
