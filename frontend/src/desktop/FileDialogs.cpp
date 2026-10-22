@@ -1,4 +1,5 @@
 #include "FileDialogs.hpp"
+#include "NativeDialogs.hpp"
 
 #include <mutex>
 #include <stdexcept>
@@ -12,6 +13,37 @@
 #endif
 
 namespace snes::frontend {
+void detail::CloseOwnedDialogs(SDL_Window *window) {
+#ifdef _WIN32
+  const auto parent = static_cast<HWND>(SDL_GetPointerProperty(
+      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+  if (!parent)
+    return;
+  struct Scope {
+    HWND parent;
+    DWORD process;
+  } scope{parent, 0};
+  GetWindowThreadProcessId(parent, &scope.process);
+  EnumWindows(
+      [](HWND popup, LPARAM context) -> BOOL {
+        const auto &scope = *reinterpret_cast<const Scope *>(context);
+        DWORD process = 0;
+        GetWindowThreadProcessId(popup, &process);
+        if (process != scope.process || popup == scope.parent)
+          return TRUE;
+        for (auto owner = GetWindow(popup, GW_OWNER); owner; owner = GetWindow(owner, GW_OWNER)) {
+          if (owner == scope.parent) {
+            PostMessageW(popup, WM_CLOSE, 0, 0);
+            break;
+          }
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&scope));
+#else
+  (void)window;
+#endif
+}
 namespace {
 constexpr SDL_DialogFileFilter consoleFilters[] = {{"Console cartridges", "sfc;smc;bin"},
                                                    {"All files", "*"}};
@@ -48,13 +80,7 @@ struct FileDialogs::Impl {
   std::optional<Result> immediate;
 
   void CloseNative() {
-#ifdef _WIN32
-    const auto parent = static_cast<HWND>(SDL_GetPointerProperty(
-        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-    const auto popup = GetLastActivePopup(parent);
-    if (popup && popup != parent && GetWindow(popup, GW_OWNER) == parent)
-      PostMessageW(popup, WM_CLOSE, 0, 0);
-#endif
+    detail::CloseOwnedDialogs(window);
   }
 
   static void SDLCALL Selected(void *userdata, const char *const *files, int) {

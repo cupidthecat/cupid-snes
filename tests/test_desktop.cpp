@@ -3,6 +3,7 @@
 #include "desktop/DesktopMenu.hpp"
 #include "desktop/DesktopUi.hpp"
 #include "desktop/FileDialogs.hpp"
+#include "desktop/NativeDialogs.hpp"
 #include "snes/core/FilePath.hpp"
 
 #include <array>
@@ -507,6 +508,46 @@ void Screenshots(SdlVideoOutput &video) {
 
 void CancelPicker(SdlVideoOutput &video) {
 #ifdef _WIN32
+  const auto instance = GetModuleHandleW(nullptr);
+  WNDCLASSW windowClass{};
+  windowClass.hInstance = instance;
+  windowClass.lpszClassName = L"CupidDialogCancellationTest";
+  windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM word, LPARAM data) -> LRESULT {
+    if (message == WM_CLOSE) {
+      DestroyWindow(window);
+      return 0;
+    }
+    return DefWindowProcW(window, message, word, data);
+  };
+  Check(RegisterClassW(&windowClass) != 0, "Register owned cancellation test window");
+  const auto parent = static_cast<HWND>(SDL_GetPointerProperty(
+      SDL_GetWindowProperties(video.Window()), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+  const auto owned = CreateWindowExW(WS_EX_NOACTIVATE, windowClass.lpszClassName, L"Owned dialog",
+                                     WS_POPUP, 0, 0, 32, 32, parent, nullptr, instance, nullptr);
+  const auto separate =
+      CreateWindowExW(WS_EX_NOACTIVATE, windowClass.lpszClassName, L"Separate test window",
+                      WS_POPUP, 0, 0, 32, 32, nullptr, nullptr, instance, nullptr);
+  struct WindowCleanup {
+    HWND owned, separate;
+    HINSTANCE instance;
+    ~WindowCleanup() {
+      if (IsWindow(owned))
+        DestroyWindow(owned);
+      if (IsWindow(separate))
+        DestroyWindow(separate);
+      UnregisterClassW(L"CupidDialogCancellationTest", instance);
+    }
+  } cleanup{owned, separate, instance};
+  Check(owned && separate && GetLastActivePopup(parent) == parent,
+        "The owned test popup is inactive and absent from the parent's active-popup lookup");
+  snes::frontend::detail::CloseOwnedDialogs(video.Window());
+  const auto closeDeadline = SDL_GetTicks() + 1000;
+  while (IsWindow(owned) && SDL_GetTicks() < closeDeadline) {
+    SDL_PumpEvents();
+    SDL_Delay(1);
+  }
+  Check(!IsWindow(owned) && IsWindow(separate),
+        "Cancellation finds an inactive owned popup and leaves a separate window open");
   snes::frontend::FileDialogs dialogs(video.Window());
   dialogs.Begin(snes::frontend::LaunchRequest::Kind::Cartridge);
   dialogs.Cancel();
@@ -518,7 +559,8 @@ void CancelPicker(SdlVideoOutput &video) {
     if (!result)
       SDL_Delay(1);
   }
-  Check(result && !result->request && result->error.empty() && !dialogs.Active(),
+  Check(result.has_value(), "Native picker did not acknowledge cancellation within five seconds");
+  Check(!result->request && result->error.empty() && !dialogs.Active(),
         "Immediate cancellation waits for the native picker callback before releasing its parent");
 #else
   (void)video;

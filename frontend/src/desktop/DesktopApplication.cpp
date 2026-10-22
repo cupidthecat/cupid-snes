@@ -489,8 +489,13 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       } else {
         pacer.Reset();
       }
-      if (emulator->CurrentFrame() % 300 == 0)
-        session.Flush();
+      if (emulator->CurrentFrame() % 300 == 0) {
+        try {
+          session.Flush();
+        } catch (const std::exception &error) {
+          report(error);
+        }
+      }
     }
   } catch (const std::exception &error) {
     std::cerr << "Playback failed: " << error.what() << '\n';
