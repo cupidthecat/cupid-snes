@@ -1,6 +1,8 @@
 // Regression coverage for battery RAM and clock persistence.
 
+#include "ConsoleConfig.hpp"
 #include "SaveRamFile.hpp"
+#include "cartridge/St010CommandFixture.hpp"
 #include "snes/core/BsMemory.hpp"
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Timing.hpp"
@@ -9,10 +11,74 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 
 using snes::frontend::SaveRamFile;
 namespace fs = std::filesystem;
+namespace {
+void CommandStorage(const fs::path &directory) {
+  using namespace snes::core;
+  const auto check = [](bool condition, const char *message) {
+    if (!condition)
+      throw std::runtime_error(message);
+  };
+  for (bool pal : {false, true}) {
+    for (bool existing : {false, true}) {
+      auto imagePath = directory / (pal ? "command-pal.sfc" : "command-ntsc.sfc");
+      const auto image = st010_test::StorageGuest(pal);
+      std::ofstream file(imagePath, std::ios::binary);
+      file.write(reinterpret_cast<const char *>(image.data()), image.size());
+      file.close();
+      check(bool(file), "The command storage guest is written to disk");
+      auto savePath = imagePath;
+      savePath.replace_extension(existing ? ".seeded.srm" : ".srm");
+      if (existing) {
+        std::vector<uint8_t> initial(4096);
+        for (size_t i = 0; i < initial.size(); ++i)
+          initial[i] = uint8_t(i * 37 + 0x53);
+        SaveRamFile(savePath).Flush(initial);
+      }
+      SaveRamFile save(savePath);
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+      for (unsigned phase = 0; phase < 3; ++phase) {
+        if (phase == 1) {
+          check(machine->Reset(), "The command storage guest resets");
+        } else {
+          check(machine->LoadCartridgeFromFile(imagePath.string()),
+                "The command storage guest loads through the file API");
+          check(!machine->LoadedCartridge()->HasSignalProcessor(),
+                "The storage guest selects command execution without firmware");
+          machine->LoadSram(save.Load(machine->LoadedCartridge()->SramData().size()));
+        }
+        for (unsigned field = 0; field < 8; ++field)
+          machine->StepFrame();
+        const auto *wram = machine->GetBus().WramData();
+        check(wram[0x120] == 0xa5, "The command storage guest completes");
+        check(std::all_of(wram + 0x10000, wram + 0x11000, [](uint8_t value) { return value == 0; }),
+              "ST010 command startup ignores the battery file and clears every work RAM byte");
+        std::array<uint8_t, 4096> expected{};
+        expected[0] = 3;
+        expected[2] = 7;
+        expected[0x10] = 42;
+        expected[0x20] = 6;
+        expected[0x21] = 5;
+        expected[0x123] = 0x69;
+        check(std::equal(expected.begin(), expected.end(), wram + 0x11000),
+              "The storage guest executes commands in independent work RAM");
+        const auto stored = machine->LoadedCartridge()->SramData();
+        check(stored.size() == 4096 && std::all_of(stored.begin(), stored.end(),
+                                                   [](uint8_t value) { return value == 0; }),
+              "ST010 command battery output retains the inactive processor RAM image");
+        save.Flush(stored);
+        check(SaveRamFile(savePath).Load(4096) == std::vector<uint8_t>(4096),
+              "ST010 command saves serialize cleared processor RAM after execution and reset");
+      }
+    }
+  }
+}
+} // namespace
+
 int main() {
   const auto directory =
       fs::temp_directory_path() / ("snes-save-test-" + std::to_string(SDL_GetTicksNS()));
@@ -53,6 +119,7 @@ int main() {
     }
     check(rejected, "Reject a save with the wrong size");
     check(SaveRamFile(path).Load(data.size()) == data, "Rejecting a save preserves its contents");
+    CommandStorage(directory);
     std::vector<uint8_t> handheldImage(32768);
     handheldImage[0x147] = 0x10;
     handheldImage[0x149] = 2;

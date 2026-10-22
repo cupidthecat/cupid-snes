@@ -121,6 +121,19 @@ inline std::vector<uint8_t> PortGuest(bool pal) {
   return guest.Finish();
 }
 
+inline std::vector<uint8_t> StorageGuest(bool pal) {
+  Guest guest(pal);
+  guest.code.insert(guest.code.end(), {0x18, 0xfb, 0xc2, 0x10});
+  guest.Copy(0x680000, 0x7f0000);
+  guest.Write(0x680123, 0x69);
+  guest.Write(0x680000, 3);
+  guest.Write(0x680002, 7);
+  guest.Write(0x680020, 6);
+  guest.Write(0x680021, 0x85);
+  guest.Copy(0xe80000, 0x7f1000);
+  return guest.Finish();
+}
+
 inline std::vector<uint8_t> CommandGuest(bool pal) {
   Guest guest(pal);
   guest.code.insert(guest.code.end(), {0x18, 0xfb, 0xc2, 0x10});

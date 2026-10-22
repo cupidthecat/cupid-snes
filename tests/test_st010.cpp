@@ -211,9 +211,11 @@ void CartridgeMapping() {
         "Mirrored command registers execute through the bus");
   const auto saved = emu->LoadedCartridge()->SramData();
   cart->LoadSram(saved);
-  Check(cart->Read(0x680123) == 0x69 && cart->Read(0xef7010) == 42,
-        "Save restoration shares device RAM");
-  Check(cart->Read(0x680020) == 6, "Save loading restores the shared command byte");
+  Check(saved.size() == 4096 &&
+            std::all_of(saved.begin(), saved.end(), [](uint8_t value) { return value == 0; }),
+        "Command execution leaves the inactive processor's battery RAM cleared");
+  Check(cart->Read(0x680123) == 0 && cart->Read(0xef7010) == 0 && cart->Read(0x680020) == 0,
+        "Loading a battery image leaves command work RAM unchanged");
   auto sibling = Rom(9);
   std::string error;
   Check(!emu->LoadCartridge(std::span<const uint8_t>(image).first(4096), &error),

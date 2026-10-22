@@ -830,6 +830,11 @@ std::span<const uint8_t> Cartridge::SramData() const noexcept {
     return competition_->SaveRam();
   if (necDsp_ && necDsp_->HasSaveRam())
     return necDsp_->SaveRam();
+  if (header_.mapping == MappingType::St010) {
+    // Command work RAM is separate from the inactive processor's battery image.
+    static constexpr std::array<uint8_t, 0x1000> processorRam{};
+    return processorRam;
+  }
   return sram_;
 }
 
@@ -842,6 +847,8 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
     necDsp_->LoadRam(data);
     return;
   }
+  if (header_.mapping == MappingType::St010)
+    return;
   if (sram_.empty()) {
     return;
   }

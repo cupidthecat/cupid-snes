@@ -186,7 +186,8 @@ void CommandMemoryReset() {
   cart->Write(0x680123, 0x57);
   Check(cart->Read(0x680123) == 0x57, "The command device writes its shared work RAM");
   cart->Reset();
-  Check(Filled(cart->SramData(), 0), "Reset clears ST010 command work RAM");
+  Check(cart->Read(0x680123) == 0 && Filled(cart->SramData(), 0),
+        "Reset clears ST010 command work RAM and retains its cleared battery image");
 }
 
 void Sa1RomPortDma() {
