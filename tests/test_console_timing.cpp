@@ -324,10 +324,39 @@ void TimingBatchEdges() {
     }
   }
 }
+void DisabledTimerPolling() {
+  for (bool nmi : {false, true}) {
+    IrqController irq;
+    const uint8_t enabled = nmi ? 0xb0 : 0x30;
+    const uint8_t disabled = nmi ? 0x80 : 0;
+    irq.SetHTime(1);
+    irq.SetVTime(225);
+    irq.NmitimenUpdate(enabled);
+    irq.Poll(2, 225, 225, 1364);
+    Check(irq.NmiLine() && irq.NmiHold(), "VBlank starts the NMI register hold");
+    irq.PollTimer(18, 225, 1364);
+    Check(irq.IrqLine() && irq.IrqHold(), "Matching enabled timer starts the IRQ hold");
+    irq.NmitimenUpdate(disabled);
+    Check(!irq.IrqLine() && !irq.IrqTransition() && irq.IrqHold(),
+          "Disabling timer IRQ clears the line before its hold expires");
+    irq.PollTimer(18, 225, 1364);
+    Check(!irq.IrqHold() && !irq.Timeup(), "Disabled timer polling releases its hold");
+    Check(irq.NmiHold() && irq.Rdnmi() && irq.NmiLine(),
+          "Timer-only polling retains the independent NMI hold");
+    irq.NmitimenUpdate(enabled);
+    irq.PollTimer(18, 225, 1364);
+    Check(irq.IrqHold() && irq.Timeup() && irq.IrqLine(),
+          "Reenabled timer recognizes the same match as a new edge");
+    irq.NmitimenUpdate(disabled);
+    irq.Poll(22, 225, 225, 1364);
+    Check(!irq.NmiHold() && irq.NmiTest() == nmi,
+          "Combined polling still expires NMI hold while timer IRQ is disabled");
+  }
+}
 } // namespace
 
 int main() {
-  const std::array<std::pair<const char *, std::function<void()>>, 11> tests{{
+  const std::array<std::pair<const char *, std::function<void()>>, 12> tests{{
       {"CPU read phases", CpuReadEdges},
       {"CPU write phases", CpuWriteEdges},
       {"controller divider", JoypadClockEdges},
@@ -335,6 +364,7 @@ int main() {
       {"interlace sampling", InterlaceSampling},
       {"IRQ field history", IrqFieldHistory},
       {"IRQ line history", IrqLineHistory},
+      {"disabled timer polling", DisabledTimerPolling},
       {"automatic input edges", AutomaticInputEdges},
       {"latch enable changes", LatchEnableChanges},
       {"scanline event schedule", ScanlineEventSchedule},
