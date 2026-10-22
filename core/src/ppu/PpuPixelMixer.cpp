@@ -41,13 +41,13 @@ bool PpuColorWindow(const Ppu::IO &io, uint8_t mask, unsigned x) {
 }
 
 PpuMixedPixel MixPpuPixel(const Ppu::IO &io, std::span<const uint16_t, Ppu::CgramColors> palette,
-                          const PpuBackground &background, const PpuObject &objects, unsigned x) {
+                          const PpuBackground::Output &samples, const PpuObject &objects,
+                          unsigned x) {
   const bool hires = io.pseudoHires || io.bgMode == 5 || io.bgMode == 6;
   PpuMixedPixel result{{Ppu::COL, 0, palette[0]},
                        {Ppu::COL, 0, hires ? palette[0] : io.col.fixedColor}};
   int aboveRead = -1, belowRead = -1;
   const std::array<const Ppu::Background *, 4> registers{&io.bg1, &io.bg2, &io.bg3, &io.bg4};
-  const auto &samples = background.Samples();
   for (unsigned id = 0; id < 4; ++id) {
     if (!samples.above[id].priority && !samples.below[id].priority)
       continue;

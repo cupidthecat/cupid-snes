@@ -186,11 +186,16 @@ PpuBackground::Sample PpuBackground::Mode7(unsigned id, const Ppu::IO &io, Vram 
     layer.mosaicClock = io.mosaic.size;
     layer.mosaicX += io.mosaic.size;
   }
-  int y = line_;
-  if (model_ == Ppu::RenderModel::Scanline ? bg.mosaicEnable : io.bg1.mosaicEnable)
+  const auto row = TransformMode7(
+      line_, model_ == Ppu::RenderModel::Scanline ? bg.mosaicEnable : io.bg1.mosaicEnable, io);
+  return Mode7At(id, x, row, io, vram);
+}
+
+PpuBackground::Mode7Transform PpuBackground::TransformMode7(uint16_t line, bool mosaic,
+                                                            const Ppu::IO &io) {
+  int y = line;
+  if (mosaic)
     y -= io.mosaic.size - io.mosaic.counter;
-  if (io.mode7.hflip)
-    x = 255 - x;
   if (io.mode7.vflip)
     y = 255 - y;
   const auto signed13 = [](uint16_t n) { return int(n & 0x1fff) - ((n & 0x1000) ? 0x2000 : 0); };
@@ -200,10 +205,17 @@ PpuBackground::Sample PpuBackground::Mode7(unsigned id, const Ppu::IO &io, Vram 
   const int centerX = signed13(io.mode7.x), centerY = signed13(io.mode7.y);
   const int h = clip(signed13(io.mode7.hoffset) - centerX);
   const int v = clip(signed13(io.mode7.voffset) - centerY);
-  const int pixelX =
-      ((a * h & ~63) + (b * v & ~63) + (b * y & ~63) + centerX * 256 + a * int(x)) >> 8;
-  const int pixelY =
-      ((c * h & ~63) + (d * v & ~63) + (d * y & ~63) + centerY * 256 + c * int(x)) >> 8;
+  return {a, c, (a * h & ~63) + (b * v & ~63) + (b * y & ~63) + centerX * 256,
+          (c * h & ~63) + (d * v & ~63) + (d * y & ~63) + centerY * 256};
+}
+
+PpuBackground::Sample PpuBackground::Mode7At(unsigned id, unsigned x, const Mode7Transform &row,
+                                             const Ppu::IO &io, Vram vram) {
+  if (io.mode7.hflip)
+    x = 255 - x;
+  const auto &bg = Registers(io, id);
+  const int pixelX = (row.x + row.a * int(x)) >> 8;
+  const int pixelY = (row.y + row.c * int(x)) >> 8;
   const bool outside = (pixelX | pixelY) & ~1023;
   if (outside && io.mode7.repeat == 2)
     return {};
@@ -272,6 +284,51 @@ bool PpuBackground::Clock(uint16_t clock, const Ppu::IO &io, Vram vram) {
   if (clock >= 56 && clock <= 1078)
     Shift(!(clock & 2), clock, io, vram);
   return clock >= 58 && clock <= 1078 && (clock & 3) == 2;
+}
+
+std::array<PpuBackground::Output, 256> PpuBackground::SampleLine(uint16_t line, bool field,
+                                                                 const Ppu::IO &io, Vram vram) {
+  std::array<Output, 256> samples{};
+  BeginLine(line, field, io, Ppu::RenderModel::Scanline);
+  if (!line)
+    return samples;
+  if (io.bgMode < 7)
+    for (unsigned clock = 0; clock <= 1054; clock += 4)
+      Fetch(uint16_t(clock), io, vram);
+
+  const bool hires = Hires(io);
+  for (unsigned id = 0; id < 4; ++id) {
+    const auto &bg = Registers(io, id);
+    if ((!bg.aboveEnable && !bg.belowEnable) || bg.tileMode == Ppu::TileMode::Inactive)
+      continue;
+    const unsigned bits = 2u << unsigned(bg.tileMode);
+    const unsigned fine = layers_[id].position;
+    const auto row = bg.tileMode == Ppu::TileMode::Mode7
+                         ? TransformMode7(line_, bg.mosaicEnable, io)
+                         : Mode7Transform{};
+    for (unsigned x = 0; x < (256u << unsigned(hires)); ++x) {
+      Sample sample;
+      if (bg.tileMode == Ppu::TileMode::Mode7)
+        sample =
+            Mode7At(id, bg.mosaicEnable ? x / io.mosaic.size * io.mosaic.size : x, row, io, vram);
+      else {
+        const unsigned size = bg.mosaicEnable ? unsigned(io.mosaic.size) << unsigned(hires) : 1;
+        const unsigned position = fine + x / size * size;
+        const auto &column = layers_[id].columns[position / 8];
+        const unsigned color = unsigned(column.pixels >> ((position & 7) * 8)) & ((1u << bits) - 1);
+        sample = {color ? uint8_t(column.palette + color) : uint8_t{0}, column.group,
+                  column.priority};
+      }
+      if (!sample.palette)
+        continue;
+      auto &dot = samples[x >> unsigned(hires)];
+      if (bg.aboveEnable && (!hires || (x & 1)))
+        dot.above[id] = sample;
+      if (bg.belowEnable && (!hires || !(x & 1)))
+        dot.below[id] = sample;
+    }
+  }
+  return samples;
 }
 
 } // namespace snes::core

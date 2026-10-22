@@ -43,7 +43,7 @@ void Ppu::StorePipelinePixel(unsigned x) {
     lines_[currentLine_].sampledHires |= hires;
   uint16_t sub = 0, main = 0;
   if (!io_.displayDisable && (io_.overscan || currentLine_ < 225)) {
-    const auto pixel = MixPpuPixel(io_, cgram_, *background_, *object_, x);
+    const auto pixel = MixPpuPixel(io_, cgram_, background_->Samples(), *object_, x);
     // The main-screen lookup follows the sub-screen lookup on the palette bus.
     if (pixel.paletteAddress >= 0)
       latch_.cgramAddress = uint8_t(pixel.paletteAddress);

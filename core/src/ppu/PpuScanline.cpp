@@ -20,14 +20,13 @@ PpuScanlineStatus SamplePpuScanline(Ppu::Line &line, std::span<const uint16_t> v
     objects.Clock(65535, line.fieldID, state, latch, oam, vram);
     objects.BeginLine(line.y, state.obj);
   }
-  background.BeginLine(line.y, line.fieldID, state, Ppu::RenderModel::Scanline);
-  for (unsigned clock = 0; clock < 1080; clock += 2) {
-    if (!background.Clock(uint16_t(clock), state, vram))
-      continue;
-    const unsigned x = (clock - 58) / 4;
-    const auto pixel = MixPpuPixel(state, line.palette, background, objects, x);
-    line.sampledAbove[x] = pixel.above;
-    line.sampledBelow[x] = pixel.below;
+  if (line.y) {
+    const auto sampled = background.SampleLine(line.y, line.fieldID, state, vram);
+    for (unsigned x = 0; x < 256; ++x) {
+      const auto pixel = MixPpuPixel(state, line.palette, sampled[x], objects, x);
+      line.sampledAbove[x] = pixel.above;
+      line.sampledBelow[x] = pixel.below;
+    }
   }
   return {state.obj.rangeOver, state.obj.timeOver};
 }

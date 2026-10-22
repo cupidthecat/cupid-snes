@@ -1,5 +1,7 @@
 #include "snes/core/Ppu.hpp"
 #include "snes/core/PpuBackground.hpp"
+#include <array>
+#include <cstdint>
 #include <functional>
 
 #include <cstdio>
@@ -291,6 +293,62 @@ void FirstEdgeScrollAlignment() {
   Check(render(2, false)[0] == 31 && render(0, true)[0] == 0,
         "A scroll write after the first fetch edge retains the earlier fine alignment");
 }
+void SnapshotRowsMatchFetchEdges() {
+  uint32_t seed = 0x41f792ab;
+  const auto next = [&] {
+    seed = seed * 1664525u + 1013904223u;
+    return seed >> 8;
+  };
+  auto ppu = std::make_unique<Ppu>();
+  std::array<uint16_t, Ppu::VramWords> vram{};
+  for (unsigned trial = 0; trial < 2048; ++trial) {
+    ppu->WriteIO(0x2105, trial % 8);
+    ppu->WriteIO(0x2133, (trial / 8) & 1 ? 0x40 : 0);
+    auto io = ppu->GetIO();
+    io.interlace = next() & 1;
+    io.mosaic.size = uint8_t(1 + (next() & 15));
+    io.mosaic.counter = uint8_t(1 + next() % io.mosaic.size);
+    for (auto *bg : {&io.bg1, &io.bg2, &io.bg3, &io.bg4}) {
+      bg->aboveEnable = next() & 1;
+      bg->belowEnable = next() & 1;
+      bg->mosaicEnable = next() & 1;
+      bg->tileSize = next() & 1;
+      bg->screenSize = uint8_t(next() & 3);
+      bg->screenAddress = uint16_t(next() & 0x7c00);
+      bg->tiledataAddress = uint16_t(next() & 0x7000);
+      bg->hoffset = uint16_t(next() & 1023);
+      bg->voffset = uint16_t(next() & 1023);
+    }
+    auto &matrix = io.mode7;
+    for (auto *word : {&matrix.a, &matrix.b, &matrix.c, &matrix.d, &matrix.x, &matrix.y,
+                       &matrix.hoffset, &matrix.voffset})
+      *word = uint16_t(next());
+    matrix.hflip = next() & 1;
+    matrix.vflip = next() & 1;
+    matrix.repeat = uint8_t(next() & 3);
+    for (auto &word : vram)
+      word = uint16_t(next());
+    const uint16_t y = trial % 64 ? uint16_t(1 + next() % 239) : 0;
+    const bool field = next() & 1;
+    PpuBackground clock, batch;
+    clock.BeginLine(y, field, io, Ppu::RenderModel::Scanline);
+    std::array<PpuBackground::Output, 256> expected{};
+    for (unsigned h = 0; h < 1080; h += 2)
+      if (clock.Clock(uint16_t(h), io, vram))
+        expected[(h - 58) / 4] = clock.Samples();
+    const auto actual = batch.SampleLine(y, field, io, vram);
+    for (unsigned x = 0; x < 256; ++x) {
+      for (unsigned id = 0; id < 4; ++id) {
+        for (bool below : {false, true}) {
+          const auto &a = (below ? actual[x].below : actual[x].above)[id];
+          const auto &b = (below ? expected[x].below : expected[x].above)[id];
+          Check(a.palette == b.palette && a.group == b.group && a.priority == b.priority,
+                "A fixed background snapshot retains every sample produced by its fetch edges");
+        }
+      }
+    }
+  }
+}
 } // namespace
 int main() {
   try {
@@ -303,6 +361,7 @@ int main() {
     RetainedTileTail();
     ExtendedVramFetches();
     FirstEdgeScrollAlignment();
+    SnapshotRowsMatchFetchEdges();
     std::puts("Background fetch tests passed");
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
