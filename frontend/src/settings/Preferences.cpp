@@ -37,6 +37,7 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
       {"input.expansion", std::to_string(int(p.console.expansion))},
       {"path.firmware", p.firmwareDirectory},
       {"path.screenshots", p.screenshotDirectory},
+      {"path.saves", p.saveDirectory},
       {"recent.count", std::to_string(p.recent.size())}};
   const auto keyboard = p.input.Keyboard();
   for (const auto &button : controllerButtons)
@@ -221,6 +222,7 @@ Preferences PreferencesFile::Load() {
   p.audioDevice = text("audio.device", "");
   p.firmwareDirectory = text("path.firmware", "");
   p.screenshotDirectory = text("path.screenshots", "");
+  p.saveDirectory = text("path.saves", "");
   p.focus = FocusBehavior(number("input.focus", int(p.focus), 0, 2));
   p.input.turboFrequency = number("input.turbo-frequency", p.input.turboFrequency, 1, 8);
   for (size_t port = 0; port < p.console.ports.size(); ++port)

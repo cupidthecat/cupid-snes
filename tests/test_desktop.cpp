@@ -707,10 +707,37 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   frame();
   click(left + 184, top + 540);
   Check(!editor.Active(), "Closing a gamepad shortcut editor returns to cancellable preferences");
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 155, top + 44);
+  frame();
+  frame();
+  click(left + 150, top + 236);
+  text = {};
+  text.type = SDL_EVENT_TEXT_INPUT;
+  text.text.windowID = video.WindowID();
+  text.text.text = "../battery chosen";
+  ui.ProcessEvent(text);
+  frame();
+  capture(".paths.bmp");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->saveDirectory == "../battery chosen" &&
+            changes->screenshotDirectory == current.screenshotDirectory &&
+            changes->firmwareDirectory == current.firmwareDirectory,
+        "The Paths editor changes the battery directory independently of other paths");
+  editor.Applied();
+  frame();
+  editor.Rejected("Cannot replace file: the preference file is currently blocked by a directory.");
+  frame();
+  click(left + 184, top + 540);
   for (unsigned frameIndex = 0; frameIndex < 12; ++frameIndex) {
     SDL_Delay(16);
     frame();
   }
+  Check(!editor.Active() && !ui.WantsKeyboard(),
+        "Closing a text path editor releases keyboard capture for desktop shortcuts");
 
   snes::core::VideoFrame picture;
   picture.pixels.assign(picture.width * picture.height, 0xff0000ff);

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -77,9 +78,51 @@ void Click(SDL_WindowID window, float x, float y) {
   Push(event);
   std::this_thread::sleep_for(std::chrono::milliseconds(40));
 }
+void ReplaceText(SDL_WindowID window, const char *text) {
+  Key(window, SDL_SCANCODE_A, SDLK_A, SDL_KMOD_CTRL);
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  event.text.windowID = window;
+  event.text.text = text;
+  Push(event);
+  std::this_thread::sleep_for(std::chrono::milliseconds(80));
+}
 std::string Read(const std::filesystem::path &path) {
   const auto bytes = snes::frontend::ReadFile(path, 1024 * 1024);
   return {bytes.begin(), bytes.end()};
+}
+struct EditorPicture {
+  SDL_WindowID window;
+  bool valid = false, open = false, error = false, textInput = false;
+};
+EditorPicture ReadEditorPicture(SDL_WindowID window) {
+  EditorPicture result{window};
+  Check(SDL_RunOnMainThread(
+            [](void *userdata) {
+              auto &picture = *static_cast<EditorPicture *>(userdata);
+              auto *window = SDL_GetWindowFromID(picture.window);
+              auto *renderer = window ? SDL_GetRenderer(window) : nullptr;
+              std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+                  renderer ? SDL_RenderReadPixels(renderer, nullptr) : nullptr, SDL_DestroySurface);
+              if (!surface || surface->w < 700 || surface->h < 640)
+                return;
+              picture.valid = true;
+              picture.textInput = SDL_TextInputActive(window);
+              Uint8 r = 0, g = 0, b = 0, a = 0;
+              if (SDL_ReadSurfacePixel(surface.get(), 100, 200, &r, &g, &b, &a))
+                picture.open = unsigned(r) + g + b > 40;
+              for (int y = 500; y < 610 && !picture.error; ++y)
+                for (int x = 80; x < 680; ++x)
+                  if (SDL_ReadSurfacePixel(surface.get(), x, y, &r, &g, &b, &a) && r > 180 &&
+                      g > 60 && g < 180 && b < 180 && r > unsigned(g) + 60 &&
+                      r > unsigned(b) + 60) {
+                    picture.error = true;
+                    break;
+                  }
+            },
+            &result, true),
+        "The test reads its software renderer on the application's main thread");
+  return result;
 }
 void Quit() {
   SDL_Event event{};
@@ -182,6 +225,110 @@ void RecoverAutosave(const std::filesystem::path &directory) {
     std::rethrow_exception(failure);
   Check(result == 0 && Read(save).size() == 8192 && uint8_t(Read(save)[0]) == 0x5a,
         "After repairing the destination, quit saves the original guest battery byte normally");
+}
+
+void SaveDirectoryApplication(const std::filesystem::path &directory) {
+  ConfigureSdl();
+  const auto original = Read(directory / "autosave.srm");
+  const auto selected = directory / "save-files", final = directory / "save-final";
+  std::filesystem::create_directory(selected);
+  {
+    const std::string bytes(8192, char(0xc3));
+    std::ofstream output(selected / "autosave.srm", std::ios::binary);
+    output.write(bytes.data(), bytes.size());
+    Check(bool(output), "The GUI save destination starts with different battery data");
+    std::ofstream blocked(directory / "blocked-save-folder", std::ios::binary);
+    blocked << 'x';
+    Check(bool(blocked), "The invalid GUI save folder is a file");
+  }
+  snes::frontend::PreferencesFile file(directory / "save-paths.cfg");
+  auto preferences = file.Load();
+  preferences.focus = snes::frontend::FocusBehavior::AllowInput;
+  file.Save(preferences);
+  const auto backup = directory / "save-paths-backup.cfg";
+  Check(SDL_Init(SDL_INIT_EVENTS), SDL_GetError());
+  std::atomic<SDL_WindowID> window{0};
+  std::atomic<bool> returned{false};
+  Check(SDL_AddEventWatch(WindowCreated, &window), SDL_GetError());
+  std::exception_ptr failure;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return window.load() || returned.load(); },
+           "The save-folder application creates a window");
+      Wait([&] { return Read(file.Path()).find("recent.count \"1\"") != std::string::npos; },
+           "The save-folder cartridge reaches the running application");
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      Key(window, SDL_SCANCODE_COMMA, SDLK_COMMA, SDL_KMOD_CTRL);
+      Click(window, 229, 128);
+      Click(window, 224, 320);
+      ReplaceText(window, "save-files");
+      Click(window, 186, 624);
+      Wait([&] { return Read(file.Path()).find("path.saves \"save-files\"") != std::string::npos; },
+           "The running Paths editor saves the selected relative battery directory");
+      const auto applied = Read(file.Path());
+      Click(window, 224, 320);
+      ReplaceText(window, "blocked-save-folder");
+      Click(window, 186, 624);
+      Wait([&] { return ReadEditorPicture(window).error; },
+           "An invalid save folder displays its Apply error");
+      Check(Read(file.Path()) == applied, "An invalid save folder preserves the saved preferences");
+      Click(window, 224, 320);
+      ReplaceText(window, "save-final");
+      Click(window, 186, 624);
+      Wait([&] { return Read(file.Path()).find("path.saves \"save-final\"") != std::string::npos; },
+           "The same editor retries with a valid save directory");
+      Wait([&] { return !ReadEditorPicture(window).error; },
+           "A successful Apply clears the prior error");
+      Click(window, 224, 320);
+      ReplaceText(window, "save-rejected");
+      std::filesystem::rename(file.Path(), backup);
+      std::filesystem::create_directory(file.Path());
+      Click(window, 186, 624);
+      Wait([&] { return ReadEditorPicture(window).error; },
+           "A failed preference write displays its Apply error before repair");
+      Check(!returned, "A failed preference write keeps the save-folder editor and game alive");
+      std::filesystem::remove(file.Path());
+      std::filesystem::rename(backup, file.Path());
+      Click(window, 258, 624);
+      unsigned closed = 0;
+      Wait(
+          [&] {
+            const auto picture = ReadEditorPicture(window);
+            closed = picture.valid && !picture.open && !picture.textInput ? closed + 1 : 0;
+            return closed >= 4;
+          },
+          "Cancel closes the rendered path editor and releases text input");
+      Key(window, SDL_SCANCODE_Q, SDLK_Q, SDL_KMOD_CTRL);
+      Wait([&] { return returned.load(); }, "Ctrl+Q quits after closing the path editor");
+    } catch (...) {
+      failure = std::current_exception();
+      std::error_code ignored;
+      if (std::filesystem::exists(backup, ignored)) {
+        std::filesystem::remove(file.Path(), ignored);
+        std::filesystem::rename(backup, file.Path(), ignored);
+      }
+      if (!returned) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&event);
+      }
+    }
+  });
+  snes::frontend::LaunchRequest request;
+  request.paths[0] = snes::core::PathText(directory / "autosave.sfc");
+  const auto result = snes::frontend::RunDesktop({}, {}, request, file.Path());
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0 && Read(selected / "autosave.srm") == std::string(8192, char(0xc3)) &&
+            Read(final / "autosave.srm") == original &&
+            Read(directory / "autosave.srm") == original &&
+            !std::filesystem::exists(directory / "save-rejected/autosave.srm") &&
+            Read(file.Path()).find("path.saves \"save-final\"") != std::string::npos,
+        "Apply and retry retain the live battery bytes, while failed Apply leaves the last saved "
+        "folder active");
+  std::puts("Save directory application checks passed");
 }
 
 struct DrivenGamepad {
@@ -492,6 +639,7 @@ int main() {
       std::rethrow_exception(failure);
     Check(result == 0, "The application exits normally after the destination is fixed");
     RecoverAutosave(directory);
+    SaveDirectoryApplication(directory);
     if (SDL_getenv("SNES_TEST_WINDOW")) {
       GamepadApplication(directory, false);
       GamepadApplication(directory, true);

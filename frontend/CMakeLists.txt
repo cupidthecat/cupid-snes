@@ -6,6 +6,7 @@ add_library(snes_frontend_support STATIC
   src/SdlInputProvider.cpp
   src/SaveRamFile.cpp
   src/storage/AtomicFile.cpp
+  src/storage/BatteryStorage.cpp
   src/settings/Preferences.cpp
   src/settings/ConsoleDevices.cpp
   src/input/Hotkeys.cpp

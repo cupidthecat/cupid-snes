@@ -67,6 +67,8 @@ void RoundTrip(const fs::path &directory) {
                              SDL_GAMEPAD_AXIS_LEFT_TRIGGER};
   preferences.audioDevice = "Headphones \\\"USB\\\"";
   preferences.screenshotDirectory = snes::core::PathText(directory / fs::path(u8"\u753b\u50cf"));
+  preferences.saveDirectory =
+      "../battery folder/" + snes::core::PathText(fs::path(u8"\u4fdd\u5b58"));
   preferences.firmwareDirectory = "spaces, \\slashes and\nnewlines";
   LaunchRequest request;
   request.kind = LaunchRequest::Kind::Campus92;
@@ -81,7 +83,7 @@ void RoundTrip(const fs::path &directory) {
             loaded.input == preferences.input && loaded.audioDevice == preferences.audioDevice &&
             loaded.firmwareDirectory == preferences.firmwareDirectory &&
             loaded.screenshotDirectory == preferences.screenshotDirectory &&
-            loaded.recent == normalized,
+            loaded.saveDirectory == preferences.saveDirectory && loaded.recent == normalized,
         "Preferences preserve Unicode, escapes, keyboard bindings and complete launch requests");
   Check(loaded.console == preferences.console && loaded.hotkeys == preferences.hotkeys,
         "Hardware choices and all hotkey alternatives survive a profile restart");

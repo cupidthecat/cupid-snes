@@ -5,6 +5,8 @@
 #include "snes/core/Emulator.hpp"
 
 #include <array>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -31,6 +33,10 @@ public:
   const LaunchRequest *Loaded() const noexcept;
   ConsoleDevices Devices() const noexcept;
   void SetDevices(const ConsoleDevices &devices);
+  // Change future save destinations without loading or writing battery data.
+  // Persist must not replace the loaded game.
+  // A rejected path or throwing persist callback retains the current save destinations.
+  void SetSaveDirectory(std::filesystem::path directory, const std::function<void()> &persist = {});
   void SetFirmware(std::shared_ptr<const core::CartridgeFirmware> firmware) {
     config_.cartridgeFirmware = std::move(firmware);
   }
@@ -40,6 +46,7 @@ private:
   core::Emulator::Config config_;
   Outputs outputs_;
   std::array<core::ControllerDevice, 2> devices_;
+  std::filesystem::path saveDirectory_;
   std::unique_ptr<State> state_;
 };
 

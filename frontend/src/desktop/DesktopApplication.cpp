@@ -81,6 +81,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     audio.SetVolume(preferences.volume, preferences.mute);
     SdlInputProvider input(preferences.input);
     Session session(std::move(config), {&video, &audio, &input}, devices);
+    session.SetSaveDirectory(preferencesFile.ResolvePath(preferences.saveDirectory));
     struct SaveOnExit {
       Session &session;
       ~SaveOnExit() {
@@ -199,12 +200,14 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       const bool previousMuted = audioMuted;
       const bool nextMuted = next.mute || (next.muteUnfocused && !WindowFocused(video.Window()));
       try {
-        if (deviceChanged)
-          audio.SelectDevice(next.audioDevice);
-        video.SetPresentation(presentation(next));
-        audio.SetVolume(next.volume, nextMuted);
-        input.SetBindings(next.input);
-        preferencesFile.Save(next);
+        session.SetSaveDirectory(preferencesFile.ResolvePath(next.saveDirectory), [&] {
+          if (deviceChanged)
+            audio.SelectDevice(next.audioDevice);
+          video.SetPresentation(presentation(next));
+          audio.SetVolume(next.volume, nextMuted);
+          input.SetBindings(next.input);
+          preferencesFile.Save(next);
+        });
       } catch (...) {
         const auto original = std::current_exception();
         try {

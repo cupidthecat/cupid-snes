@@ -31,7 +31,11 @@ Opening a replacement first flushes the current game's saves. A load error leave
 
 A periodic save error pauses playback and shows the failed path. Repair the destination and close the error to resume; the next periodic save or a normal quit retries the write. The loaded game and its unsaved battery data remain available.
 
-Console battery RAM uses a neighboring `.srm` file. Clock storage uses `.rtc`. A separate broadcast pack owns `<pack-path>.flash` and `<pack-path>.flash.meta`; without a separate pack, those files belong to the console cartridge path. Super Game Boy uses a `.sav` beside the handheld game. Each Sufami Turbo game owns its own `.srm`, even when moved between slots. The frontend rejects two slots that would overwrite the same save file.
+By default, console battery RAM uses a neighboring `.srm` file. Clock storage uses `.rtc`. A separate broadcast pack owns `<pack-path>.flash` and `<pack-path>.flash.meta`; without a separate pack, those files belong to the console cartridge path. Super Game Boy uses a `.sav` beside the handheld game. Each Sufami Turbo game owns its own `.srm`, even when moved between slots. The frontend rejects two slots that would overwrite the same save file.
+
+File > Preferences > Paths sets a shared battery-save folder. Files keep their owning game's or pack's basename and the extensions above. A relative folder starts at the profile's directory. Blank restores each owner's original folder. A new folder is created when selected.
+
+Changing the folder while a game is loaded keeps its live battery data. Future saves write that data to the new folder, replacing matching filenames there. Selecting a folder does not read or write battery files. Previous files remain at their last saved contents. You can choose a new folder even when the old destination cannot be written. Reopening a game reads the selected folder. Invalid folder types, directories occupying save filenames, colliding slot filenames, or a failed preference write leave the current destinations active. Repair the problem and retry Apply.
 
 Game paths, firmware directories, save files, and picker results use UTF-8, including on Windows. The frontend preserves full Unicode paths when opening files and reporting errors.
 
@@ -60,13 +64,14 @@ audio.device ""
 input.focus "0"
 path.firmware ""
 path.screenshots ""
+path.saves ""
 ```
 
 Scale accepts 1 through 6. Aspect correction uses an 8:7 pixel aspect. Integer scaling and linear filtering affect presentation; screenshots retain the generated pixels. Volume accepts 0 through 200 percent. Mute and volume leave the emulated sound samples and timing unchanged. An empty or unavailable audio device name selects the system default.
 
 Focus mode 0 pauses while the window is unfocused, hidden, or minimized. Mode 1 continues emulation while blocking controller input. Mode 2 continues with controller input enabled. Returning focus resumes an automatic pause and preserves a manual pause. Relative mouse capture is released while paused or unfocused.
 
-`path.firmware` supplies cartridge processor firmware when the command line does not specify a directory. Changing it in the editor applies to the next game opened. An empty screenshot path uses the default `screenshots` directory. Relative directory paths start at the folder containing the preferences file. Recent entries store complete launch requests and absolute asset paths.
+`path.firmware` supplies cartridge processor firmware when the command line does not specify a directory. Changing it in the editor applies to the next game opened. An empty screenshot path uses the default `screenshots` directory. `path.saves` overrides the [battery-file directory](#battery-files), including for a loaded game. Relative directory paths start at the folder containing the preferences file. Recent entries store complete launch requests and absolute asset paths.
 
 The Input page selects one of eight players and one of four alternative bindings per console button. Click a binding, then press a key, gamepad button, signed axis, or mouse button. Escape cancels capture. Clear removes that alternative; Restore player defaults resets the selected player. The Gamepad selector chooses an automatic player slot, a specific connected device, or Disabled. Refresh updates the device list. An unavailable saved selection stays released until it reconnects. Keyboard and mouse alternatives still work when the gamepad is disabled. Only player one has keyboard bindings by default.
 

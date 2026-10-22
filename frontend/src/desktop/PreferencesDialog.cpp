@@ -330,6 +330,11 @@ struct PreferencesDialog::Impl {
     ImGui::TextUnformatted("Screenshot directory (blank uses the default)");
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##screenshots", &draft.screenshotDirectory);
+    ImGui::TextUnformatted("Battery save directory (blank uses each game's folder)");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##saves", &draft.saveDirectory);
+    ImGui::TextWrapped("Changing this folder keeps the loaded game's battery data. Future saves "
+                       "replace matching filenames in the new folder.");
     ImGui::Spacing();
     ImGui::TextUnformatted("Preferences file");
     ImGui::TextWrapped("%s", file.c_str());

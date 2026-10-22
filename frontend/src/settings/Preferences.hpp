@@ -19,7 +19,7 @@ struct Preferences {
   int volume = 100;
   bool mute = false, muteUnfocused = false;
   FocusBehavior focus = FocusBehavior::Pause;
-  std::string audioDevice, firmwareDirectory, screenshotDirectory;
+  std::string audioDevice, firmwareDirectory, screenshotDirectory, saveDirectory;
   InputBindings input;
   ConsoleDevices console;
   Hotkeys hotkeys;
