@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "cartridge/Sdd1StreamFixture.hpp"
 #include "snes/core/Sdd1.hpp"
 
 #include <algorithm>
@@ -327,6 +328,59 @@ void CompressedBankBoundary() {
           "Compressed input crosses the MMC boundary into the selected ROM bank");
   Check(bus.Read(0x4801) == 0, "Cross-window stream completes at its programmed count");
 }
+
+void ClockedStreams() {
+  // Keep CPU, DMA, HDMA and PPU clocks connected while the guest drives the stream.
+  using sdd1_test::Transfer;
+  struct Case {
+    Transfer transfer;
+    unsigned mode;
+    uint32_t data;
+    std::array<uint32_t, 2> ntsc, pal;
+  };
+  constexpr Case cases[] = {
+      {Transfer::Switch, 0, 0xaefac739, {0x9ade165d, 0xd4f975fd}, {0x8da3ed8d, 0x21cc3dad}},
+      {Transfer::Priority, 5, 0x08e470e1, {0xe0d571fd, 0xf101d35d}, {0xba4e942d, 0x3dd49b0d}},
+      {Transfer::Alternating, 10, 0xaefac739, {0xcf5a861e, 0x6a9e06be}, {0x2804794e, 0x7f5a91ee}},
+      {Transfer::Fixed, 15, 0x93a85dbc, {0x4d2fc7a9, 0x2e40d1c9}, {0x89722b99, 0xac4b3ab9}},
+      {Transfer::Increment, 1, 0xf3f5abe0, {0x311487b4, 0xb449a054}, {0xc68d7c24, 0x29be2844}},
+      {Transfer::Decrement, 6, 0x6d96aa6e, {0x3c73231f, 0x980a5fff}, {0x0e7479af, 0x12c08e0f}},
+      {Transfer::Zero, 11, 0xc8b77acd, {0xda6e4565, 0x62bda8c5}, {0xb17e9fe9, 0x14fd2dc9}},
+      {Transfer::Boundary, 12, 0x18cf15b6, {0x5e9bfb6c, 0xd7937e0c}, {0xbc1b9adc, 0x236bc67c}},
+      {Transfer::HdmaShared, 3, 0x7483e349, {0x21cffca9, 0xbb758c09}, {0x8d0ef0b4, 0x9d3b5214}},
+      {Transfer::HdmaSame, 9, 0x7e6b3f99, {0xdab2d073, 0xca866f13}, {0x23c6b672, 0x8a212712}},
+  };
+  const auto digest = [](const uint8_t *bytes, unsigned count) {
+    uint32_t hash = 2166136261u;
+    for (unsigned index = 0; index < count; ++index)
+      hash = (hash ^ bytes[index]) * 16777619u;
+    return hash;
+  };
+  for (auto model : {Ppu::RenderModel::Progressive, Ppu::RenderModel::Scanline}) {
+    for (bool pal : {false, true}) {
+      for (const auto &test : cases) {
+        const auto program = sdd1_test::Stream(test.transfer, test.mode, pal);
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.ppu.model = model;
+        auto emu = std::make_unique<Emulator>(config);
+        Check(emu->LoadCartridge(program.image), "Clocked S-DD1 guest loads");
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(emu->Reset(), "Clocked S-DD1 guest resets");
+          for (unsigned field = 0; field < 4; ++field)
+            emu->StepFrame();
+          const auto *wram = emu->GetBus().WramData();
+          Check(wram[0x11fff] == 0xa5, "Clocked S-DD1 guest completes");
+          Check(digest(wram, 65536) == test.data, "Clocked DMA destination digest");
+          const unsigned renderer = model == Ppu::RenderModel::Scanline ? 1 : 0;
+          Check(digest(wram + 65536, program.observations) ==
+                    (pal ? test.pal : test.ntsc)[renderer],
+                "Clocked stream, channel register and beam-counter digest");
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -337,6 +391,7 @@ int main() {
     DmaDecompression();
     LargeImages();
     CompressedBankBoundary();
+    ClockedStreams();
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;
