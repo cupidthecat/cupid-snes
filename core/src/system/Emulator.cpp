@@ -534,7 +534,9 @@ void Emulator::InitSubsystems() {
   // IRQ/NMI condition polling (every ~4 master clocks)
   timing_.onIrqPoll = [this](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t) {
     irq_.Poll(h, v, vdisp, timing_.PreviousHPeriod(), timing_.PreviousVPeriod());
-    autoJoypad_.Ports().BeamPosition(timing_.HDot(), v, vdisp - 1);
+    auto &ports = autoJoypad_.Ports();
+    if (ports.NeedsBeamPosition())
+      ports.BeamPosition(timing_.HDot(), v, vdisp - 1);
   };
 
   // Auto-joypad polling (every 128 master clocks)

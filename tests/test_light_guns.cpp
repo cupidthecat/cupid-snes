@@ -205,7 +205,8 @@ struct Input : IInputProvider {
     return guns[gun];
   }
 };
-std::unique_ptr<Emulator> Machine(Input &input, bool pal = false) {
+std::unique_ptr<Emulator> Machine(Input &input, bool pal = false,
+                                  Ppu::RenderModel model = Ppu::RenderModel::Scanline) {
   std::vector<uint8_t> rom(0x8000, 0);
   std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
   rom[0] = 0xdb;
@@ -215,7 +216,9 @@ std::unique_ptr<Emulator> Machine(Input &input, bool pal = false) {
   rom[0x7fd9] = pal ? 2 : 1;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
-  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+  auto config = snes::tests::DeterministicConsoleConfig();
+  config.ppu.model = model;
+  auto emu = std::make_unique<Emulator>(config);
   emu->AttachInputProvider(&input);
   Check(emu->LoadCartridge(rom), "Fixture loads");
   return emu;
@@ -268,6 +271,62 @@ void RifleBeamLatches() {
     ports.PollLightGuns();
     ports.BeamPosition(h, v, 224);
     Check((bus.Read(0x213f) & 0x40) == 0, "Offscreen gun does not latch");
+  }
+}
+
+void RifleDeviceLifetimes() {
+  for (bool pal : {false, true}) {
+    for (auto model : {Ppu::RenderModel::Progressive, Ppu::RenderModel::Scanline}) {
+      Input input;
+      input.guns[0].y = 10;
+      input.guns[0].offscreen = false;
+      auto machine = Machine(input, pal, model);
+      auto &ports = machine->GetAutoJoypad().Ports();
+      auto &timing = machine->GetTiming();
+      auto &bus = machine->GetBus();
+      timing.Tick(52 * 1364);
+      const auto beam = [&](unsigned x) {
+        input.guns[0].x = int32_t(x);
+        ports.PollLightGuns();
+        const unsigned clock = (x + 76) * 4 + 2;
+        Check(timing.VCounter() == 52 && timing.HCounter() < clock,
+              "Rifle lifetime test advances to a later beam target");
+        timing.Tick(clock - timing.HCounter());
+      };
+      unsigned index = 0;
+      for (auto device :
+           {ControllerDevice::None, ControllerDevice::Gamepad, ControllerDevice::Mouse,
+            ControllerDevice::Multitap, ControllerDevice::SuperScope, ControllerDevice::Justifier,
+            ControllerDevice::Justifiers}) {
+        ports.Configure(1, ControllerDevice::MacsRifle);
+        beam(16 + index++ * 8);
+        Check((bus.Read(0x4213) & 0x80) == 0, "Connected rifle produces its beam pulse");
+        ports.Configure(1, device);
+        Check((bus.Read(0x4213) & 0x80) != 0, "Changing the receiver releases a pending pulse");
+        ports.Configure(0, ControllerDevice::MacsRifle);
+        ports.PollLightGuns();
+        timing.Tick(8);
+        Check((bus.Read(0x4213) & 0x80) != 0,
+              "A rifle on port one cannot retain the port-two pulse");
+      }
+      ports.Configure(1, ControllerDevice::MacsRifle);
+      beam(100);
+      Check((bus.Read(0x4213) & 0x80) == 0, "A replacement rifle can latch later in the field");
+      timing.Tick(4);
+      Check((bus.Read(0x4213) & 0x80) != 0, "A rifle pulse ends at the next polling edge");
+      beam(108);
+      Check(Counter(bus, 0x213c) == 176, "A rifle cannot latch a second target in the same field");
+      ports.FrameBegin();
+      beam(116);
+      Check((bus.Read(0x4213) & 0x80) == 0 && Counter(bus, 0x213c) == 192,
+            "Frame begin rearms a completed rifle receiver");
+      Check(machine->Reset(), "Rifle console resets with a pulse pending");
+      Check((bus.Read(0x4213) & 0x80) != 0, "Reset releases the pending rifle pulse");
+      ports.PollLightGuns();
+      timing.Tick(52 * 1364 + 192 * 4 + 2);
+      Check((bus.Read(0x4213) & 0x80) == 0,
+            "Reset retains rifle selection and rearms its next target");
+    }
   }
 }
 
@@ -516,6 +575,7 @@ int main() {
     JustifierReadBoundaries();
     RiflePackets();
     RifleBeamLatches();
+    RifleDeviceLifetimes();
     GunSelectionAndPorts();
     AutomaticPolling();
     ScopeAimAndOffscreen();

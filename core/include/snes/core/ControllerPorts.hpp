@@ -53,6 +53,10 @@ public:
     vdisp_ = vdisp;
   }
   void FrameBegin();
+  bool NeedsBeamPosition() const noexcept {
+    // A completed rifle hit still needs one edge to release its I/O pulse.
+    return ports_[1].device == ControllerDevice::MacsRifle && (!beamFired_ || beamPulse_);
+  }
   void BeamPosition(uint16_t h, uint16_t v, uint16_t visibleLines);
   uint8_t IoBits() const {
     return beamPulse_ ? 0x7f : 0xff;
