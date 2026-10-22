@@ -113,6 +113,25 @@ void MutedPlaybackKeepsPacing() {
   audio.Submit(buffer);
   Expect(WaitForDrain(audio), "unmuting preserves the running audio stream");
 }
+void SwitchPlaybackDevice() {
+  SdlAudioOutput audio;
+  audio.SetVolume(137, true);
+  audio.Submit(Tone(2400));
+  audio.SelectDevice("A missing replacement device");
+  Expect(audio.QueuedBytes() == 0 && !audio.IsPlaying(),
+         "device changes discard old host audio and wait for resume");
+  audio.Resume();
+  audio.Submit(Tone(2400));
+  Expect(WaitForDrain(audio), "replacement audio devices prime and play normally");
+  const auto names = SdlAudioOutput::DeviceNames();
+  if (!names.empty()) {
+    audio.SelectDevice(names.front());
+    audio.SetVolume(100, false);
+    audio.Resume();
+    audio.Submit(Tone(2400));
+    Expect(WaitForDrain(audio), "enumerated output devices can be selected at runtime");
+  }
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -127,6 +146,7 @@ int main(int argc, char **argv) {
     PlaybackPrimesAndRecovers();
     GameChangesDiscardAudio();
     MutedPlaybackKeepsPacing();
+    SwitchPlaybackDevice();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     ++failures;

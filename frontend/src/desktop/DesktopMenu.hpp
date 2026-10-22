@@ -32,15 +32,17 @@ enum class DesktopCommand {
   Recent6,
   Recent7,
   Recent8,
-  Recent9
+  Recent9,
+  Preferences
 };
 
 class DesktopMenu {
 public:
-  explicit DesktopMenu(SDL_Window *window);
+  DesktopMenu();
   ~DesktopMenu();
   void Update(bool loaded, bool paused);
   void SetRecent(std::span<const LaunchRequest> requests);
+  void Draw(bool enabled = true);
   std::optional<DesktopCommand> TakeCommand();
   static std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent &key);
 

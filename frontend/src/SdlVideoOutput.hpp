@@ -19,6 +19,7 @@
 #include <SDL3/SDL.h>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,16 +27,18 @@ namespace snes::frontend {
 
 class SdlVideoOutput final : public snes::core::IVideoOutput {
 public:
+  struct Presentation {
+    int scale = 3;
+    bool aspectCorrection = false, integerScaling = true, linearFilter = false;
+  };
   /// Configuration for window creation.
-  struct Config {
+  struct Config : Presentation {
     std::string title = "SNES Emulator";
-    int scale = 3;   // Window = base × scale
     int baseW = 256; // Base width  (SNES visible)
     int baseH = 224; // Base height (non-overscan)
     bool vsync = true;
     bool deferPresentation = false;
     bool hidden = false;
-    bool aspectCorrection = false, integerScaling = true, linearFilter = false;
   };
 
   explicit SdlVideoOutput();
@@ -53,6 +56,8 @@ public:
   void ShowIdle();
   void ClearPicture();
   void SaveScreenshot(const std::filesystem::path &path) const;
+  void SetPresentation(const Presentation &options);
+  void SetOverlay(std::function<void()> draw, int topInset = 0, int bottomInset = 0);
 
   // State queries
 
@@ -95,6 +100,9 @@ private:
   uint64_t submittedFrames_ = 0;
   std::vector<uint32_t> lastPixels_;
   bool aspectCorrection_ = false, integerScaling_ = true, linearFilter_ = false;
+  int scale_ = 3, baseWidth_ = 256, baseHeight_ = 224;
+  std::function<void()> overlay_;
+  int topInset_ = 0, bottomInset_ = 0;
 };
 
 } // namespace snes::frontend

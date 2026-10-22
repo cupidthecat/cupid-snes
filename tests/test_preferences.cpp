@@ -148,6 +148,16 @@ void RecentRequests() {
             preferences.recent[1] == existing,
         "Different cartridge modes and packs retain separate recent requests");
 }
+void RelativeDirectories(const fs::path &directory) {
+  const auto profile = directory / "profiles" / "preferences.cfg";
+  PreferencesFile file(profile);
+  Check(file.ResolvePath("").empty(), "An empty directory retains its default");
+  Check(file.ResolvePath("../screenshots") == directory / "screenshots",
+        "Relative directories follow the profile, independent of the working directory");
+  const auto absolute = directory / fs::path(u8"\u753b\u50cf");
+  Check(file.ResolvePath(snes::core::PathText(absolute)) == absolute,
+        "Absolute Unicode directories are preserved");
+}
 } // namespace
 
 int main() {
@@ -167,6 +177,7 @@ int main() {
     BadInput(directory);
     FailedReplacement(directory);
     RecentRequests();
+    RelativeDirectories(directory);
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

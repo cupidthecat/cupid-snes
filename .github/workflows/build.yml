@@ -150,6 +150,34 @@ jobs:
         run: >-
           ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120 --no-tests=error
           -L optimized
+  linux-desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install desktop build dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          ninja-build libasound2-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev
+          libxi-dev libxfixes-dev libxss-dev xvfb
+      - name: Cache desktop dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: out/build/linux/_deps
+          key: desktop-${{ runner.os }}-gcc-${{ hashFiles('cmake/SDL3.cmake', 'cmake/ImGui.cmake') }}
+      - name: Configure
+        run: cmake -S . -B out/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DSNES_ENABLE_LTO=OFF
+      - name: Build frontend and desktop checks
+        run: >-
+          cmake --build out/build/linux --parallel 4 --target snes_frontend snes_desktop_tests
+          snes_desktop_application_tests snes_preferences_tests snes_session_tests snes_sdl_video_tests snes_sdl_audio_tests
+          snes_sdl_input_tests
+      - name: Test shared UI and host services
+        run: >-
+          ctest --test-dir out/build/linux --output-on-failure --parallel 2 --timeout 120 --no-tests=error
+          -R '^snes_(desktop_tests|desktop_application_tests|preferences_tests|session_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
+      - name: Test X11 desktop integration
+        run: xvfb-run -a env SDL_VIDEODRIVER=x11 SNES_TEST_WINDOW=1 out/build/linux/tests/snes_desktop_tests
   windows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

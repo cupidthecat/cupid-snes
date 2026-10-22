@@ -51,6 +51,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_save_ram_tests
   snes_session_tests
   snes_desktop_tests
+  snes_desktop_application_tests
   snes_preferences_tests
   snes_cx4_processor_tests
   snes_sa1_tests

@@ -37,6 +37,11 @@ SdlVideoOutput::SdlVideoOutput() : SdlVideoOutput(Config{}) {}
 SdlVideoOutput::SdlVideoOutput(const Config &config)
     : deferredPresentation_(config.deferPresentation), aspectCorrection_(config.aspectCorrection),
       integerScaling_(config.integerScaling), linearFilter_(config.linearFilter) {
+  if (config.scale < 1 || config.scale > 6)
+    throw std::invalid_argument("Window scale must be between 1 and 6");
+  scale_ = config.scale;
+  baseWidth_ = config.baseW;
+  baseHeight_ = config.baseH;
   int windowW = int(std::lround(config.baseW * (aspectCorrection_ ? 8.0 / 7 : 1.0) * config.scale));
   int windowH = config.baseH * config.scale;
 
@@ -61,6 +66,44 @@ SdlVideoOutput::~SdlVideoOutput() {
     SDL_DestroyRenderer(renderer_);
   if (window_)
     SDL_DestroyWindow(window_);
+}
+
+void SdlVideoOutput::SetPresentation(const Presentation &options) {
+  if (options.scale < 1 || options.scale > 6)
+    throw std::invalid_argument("Window scale must be between 1 and 6");
+  if (texture_ && !SDL_SetTextureScaleMode(texture_, options.linearFilter ? SDL_SCALEMODE_LINEAR
+                                                                          : SDL_SCALEMODE_NEAREST))
+    throw std::runtime_error(SDL_GetError());
+  if (options.scale != scale_ || options.aspectCorrection != aspectCorrection_) {
+    const unsigned lines = texH_ ? (texH_ > 240 ? texH_ / 2 : texH_) : baseHeight_;
+    const int width =
+        int(std::lround(baseWidth_ * (options.aspectCorrection ? 8.0 / 7 : 1.0) * options.scale));
+    if (!SDL_SetWindowSize(window_, width, int(lines) * options.scale + topInset_ + bottomInset_)) {
+      const std::string error = SDL_GetError();
+      if (texture_)
+        SDL_SetTextureScaleMode(texture_,
+                                linearFilter_ ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+      throw std::runtime_error(error);
+    }
+  }
+  scale_ = options.scale;
+  aspectCorrection_ = options.aspectCorrection;
+  integerScaling_ = options.integerScaling;
+  linearFilter_ = options.linearFilter;
+  Redraw();
+}
+
+void SdlVideoOutput::SetOverlay(std::function<void()> draw, int topInset, int bottomInset) {
+  if (topInset < 0 || bottomInset < 0)
+    throw std::invalid_argument("Desktop insets must not be negative");
+  int width = 0, height = 0;
+  SDL_GetWindowSize(window_, &width, &height);
+  if (!SDL_SetWindowSize(window_, width,
+                         std::max(1, height - topInset_ - bottomInset_ + topInset + bottomInset)))
+    throw std::runtime_error(SDL_GetError());
+  overlay_ = std::move(draw);
+  topInset_ = topInset;
+  bottomInset_ = bottomInset;
 }
 
 // IVideoOutput::Present
@@ -112,7 +155,7 @@ void SdlVideoOutput::PresentPending() {
   // Fit the picture to the window, using integer scaling when it fits.
   int winW = 0, winH = 0;
   SDL_GetWindowSize(window_, &winW, &winH);
-  const auto viewport = MakeVideoViewport(winW, winH, texH_, aspectCorrection_, integerScaling_);
+  const auto viewport = InputViewport();
   SDL_FRect dst{viewport.x, viewport.y, viewport.width, viewport.height};
 
   // One-shot: log presentation dimensions
@@ -141,12 +184,16 @@ void SdlVideoOutput::PresentPending() {
     SDL_RenderLine(renderer_, x - 7, y, x + 7, y);
     SDL_RenderLine(renderer_, x, y - 7, x, y + 7);
   }
+  if (overlay_)
+    overlay_();
   SDL_RenderPresent(renderer_);
 }
 
 void SdlVideoOutput::Redraw() {
-  if (!texture_)
+  if (!texture_) {
+    ShowIdle();
     return;
+  }
   pending_ = true;
   PresentPending();
 }
@@ -161,11 +208,14 @@ void SdlVideoOutput::ClearPicture() {
   lastPixels_.clear();
   SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
   SDL_RenderClear(renderer_);
+  if (overlay_)
+    overlay_();
   SDL_RenderPresent(renderer_);
 }
 
 void SdlVideoOutput::ShowIdle() {
-  ClearPicture();
+  if (texture_ || !lastPixels_.empty())
+    ClearPicture();
   SDL_SetRenderDrawColor(renderer_, 22, 24, 30, 255);
   SDL_RenderClear(renderer_);
   SDL_SetRenderScale(renderer_, 2, 2);
@@ -175,6 +225,8 @@ void SdlVideoOutput::ShowIdle() {
   SDL_RenderDebugText(renderer_, 20, 56, "Open a game with Ctrl+O");
   SDL_RenderDebugText(renderer_, 20, 76, "or drop a cartridge file here.");
   SDL_SetRenderScale(renderer_, 1, 1);
+  if (overlay_)
+    overlay_();
   SDL_RenderPresent(renderer_);
 }
 
@@ -201,7 +253,10 @@ uint32_t SdlVideoOutput::WindowID() const noexcept {
 VideoViewport SdlVideoOutput::InputViewport() const {
   int width = 0, height = 0;
   SDL_GetWindowSize(window_, &width, &height);
-  return MakeVideoViewport(width, height, texH_ ? texH_ : 224, aspectCorrection_, integerScaling_);
+  auto viewport = MakeVideoViewport(width, std::max(0, height - topInset_ - bottomInset_),
+                                    texH_ ? texH_ : 224, aspectCorrection_, integerScaling_);
+  viewport.y += topInset_;
+  return viewport;
 }
 
 // EnsureTexture - (re)create texture when frame dimensions change

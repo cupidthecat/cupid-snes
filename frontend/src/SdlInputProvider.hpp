@@ -66,10 +66,20 @@ public:
     if (enabled_ == enabled)
       return;
     enabled_ = enabled;
+    ResetSampling();
+  }
+  void ResetSampling() noexcept {
     SDL_GetRelativeMouseState(nullptr, nullptr);
     mouseState_ = {};
     mouseFractionX_ = mouseFractionY_ = 0;
     lastMouseFrame_ = lastGunFrame_ = lastDeviceFrame_ = uint64_t(-1);
+  }
+  void SetUiCapture(bool keyboard, bool pointer) noexcept {
+    if (captureKeyboard_ == keyboard && capturePointer_ == pointer)
+      return;
+    captureKeyboard_ = keyboard;
+    capturePointer_ = pointer;
+    ResetSampling();
   }
 
 private:
@@ -101,6 +111,7 @@ private:
 
   KeyMap keyMap_;
   bool enabled_ = true;
+  bool captureKeyboard_ = false, capturePointer_ = false;
   ScriptRanges scriptedRanges_;
   std::array<SDL_Gamepad *, 8> gamepads_{};
   void RefreshGamepads(uint64_t frameIndex);

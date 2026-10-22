@@ -27,6 +27,9 @@ public:
   void Reset(bool powerCycle = false);
   core::Emulator *Machine() const noexcept;
   const LaunchRequest *Loaded() const noexcept;
+  void SetFirmware(std::shared_ptr<const core::CartridgeFirmware> firmware) {
+    config_.cartridgeFirmware = std::move(firmware);
+  }
 
 private:
   struct State;

@@ -1,5 +1,6 @@
 #include "SdlVideoOutput.hpp"
 #include "desktop/DesktopMenu.hpp"
+#include "desktop/DesktopUi.hpp"
 #include "desktop/FileDialogs.hpp"
 #include "snes/core/FilePath.hpp"
 
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -49,77 +51,156 @@ void Shortcuts() {
   Check(!DesktopMenu::KeyCommand(key), "Releasing a key does not execute a command");
 }
 
-void NativeMenu(SdlVideoOutput &video) {
+void SharedUi(SdlVideoOutput &video, const char *capturePath) {
+  using snes::frontend::DesktopUi;
   int width = 0, height = 0;
   SDL_GetWindowSize(video.Window(), &width, &height);
-  DesktopMenu menu(video.Window());
-#ifdef _WIN32
-  const auto window = static_cast<HWND>(SDL_GetPointerProperty(
-      SDL_GetWindowProperties(video.Window()), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-  const auto root = GetMenu(window);
-  RECT client{};
-  Check(GetClientRect(window, &client) && client.right == width && client.bottom == height,
-        "Native menus preserve the configured game area");
-  Check(root && GetMenuItemCount(root) == 3, "The window exposes File, Game and View menus");
-  constexpr unsigned first = 4100;
-  const auto file = GetSubMenu(root, 0), game = GetSubMenu(root, 1);
-  Check(GetMenuState(file, first + unsigned(DesktopCommand::Unload), MF_BYCOMMAND) & MF_GRAYED,
-        "Unload is unavailable without a cartridge");
-  menu.Update(true, true);
-  Check(!(GetMenuState(file, first + unsigned(DesktopCommand::Unload), MF_BYCOMMAND) & MF_GRAYED),
-        "Loading a cartridge enables unload");
-  Check(GetMenuState(game, first + unsigned(DesktopCommand::Pause), MF_BYCOMMAND) & MF_CHECKED,
-        "The native pause check reflects the running session");
-  Check(PostMessageW(window, WM_COMMAND, first + unsigned(DesktopCommand::Pause), 0),
-        "Posting a native menu command succeeds");
-  std::optional<DesktopCommand> command;
-  const auto deadline = SDL_GetTicks() + 1000;
-  while (!command && SDL_GetTicks() < deadline) {
+  DesktopUi ui(video.Window(), video.Renderer());
+  ui.Frame();
+  video.SetOverlay([&] { ui.Render(); }, ui.TopInset(), ui.BottomInset());
+  const auto frame = [&] {
+    ui.Frame();
+    video.Redraw();
+  };
+  const auto click = [&](float x, float y) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.windowID = video.WindowID();
+    event.motion.x = x;
+    event.motion.y = y;
+    ui.ProcessEvent(event);
+    frame();
+    event = {};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.windowID = video.WindowID();
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.down = true;
+    ui.ProcessEvent(event);
+    frame();
+    event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    event.button.down = false;
+    ui.ProcessEvent(event);
+    frame();
+  };
+  frame();
+  int actualWidth = 0, actualHeight = 0;
+  const auto resizeDeadline = SDL_GetTicks() + 1000;
+  do {
     SDL_PumpEvents();
-    command = menu.TakeCommand();
-    if (!command)
-      SDL_Delay(1);
+    SDL_GetWindowSize(video.Window(), &actualWidth, &actualHeight);
+    if (actualWidth == width && actualHeight == height + ui.TopInset() + ui.BottomInset())
+      break;
+    SDL_Delay(1);
+  } while (SDL_GetTicks() < resizeDeadline);
+  Check(actualWidth == width && actualHeight == height + ui.TopInset() + ui.BottomInset(),
+        "Desktop chrome preserves the configured game area");
+  const auto viewport = video.InputViewport();
+  Check(viewport.y == ui.TopInset() && viewport.height == height,
+        "Video starts beneath the shared menu bar");
+  Check(viewport.Aim(10, float(ui.TopInset() - 1)).offscreen &&
+            viewport.Aim(10, float(actualHeight - ui.BottomInset())).offscreen,
+        "Menu and status bars are outside light-gun input");
+
+  click(20, float(ui.TopInset()) / 2);
+  click(70, float(ui.TopInset()) + 12);
+  Check(ui.Menu().TakeCommand() == DesktopCommand::Open,
+        "Shared menu clicks reach the desktop command queue");
+  Check(!ui.Menu().TakeCommand(), "A menu selection is consumed exactly once");
+  click(80, float(ui.TopInset()) / 2);
+  click(90, float(ui.TopInset()) + 12);
+  Check(!ui.Menu().TakeCommand(), "Game commands are disabled without a cartridge");
+  ui.Menu().Update(true, true);
+  frame();
+  click(90, float(ui.TopInset()) + 12);
+  Check(ui.Menu().TakeCommand() == DesktopCommand::Pause,
+        "Loading a cartridge enables the shared game commands");
+
+  auto &editor = ui.PreferencesEditor();
+  snes::frontend::Preferences current;
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  Check(editor.Active() && ui.WantsKeyboard() && ui.WantsPointer(),
+        "The preference editor captures input on every platform");
+  if (capturePath) {
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+        SDL_RenderReadPixels(video.Renderer(), nullptr), SDL_DestroySurface);
+    Check(surface && SDL_SaveBMP(surface.get(), capturePath), SDL_GetError());
   }
-  Check(command == DesktopCommand::Pause, "Native menu selections reach the desktop command queue");
-  Check(!menu.TakeCommand(), "Native menu selections are consumed exactly once");
-  std::array<snes::frontend::LaunchRequest, 3> recent{};
-  recent[0].paths[0] =
-      snes::core::PathText(std::filesystem::path(u8"\u65e5\u672c\u8a9e & game.sfc"));
-  recent[1].kind = snes::frontend::LaunchRequest::Kind::Handheld;
-  recent[1].paths = {"adapter.sfc", "guest.gb", "boot.bin", ""};
-  recent[2].kind = snes::frontend::LaunchRequest::Kind::SufamiTurbo;
-  recent[2].paths = {"bios.bin", "slot-a.st", "slot-b.st", ""};
-  menu.SetRecent(recent);
-  const auto history = GetSubMenu(file, 6);
-  Check(history && GetMenuItemCount(history) == 5,
-        "Recent games include entries and a clear action");
-  wchar_t label[512]{};
-  Check(GetMenuStringW(history, first + unsigned(DesktopCommand::Recent0), label, 512,
-                       MF_BYCOMMAND) &&
-            std::wstring(label).find(L"\u65e5\u672c\u8a9e && game.sfc") != std::wstring::npos,
-        "Recent game menus preserve Unicode names and literal ampersands");
-  Check(GetMenuStringW(history, first + unsigned(DesktopCommand::Recent2), label, 512,
-                       MF_BYCOMMAND) &&
-            std::wstring(label).find(L"slot-a.st + slot-b.st") != std::wstring::npos,
-        "Slot history identifies both selected games");
-  command.reset();
-  Check(PostMessageW(window, WM_COMMAND, first + unsigned(DesktopCommand::Recent1), 0),
-        "A recent game selection can be posted");
-  const auto recentDeadline = SDL_GetTicks() + 1000;
-  while (!command && SDL_GetTicks() < recentDeadline) {
-    SDL_PumpEvents();
-    command = menu.TakeCommand();
-    if (!command)
-      SDL_Delay(1);
+  const float left = (actualWidth - 620) / 2.0f;
+  const float top = (actualHeight - 560) / 2.0f;
+  click(left + 20, top + 296);
+  click(left + 112, top + 540);
+  auto changes = editor.TakeChanges();
+  Check(changes && changes->mute && changes->scale == current.scale,
+        "Preference widgets submit the edited values through Apply");
+  editor.Rejected("The selected output device could not be opened.");
+  frame();
+  Check(editor.Active(), "A rejected preference change keeps the editor open");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->mute, "Rejected changes can be retried without losing edits");
+  editor.Applied();
+  frame();
+  Check(editor.Active(), "Apply keeps the editor open");
+  click(left + 20, top + 296);
+  SDL_Event escape{};
+  escape.type = SDL_EVENT_KEY_DOWN;
+  escape.key.windowID = video.WindowID();
+  escape.key.scancode = SDL_SCANCODE_ESCAPE;
+  escape.key.key = SDLK_ESCAPE;
+  ui.ProcessEvent(escape);
+  frame();
+  Check(!editor.Active() && !editor.TakeChanges(),
+        "Escape cancels preference editing without applying changes");
+  escape.type = SDL_EVENT_KEY_UP;
+  ui.ProcessEvent(escape);
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 90, top + 44);
+  click(left + 300, top + 102);
+  SDL_Event binding{};
+  binding.type = SDL_EVENT_KEY_DOWN;
+  binding.key.windowID = video.WindowID();
+  binding.key.scancode = SDL_SCANCODE_C;
+  binding.key.key = SDLK_C;
+  ui.ProcessEvent(binding);
+  frame();
+  binding.type = SDL_EVENT_KEY_UP;
+  ui.ProcessEvent(binding);
+  if (capturePath) {
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+        SDL_RenderReadPixels(video.Renderer(), nullptr), SDL_DestroySurface);
+    Check(surface && SDL_SaveBMP(surface.get(), (std::string(capturePath) + ".input.bmp").c_str()),
+          SDL_GetError());
   }
-  Check(command == DesktopCommand::Recent1, "Native recent selections retain their history index");
-  menu.SetRecent({});
-  Check(GetMenuItemCount(history) == 1,
-        "Clearing recent games replaces old entries with an empty marker");
-#else
-  menu.Update(true, true);
-  Check(!menu.TakeCommand(), "An untouched menu has no pending commands");
-#endif
+  click(left + 40, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->keyboard.up == SDL_SCANCODE_C,
+        "The shared Input page captures SDL scancodes without invoking game shortcuts");
+  editor.Rejected("This profile could not be saved.");
+  frame();
+  Check(editor.Active(), "A failed OK operation does not dismiss the editor");
+  click(left + 40, top + 540);
+  Check(editor.TakeChanges().has_value(), "OK retries the edited profile");
+  editor.Applied();
+  frame();
+  Check(!editor.Active(), "A successful OK operation closes the editor");
+
+  snes::core::VideoFrame picture;
+  picture.pixels.assign(picture.width * picture.height, 0xff0000ff);
+  video.Present(picture);
+  video.PresentPending();
+  std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+      SDL_RenderReadPixels(video.Renderer(), nullptr), SDL_DestroySurface);
+  Uint8 r = 0, g = 0, b = 0, a = 0;
+  Check(surface &&
+            SDL_ReadSurfacePixel(surface.get(), width / 2, ui.TopInset() + height / 2, &r, &g, &b,
+                                 &a) &&
+            r == 255 && g == 0 && b == 0,
+        "Shared UI rendering preserves the game picture");
+  video.SetOverlay({});
 }
 
 void Screenshots(SdlVideoOutput &video) {
@@ -183,7 +264,8 @@ void CancelPicker(SdlVideoOutput &video) {
 
 int main(int argc, char **argv) {
 #ifndef _WIN32
-  SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  if (!SDL_getenv("SNES_TEST_WINDOW"))
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #endif
   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
   if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -199,12 +281,7 @@ int main(int argc, char **argv) {
     config.deferPresentation = true;
     SdlVideoOutput video(config);
     video.ShowIdle();
-    if (argc == 2) {
-      std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
-          SDL_RenderReadPixels(video.Renderer(), nullptr), SDL_DestroySurface);
-      Check(surface && SDL_SaveBMP(surface.get(), argv[1]), SDL_GetError());
-    }
-    NativeMenu(video);
+    SharedUi(video, argc == 2 ? argv[1] : nullptr);
     CancelPicker(video);
     Screenshots(video);
   } catch (const std::exception &error) {

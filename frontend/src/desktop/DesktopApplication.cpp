@@ -1,5 +1,6 @@
 #include "DesktopApplication.hpp"
 #include "DesktopMenu.hpp"
+#include "DesktopUi.hpp"
 #include "FileDialogs.hpp"
 #include "FramePacer.hpp"
 #include "SdlAudioOutput.hpp"
@@ -17,9 +18,14 @@
 
 namespace snes::frontend {
 namespace {
-std::filesystem::path ScreenshotPath(const Preferences &preferences) {
+bool WindowFocused(SDL_Window *window) {
+  const auto flags = SDL_GetWindowFlags(window);
+  return (flags & SDL_WINDOW_INPUT_FOCUS) != 0 &&
+         (flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) == 0;
+}
+std::filesystem::path ScreenshotPath(const Preferences &preferences, const PreferencesFile &file) {
   if (!preferences.screenshotDirectory.empty()) {
-    auto directory = core::FilePath(preferences.screenshotDirectory);
+    auto directory = file.ResolvePath(preferences.screenshotDirectory);
     std::filesystem::create_directories(directory);
     return directory / ("screenshot-" + std::to_string(SDL_GetTicksNS()) + ".bmp");
   }
@@ -52,7 +58,8 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
     if (!config.cartridgeFirmware && !preferences.firmwareDirectory.empty()) {
       auto firmware = std::make_shared<core::CartridgeFirmware>();
       std::string error;
-      if (!firmware->LoadDirectory(core::FilePath(preferences.firmwareDirectory), &error))
+      if (!firmware->LoadDirectory(preferencesFile.ResolvePath(preferences.firmwareDirectory),
+                                   &error))
         throw std::runtime_error(error);
       config.cartridgeFirmware = std::move(firmware);
     }
@@ -81,7 +88,10 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
         }
       }
     } saveOnExit{session};
-    DesktopMenu menu(video.Window());
+    DesktopUi ui(video.Window(), video.Renderer());
+    ui.Frame();
+    video.SetOverlay([&] { ui.Render(); }, ui.TopInset(), ui.BottomInset());
+    auto &menu = ui.Menu();
     menu.SetRecent(preferences.recent);
     FileDialogs dialogs(video.Window());
     FramePacer pacer;
@@ -89,8 +99,11 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
     bool quitPending = false;
     bool focusPaused = false;
     bool audioMuted = preferences.mute;
+    bool preferencesActive = false, preferencesWasPaused = false;
+    bool errorActive = false, errorWasPaused = false;
     unsigned steps = 0;
     uint64_t presentationTime = 0;
+    uint64_t nextUiFrame = 0;
 
     const auto refresh = [&] {
       std::string title = "Cupid-SNES";
@@ -102,6 +115,7 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
         title += " (Paused)";
       SDL_SetWindowTitle(video.Window(), title.c_str());
       menu.Update(session.Machine() != nullptr, paused);
+      ui.SetStatus(session.Machine() ? title : "Ready - Ctrl+O to open a game");
     };
     const auto resetPresentation = [&] {
       audio.Clear();
@@ -114,19 +128,23 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
         return;
       paused = value;
       resetPresentation();
+      if (paused)
+        SDL_SetWindowRelativeMouseMode(video.Window(), false);
       if (!paused && !focusPaused && session.Machine())
         audio.Resume();
       refresh();
     };
     const auto report = [&](const std::exception &error) {
       std::cerr << error.what() << '\n';
-      const bool previous = paused;
+      if (!ui.ErrorOpen())
+        errorWasPaused = paused;
+      errorActive = true;
       setPaused(true);
-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Cupid-SNES", error.what(), video.Window());
-      setPaused(previous);
+      ui.ShowError(error.what());
     };
     const auto open = [&](const LaunchRequest &request) {
       session.Open(request);
+      input.ResetSampling();
       resetPresentation();
       video.ClearPicture();
       paused = false;
@@ -152,10 +170,66 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
       open(*initial);
     else
       video.ShowIdle();
+    refresh();
+
+    const auto presentation = [](const Preferences &p) {
+      return SdlVideoOutput::Presentation{p.scale, p.aspectCorrection, p.integerScaling,
+                                          p.linearFilter};
+    };
+    const auto applyPreferences = [&](const Preferences &candidate) {
+      candidate.Validate();
+      auto next = candidate;
+      std::shared_ptr<const core::CartridgeFirmware> firmware;
+      const bool changedFirmware = next.firmwareDirectory != preferences.firmwareDirectory;
+      if (changedFirmware && !next.firmwareDirectory.empty()) {
+        auto loaded = std::make_shared<core::CartridgeFirmware>();
+        std::string error;
+        if (!loaded->LoadDirectory(preferencesFile.ResolvePath(next.firmwareDirectory), &error))
+          throw std::runtime_error(error);
+        firmware = std::move(loaded);
+      }
+      const auto shots = preferencesFile.ResolvePath(next.screenshotDirectory);
+      if (!shots.empty() && std::filesystem::exists(shots) && !std::filesystem::is_directory(shots))
+        throw std::runtime_error("Screenshot path must be a directory");
+      const bool deviceChanged = next.audioDevice != preferences.audioDevice;
+      const bool previousMuted = audioMuted;
+      const bool nextMuted = next.mute || (next.muteUnfocused && !WindowFocused(video.Window()));
+      try {
+        if (deviceChanged)
+          audio.SelectDevice(next.audioDevice);
+        video.SetPresentation(presentation(next));
+        audio.SetVolume(next.volume, nextMuted);
+        input.SetKeyMap(next.keyboard);
+        preferencesFile.Save(next);
+      } catch (...) {
+        const auto original = std::current_exception();
+        try {
+          if (deviceChanged)
+            audio.SelectDevice(preferences.audioDevice);
+          audio.SetVolume(preferences.volume, previousMuted);
+        } catch (const std::exception &error) {
+          std::cerr << "Cannot restore audio settings: " << error.what() << '\n';
+        }
+        try {
+          video.SetPresentation(presentation(preferences));
+        } catch (const std::exception &error) {
+          std::cerr << "Cannot restore video settings: " << error.what() << '\n';
+        }
+        input.SetKeyMap(preferences.keyboard);
+        std::rethrow_exception(original);
+      }
+      if (changedFirmware)
+        session.SetFirmware(std::move(firmware));
+      preferences = std::move(next);
+      audioMuted = nextMuted;
+      input.ResetSampling();
+      refresh();
+    };
 
     const auto execute = [&](DesktopCommand command) {
       try {
-        if (!running || (dialogs.Active() && command != DesktopCommand::Quit))
+        if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() || ui.ErrorOpen()) &&
+                         command != DesktopCommand::Quit))
           return;
         using Command = DesktopCommand;
         if (command >= Command::Recent0 && command <= Command::Recent9) {
@@ -168,6 +242,12 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
           preferences.recent.clear();
           menu.SetRecent(preferences.recent);
           preferencesFile.Save(preferences);
+        } else if (command == Command::Preferences) {
+          preferencesWasPaused = paused;
+          ui.PreferencesEditor().Open(preferences, preferencesFile.Path());
+          preferencesActive = true;
+          steps = 0;
+          setPaused(true);
         } else if (command <= Command::OpenPowerFest) {
           dialogWasPaused = paused;
           setPaused(true);
@@ -187,13 +267,9 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
             dialogs.Cancel();
             return;
           }
+          preferencesFile.Save(preferences);
           session.Close();
           resetPresentation();
-          try {
-            preferencesFile.Save(preferences);
-          } catch (const std::exception &error) {
-            report(error);
-          }
           running = false;
         } else if (command == Command::Fullscreen) {
           if (!SDL_SetWindowFullscreen(
@@ -225,6 +301,7 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
           case Command::Reset:
           case Command::PowerCycle:
             session.Reset(command == Command::PowerCycle);
+            input.ResetSampling();
             resetPresentation();
             video.ClearPicture();
             steps = 0;
@@ -233,10 +310,10 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
             refresh();
             break;
           case Command::Screenshot: {
-            const auto path = ScreenshotPath(preferences);
+            const auto path = ScreenshotPath(preferences, preferencesFile);
             video.SaveScreenshot(path);
             const auto title = "Screenshot saved: " + core::PathText(path);
-            SDL_SetWindowTitle(video.Window(), title.c_str());
+            ui.SetStatus(title);
             break;
           }
           default:
@@ -251,12 +328,16 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
     while (running) {
       SDL_Event event;
       while (running && SDL_PollEvent(&event)) {
+        const bool capturedKeyboard = ui.WantsKeyboard();
+        ui.ProcessEvent(event);
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
           execute(DesktopCommand::Quit);
         else if (event.type == SDL_EVENT_KEY_DOWN) {
-          if (const auto command = DesktopMenu::KeyCommand(event.key))
-            execute(*command);
-        } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active()) {
+          if (!capturedKeyboard && !ui.WantsKeyboard())
+            if (const auto command = DesktopMenu::KeyCommand(event.key))
+              execute(*command);
+        } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
+                   !ui.PreferencesEditor().Active() && !ui.ErrorOpen()) {
           try {
             LaunchRequest request;
             request.paths[0] = event.drop.data;
@@ -272,6 +353,12 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
             video.ShowIdle();
         }
       }
+      const auto uiNow = SDL_GetTicksNS();
+      const bool uiFrame = uiNow >= nextUiFrame;
+      if (uiFrame) {
+        ui.Frame();
+        nextUiFrame = uiNow + 16'000'000;
+      }
       while (running) {
         const auto command = menu.TakeCommand();
         if (!command)
@@ -280,6 +367,23 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
       }
       if (!running)
         break;
+      if (const auto changes = ui.PreferencesEditor().TakeChanges()) {
+        try {
+          applyPreferences(*changes);
+          ui.PreferencesEditor().Applied();
+        } catch (const std::exception &error) {
+          ui.PreferencesEditor().Rejected(error.what());
+        }
+      }
+      if (preferencesActive && !ui.PreferencesEditor().Active()) {
+        preferencesActive = false;
+        input.ResetSampling();
+        setPaused(preferencesWasPaused);
+      }
+      if (errorActive && !ui.ErrorOpen()) {
+        errorActive = false;
+        setPaused(errorWasPaused);
+      }
       try {
         if (auto selected = dialogs.Poll()) {
           if (quitPending) {
@@ -299,17 +403,17 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
         report(error);
       }
       auto *emulator = session.Machine();
-      const auto windowFlags = SDL_GetWindowFlags(video.Window());
-      const bool focused = (windowFlags & SDL_WINDOW_INPUT_FOCUS) != 0 &&
-                           (windowFlags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) == 0;
+      const bool focused = WindowFocused(video.Window());
       const bool suspend = !focused && preferences.focus == FocusBehavior::Pause;
       input.SetEnabled(focused || preferences.focus == FocusBehavior::AllowInput);
+      input.SetUiCapture(ui.WantsKeyboard(), ui.WantsPointer());
       const bool muted = preferences.mute || (preferences.muteUnfocused && !focused);
       if (audioMuted != muted) {
         audio.SetVolume(preferences.volume, muted);
         audioMuted = muted;
       }
       const bool capture = emulator && focused && !paused && !dialogs.Active() &&
+                           !ui.WantsPointer() &&
                            (devices[0] == core::ControllerDevice::Mouse ||
                             devices[1] == core::ControllerDevice::Mouse);
       if (SDL_GetWindowRelativeMouseMode(video.Window()) != capture)
@@ -321,8 +425,11 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
           audio.Resume();
         refresh();
       }
-      if (!emulator || dialogs.Active() || ((paused || focusPaused) && !steps)) {
-        SDL_Delay(10);
+      if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() || ui.ErrorOpen() ||
+          ((paused || focusPaused) && !steps)) {
+        if (uiFrame)
+          video.Redraw();
+        SDL_Delay(2);
         continue;
       }
       if (picturePending) {

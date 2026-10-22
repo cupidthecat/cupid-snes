@@ -90,6 +90,15 @@ void Preferences::Remember(LaunchRequest request) {
 }
 PreferencesFile::PreferencesFile(std::filesystem::path path) : path_(std::move(path)) {}
 
+std::filesystem::path PreferencesFile::ResolvePath(std::string_view text) const {
+  if (text.empty())
+    return {};
+  auto path = core::FilePath(text);
+  if (!path.is_absolute())
+    path = std::filesystem::absolute(path_).parent_path() / path;
+  return path.lexically_normal();
+}
+
 std::filesystem::path PreferencesFile::DefaultPath() {
   char *raw = SDL_GetPrefPath("Cupid", "Cupid-SNES");
   if (!raw)
@@ -193,8 +202,9 @@ void PreferencesFile::Save(const Preferences &p) {
     throw std::runtime_error("Preferences exceed the supported file size");
   if (!path_.parent_path().empty())
     std::filesystem::create_directories(path_.parent_path());
+  auto recent = p.recent;
   WriteFileAtomically(path_, {reinterpret_cast<const uint8_t *>(text.data()), text.size()});
   unknown_ = std::move(extra);
-  loadedRecent_ = p.recent;
+  loadedRecent_ = std::move(recent);
 }
 } // namespace snes::frontend

@@ -1,132 +1,39 @@
 #include "DesktopMenu.hpp"
 
+#include "imgui.h"
 #include "snes/core/FilePath.hpp"
+#include <algorithm>
 #include <deque>
-#include <stdexcept>
-#include <utility>
+#include <string>
 #include <vector>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace snes::frontend {
 struct DesktopMenu::Impl {
   std::deque<DesktopCommand> commands;
-#ifdef _WIN32
-  HWND window = nullptr;
-  HMENU menu = nullptr;
-  HMENU recent = nullptr;
-  std::vector<std::pair<HMENU, DesktopCommand>> items;
-  static constexpr unsigned firstId = 4100;
-  static bool SDLCALL Message(void *userdata, MSG *message) {
-    auto &self = *static_cast<Impl *>(userdata);
-    if (message->hwnd == self.window && message->message == WM_COMMAND &&
-        HIWORD(message->wParam) == 0 && message->lParam == 0) {
-      const unsigned id = LOWORD(message->wParam);
-      if (id >= firstId && id <= firstId + unsigned(DesktopCommand::Recent9)) {
-        self.commands.push_back(DesktopCommand(id - firstId));
-        return false;
-      }
-    }
-    return true;
-  }
-  void Add(HMENU parent, const wchar_t *text, DesktopCommand command) {
-    if (!AppendMenuW(parent, MF_STRING, firstId + unsigned(command), text))
-      throw std::runtime_error("Cannot create desktop menu item");
-    items.emplace_back(parent, command);
-  }
-  HMENU Submenu(const wchar_t *text) {
-    const auto child = CreatePopupMenu();
-    if (!child || !AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child), text)) {
-      if (child)
-        DestroyMenu(child);
-      throw std::runtime_error("Cannot create desktop menu");
-    }
-    return child;
-  }
-#endif
-  ~Impl() {
-#ifdef _WIN32
-    SDL_SetWindowsMessageHook(nullptr, nullptr);
-    if (window)
-      SetMenu(window, nullptr);
-    if (menu)
-      DestroyMenu(menu);
-#endif
+  std::vector<std::string> recent;
+  bool loaded = false, paused = false;
+
+  void Item(const char *label, const char *shortcut, DesktopCommand command, bool enabled = true,
+            bool selected = false) {
+    if (ImGui::MenuItem(label, shortcut, selected, enabled))
+      commands.push_back(command);
   }
 };
 
-DesktopMenu::DesktopMenu(SDL_Window *window) : impl_(std::make_unique<Impl>()) {
-#ifdef _WIN32
-  auto &self = *impl_;
-  self.window = static_cast<HWND>(SDL_GetPointerProperty(
-      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-  if (!self.window)
-    throw std::runtime_error("Cannot find the desktop window");
-  int width = 0, height = 0;
-  SDL_GetWindowSize(window, &width, &height);
-  self.menu = CreateMenu();
-  if (!self.menu)
-    throw std::runtime_error("Cannot create desktop menus");
-  const auto file = self.Submenu(L"&File"), game = self.Submenu(L"&Game"),
-             view = self.Submenu(L"&View");
-  self.Add(file, L"&Open Game...\tCtrl+O", DesktopCommand::Open);
-  self.Add(file, L"Open Super Game &Boy...", DesktopCommand::OpenHandheld);
-  self.Add(file, L"Open Sufami &Turbo...", DesktopCommand::OpenSufami);
-  self.Add(file, L"Open &Broadcast Cartridge...", DesktopCommand::OpenBroadcast);
-  self.Add(file, L"Open Campus Challenge &92...", DesktopCommand::OpenCampus);
-  self.Add(file, L"Open PowerFest &94...", DesktopCommand::OpenPowerFest);
-  self.recent = CreatePopupMenu();
-  if (!self.recent)
-    throw std::runtime_error("Cannot create recent game menu");
-  if (!AppendMenuW(file, MF_POPUP, reinterpret_cast<UINT_PTR>(self.recent), L"&Recent Games")) {
-    DestroyMenu(self.recent);
-    self.recent = nullptr;
-    throw std::runtime_error("Cannot create recent game menu");
-  }
-  AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-  self.Add(file, L"&Unload Game\tCtrl+W", DesktopCommand::Unload);
-  self.Add(file, L"&Quit\tCtrl+Q", DesktopCommand::Quit);
-  self.Add(game, L"&Pause\tP", DesktopCommand::Pause);
-  self.Add(game, L"&Frame Advance\tN", DesktopCommand::FrameAdvance);
-  self.Add(game, L"&Reset\tF5", DesktopCommand::Reset);
-  self.Add(game, L"Power &Cycle", DesktopCommand::PowerCycle);
-  self.Add(view, L"&Fullscreen\tF11", DesktopCommand::Fullscreen);
-  self.Add(view, L"&Screenshot\tF12", DesktopCommand::Screenshot);
-  if (!SetMenu(self.window, self.menu))
-    throw std::runtime_error("Cannot attach desktop menus");
-  DrawMenuBar(self.window);
-  // Attaching a native menu must not consume part of the game picture.
-  if (!SDL_SetWindowSize(window, width, height))
-    throw std::runtime_error(SDL_GetError());
-  SDL_SetWindowsMessageHook(Impl::Message, &self);
-#else
-  (void)window;
-#endif
-  Update(false, false);
-  SetRecent({});
-}
+DesktopMenu::DesktopMenu() : impl_(std::make_unique<Impl>()) {}
 DesktopMenu::~DesktopMenu() = default;
 
 void DesktopMenu::SetRecent(std::span<const LaunchRequest> requests) {
-#ifdef _WIN32
-  auto &self = *impl_;
-  while (GetMenuItemCount(self.recent) > 0)
-    DeleteMenu(self.recent, 0, MF_BYPOSITION);
-  const auto count = std::min<size_t>(requests.size(), 10);
-  for (unsigned index = 0; index < count; ++index) {
-    const auto &request = requests[index];
-    std::wstring name;
+  auto &names = impl_->recent;
+  names.clear();
+  for (const auto &request : requests.first(std::min<size_t>(requests.size(), 10))) {
+    std::string name;
     const auto asset = [&](unsigned index) {
       if (request.paths[index].empty() || request.paths[index] == "-")
         return;
       if (!name.empty())
-        name += L" + ";
-      name += core::FilePath(request.paths[index]).filename().native();
+        name += " + ";
+      name += core::PathText(core::FilePath(request.paths[index]).filename());
     };
     if (request.kind == LaunchRequest::Kind::Handheld)
       asset(1);
@@ -144,49 +51,71 @@ void DesktopMenu::SetRecent(std::span<const LaunchRequest> requests) {
         asset(1);
         asset(2);
         asset(3);
-        name += L" [DIP " + std::to_wstring(request.competitionDip) + L"]";
+        name += " [DIP " + std::to_string(request.competitionDip) + "]";
       }
     }
-    std::wstring label = std::to_wstring(index + 1) + L". ";
-    for (wchar_t c : name) {
-      label += c;
-      if (c == L'&')
-        label += L'&';
-    }
-    if (!AppendMenuW(self.recent, MF_STRING,
-                     Impl::firstId + unsigned(DesktopCommand::Recent0) + index, label.c_str()))
-      throw std::runtime_error("Cannot create recent game item");
+    names.push_back(std::to_string(names.size() + 1) + ". " + name);
   }
-  if (!count)
-    AppendMenuW(self.recent, MF_GRAYED, 0, L"No recent games");
-  else {
-    AppendMenuW(self.recent, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(self.recent, MF_STRING, Impl::firstId + unsigned(DesktopCommand::ClearRecent),
-                L"&Clear Recent Games");
-  }
-#else
-  (void)requests;
-#endif
 }
 
 void DesktopMenu::Update(bool loaded, bool paused) {
-#ifdef _WIN32
-  for (const auto &[menu, command] : impl_->items) {
-    const bool needsGame =
-        command == DesktopCommand::Unload || command == DesktopCommand::Pause ||
-        command == DesktopCommand::FrameAdvance || command == DesktopCommand::Reset ||
-        command == DesktopCommand::PowerCycle || command == DesktopCommand::Screenshot;
-    EnableMenuItem(menu, Impl::firstId + unsigned(command),
-                   MF_BYCOMMAND | ((!needsGame || loaded) ? MF_ENABLED : MF_GRAYED));
-    if (command == DesktopCommand::Pause)
-      CheckMenuItem(menu, Impl::firstId + unsigned(command),
-                    MF_BYCOMMAND | (paused ? MF_CHECKED : MF_UNCHECKED));
-  }
-#else
-  (void)loaded;
-  (void)paused;
-#endif
+  impl_->loaded = loaded;
+  impl_->paused = paused;
 }
+
+void DesktopMenu::Draw(bool enabled) {
+  auto &self = *impl_;
+  if (!ImGui::BeginMainMenuBar())
+    return;
+  using C = DesktopCommand;
+  if (ImGui::BeginMenu("File", enabled)) {
+    self.Item("Open Game...", "Ctrl+O", C::Open);
+    self.Item("Open Super Game Boy...", nullptr, C::OpenHandheld);
+    self.Item("Open Sufami Turbo...", nullptr, C::OpenSufami);
+    self.Item("Open Broadcast Cartridge...", nullptr, C::OpenBroadcast);
+    self.Item("Open Campus Challenge 92...", nullptr, C::OpenCampus);
+    self.Item("Open PowerFest 94...", nullptr, C::OpenPowerFest);
+    if (ImGui::BeginMenu("Recent Games")) {
+      if (self.recent.empty())
+        ImGui::TextDisabled("No recent games");
+      for (unsigned i = 0; i < self.recent.size(); ++i) {
+        ImGui::PushID(int(i));
+        // Filename characters must not become widget identifiers.
+        const auto size = ImGui::CalcTextSize(self.recent[i].c_str(), nullptr, false);
+        const auto position = ImGui::GetCursorScreenPos();
+        if (ImGui::Selectable("##recent", false, 0, size))
+          self.commands.push_back(C(unsigned(C::Recent0) + i));
+        ImGui::GetWindowDrawList()->AddText(position, ImGui::GetColorU32(ImGuiCol_Text),
+                                            self.recent[i].c_str());
+        ImGui::PopID();
+      }
+      if (!self.recent.empty()) {
+        ImGui::Separator();
+        self.Item("Clear Recent Games", nullptr, C::ClearRecent);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    self.Item("Unload Game", "Ctrl+W", C::Unload, self.loaded);
+    self.Item("Preferences...", "Ctrl+,", C::Preferences);
+    self.Item("Quit", "Ctrl+Q", C::Quit);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("Game", enabled)) {
+    self.Item("Pause", "P", C::Pause, self.loaded, self.paused);
+    self.Item("Frame Advance", "N", C::FrameAdvance, self.loaded);
+    self.Item("Reset", "F5", C::Reset, self.loaded);
+    self.Item("Power Cycle", nullptr, C::PowerCycle, self.loaded);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("View", enabled)) {
+    self.Item("Fullscreen", "F11", C::Fullscreen);
+    self.Item("Screenshot", "F12", C::Screenshot, self.loaded);
+    ImGui::EndMenu();
+  }
+  ImGui::EndMainMenuBar();
+}
+
 std::optional<DesktopCommand> DesktopMenu::TakeCommand() {
   if (impl_->commands.empty())
     return {};
@@ -194,10 +123,13 @@ std::optional<DesktopCommand> DesktopMenu::TakeCommand() {
   impl_->commands.pop_front();
   return command;
 }
+
 std::optional<DesktopCommand> DesktopMenu::KeyCommand(const SDL_KeyboardEvent &key) {
   if (key.repeat || key.type != SDL_EVENT_KEY_DOWN)
     return {};
   if (key.mod & SDL_KMOD_CTRL) {
+    if (key.scancode == SDL_SCANCODE_COMMA)
+      return DesktopCommand::Preferences;
     if (key.scancode == SDL_SCANCODE_O)
       return DesktopCommand::Open;
     if (key.scancode == SDL_SCANCODE_W)

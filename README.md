@@ -25,7 +25,7 @@ The implementation details and validation boundaries are documented below. The [
 
 ## Build
 
-Build from the repository directory with CMake 3.21 or newer, Ninja, and a C++20 compiler. CMake uses an installed SDL3 when it finds one. Otherwise it fetches SDL3 release 3.2.8 and builds it as a static library, so the first configure may need network access.
+Build from the repository directory with CMake 3.21 or newer, Ninja, and a C++20 compiler. CMake uses an installed SDL3 when it finds one. Otherwise it fetches SDL3 release 3.2.8 and builds it as a static library. The desktop UI uses Dear ImGui 1.92.5, fetched from a release archive with a checked SHA-256 digest. The first configure needs network access for missing dependencies.
 
 The repository provides Debug and Release presets. The usual Release build and test commands are:
 

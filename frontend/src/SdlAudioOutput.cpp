@@ -21,35 +21,59 @@ SdlAudioOutput::SdlAudioOutput(const Config &config) {
   sampleRate_ = config.sampleRate;
   targetQueuedBytes_ =
       ((sampleRate_ * FramePacer::kTargetAudioQueueMilliseconds + 999) / 1000) * 2 * sizeof(float);
+  SelectDevice(config.deviceName);
+}
+
+void SdlAudioOutput::SelectDevice(const std::string &name) {
   // Describe the format we will push: stereo float at the SNES sample rate.
   SDL_AudioSpec spec{};
   spec.format = SDL_AUDIO_F32;
-  spec.channels = config.channels;
-  spec.freq = config.sampleRate;
+  spec.channels = 2;
+  spec.freq = sampleRate_;
 
   // SDL_OpenAudioDeviceStream opens a device, creates a stream, and binds
   // them together.  Passing nullptr for the callback means we will push
   // data ourselves via SDL_PutAudioStreamData (queue-based model).
   // The stream stays paused until Resume() is requested and input is ready.
   auto device = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
-  if (!config.deviceName.empty()) {
+  if (!name.empty()) {
     int count = 0;
     auto *devices = SDL_GetAudioPlaybackDevices(&count);
     for (int index = 0; devices && index < count; ++index)
-      if (const char *name = SDL_GetAudioDeviceName(devices[index]);
-          name && config.deviceName == name) {
+      if (const char *deviceName = SDL_GetAudioDeviceName(devices[index]);
+          deviceName && name == deviceName) {
         device = devices[index];
         break;
       }
     SDL_free(devices);
   }
-  stream_ = SDL_OpenAudioDeviceStream(device, &spec,
-                                      nullptr,  // no callback - push model
-                                      nullptr); // no userdata
+  auto *next = SDL_OpenAudioDeviceStream(device, &spec,
+                                         nullptr,  // no callback - push model
+                                         nullptr); // no userdata
 
-  if (!stream_) {
+  if (!next) {
     throw std::runtime_error(std::string("SDL_OpenAudioDeviceStream failed: ") + SDL_GetError());
   }
+  if (!SDL_SetAudioStreamGain(next, muted_ ? 0.0f : volume_ / 100.0f)) {
+    const std::string error = SDL_GetError();
+    SDL_DestroyAudioStream(next);
+    throw std::runtime_error(error);
+  }
+  if (stream_)
+    SDL_DestroyAudioStream(stream_);
+  stream_ = next;
+  playbackRequested_ = playing_ = false;
+}
+
+std::vector<std::string> SdlAudioOutput::DeviceNames() {
+  std::vector<std::string> names;
+  int count = 0;
+  auto *devices = SDL_GetAudioPlaybackDevices(&count);
+  for (int index = 0; devices && index < count; ++index)
+    if (const char *name = SDL_GetAudioDeviceName(devices[index]))
+      names.emplace_back(name);
+  SDL_free(devices);
+  return names;
 }
 
 SdlAudioOutput::~SdlAudioOutput() {
@@ -118,6 +142,8 @@ void SdlAudioOutput::SetVolume(int percent, bool muted) {
     throw std::invalid_argument("Audio volume must be between 0 and 200 percent");
   if (stream_ && !SDL_SetAudioStreamGain(stream_, muted ? 0.0f : percent / 100.0f))
     throw std::runtime_error(std::string("Cannot set audio volume: ") + SDL_GetError());
+  volume_ = percent;
+  muted_ = muted;
 }
 
 int SdlAudioOutput::QueuedBytes() const {

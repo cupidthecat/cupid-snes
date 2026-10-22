@@ -96,6 +96,12 @@ int main() {
     }
     Check(firstPlayer >= 0 && secondPlayer >= 0 && firstPlayer != secondPlayer,
           "Host gamepads map to independent players");
+    input.SetUiCapture(true, true);
+    Check(input.PollController(firstPlayer, 0).b && input.PollController(secondPlayer, 0).a,
+          "Keyboard and pointer UI capture preserve independent gamepad input");
+    Check(input.PollMouse(0, 0).dx == 0 && input.PollLightGun(1, 0, 0).offscreen,
+          "Pointer UI capture neutralizes relative mouse and gun input");
+    input.SetUiCapture(false, false);
     input.SetEnabled(false);
     Check(!input.PollController(firstPlayer, 0).b && !input.PollController(secondPlayer, 0).a &&
               input.PollLightGun(1, 0, 0).offscreen && input.PollMouse(0, 0).dx == 0,

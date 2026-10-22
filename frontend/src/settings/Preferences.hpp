@@ -33,6 +33,7 @@ public:
     return path_;
   }
   static std::filesystem::path DefaultPath();
+  std::filesystem::path ResolvePath(std::string_view path) const;
 
 private:
   std::filesystem::path path_;

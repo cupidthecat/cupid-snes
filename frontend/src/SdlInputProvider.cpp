@@ -75,7 +75,7 @@ snes::core::InputState SdlInputProvider::PollController(int player, uint64_t fra
 }
 
 snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameIndex) {
-  if (!enabled_) {
+  if (!enabled_ || capturePointer_) {
     SDL_GetRelativeMouseState(nullptr, nullptr);
     return {};
   }
@@ -98,7 +98,7 @@ snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameI
 }
 
 snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
-  if (!enabled_)
+  if (!enabled_ || captureKeyboard_)
     return {};
   // SDL_GetKeyboardState returns a pointer to an internal array indexed by
   // SDL_Scancode.  The array is updated by SDL_PumpEvents(), which the main
@@ -110,7 +110,7 @@ snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
 
   // Helper: safely check a scancode against the array bounds.
   auto pressed = [&](SDL_Scancode sc) -> bool {
-    return static_cast<int>(sc) < numKeys && keys[sc];
+    return sc > SDL_SCANCODE_UNKNOWN && static_cast<int>(sc) < numKeys && keys[sc];
   };
 
   snes::core::InputState state{};
@@ -151,7 +151,7 @@ snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint
   int count = 0;
   const auto *keys = SDL_GetKeyboardState(&count);
   const auto pressed = [&](SDL_Scancode key) {
-    return keys && int(key) >= 0 && int(key) < count && keys[key];
+    return !captureKeyboard_ && keys && int(key) >= 0 && int(key) < count && keys[key];
   };
   if (lastGunFrame_ != frameIndex) {
     lastGunFrame_ = frameIndex;
@@ -165,9 +165,9 @@ snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint
   if (gun == 0) {
     float x = 0, y = 0;
     const auto buttons = SDL_GetMouseState(&x, &y);
-    state = gunViewport_.Aim(x, y);
-    state.trigger = (buttons & SDL_BUTTON_LMASK) != 0;
-    state.cursor = (buttons & SDL_BUTTON_RMASK) != 0;
+    state = capturePointer_ ? snes::core::LightGunState{} : gunViewport_.Aim(x, y);
+    state.trigger = !capturePointer_ && (buttons & SDL_BUTTON_LMASK) != 0;
+    state.cursor = !capturePointer_ && (buttons & SDL_BUTTON_RMASK) != 0;
     state.start = pressed(SDL_SCANCODE_RETURN);
     state.pause = pressed(SDL_SCANCODE_P);
     state.turbo = pressed(SDL_SCANCODE_T);
