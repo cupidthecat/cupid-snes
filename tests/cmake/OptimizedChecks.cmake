@@ -45,6 +45,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_cartridge_device_tests
   snes_superfx_tests
   snes_cartridge_processor_tests
+  snes_st010_tests
   snes_cx4_processor_tests
   snes_sa1_tests
   snes_st018_tests

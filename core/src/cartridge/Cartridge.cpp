@@ -1090,6 +1090,7 @@ bool Cartridge::SelectsLoRomSram(uint32_t cpuAddress) const {
   switch (header_.mapping) {
   case MappingType::St011:
   case MappingType::St010:
+    return false;
   case MappingType::LoRom:
   case MappingType::ExLoRom:
   case MappingType::BroadcastLoRom:

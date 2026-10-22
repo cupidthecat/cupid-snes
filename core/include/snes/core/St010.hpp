@@ -14,8 +14,6 @@ public:
 
 private:
   void Execute(std::span<uint8_t> ram);
-  bool enabled_ = false;
-  uint8_t command_ = 0, execute_ = 0;
 };
 
 } // namespace snes::core

@@ -1,4 +1,5 @@
 #include "ConsoleConfig.hpp"
+#include "cartridge/St010CommandFixture.hpp"
 #include "snes/core/St010.hpp"
 #include "st010_cases.hpp"
 
@@ -25,12 +26,30 @@ uint16_t Word(const Ram &ram, unsigned offset) {
 uint32_t Long(const Ram &ram, unsigned offset) {
   return Word(ram, offset) | (uint32_t(Word(ram, offset + 2)) << 16);
 }
+void CpuPortGuest() {
+  constexpr std::array<uint8_t, 22> expected{0,    0x55, 0x12, 0x60, 0xe0, 0x73, 0x73, 0x93,
+                                             0x70, 0xf0, 0x90, 0x90, 6,    5,    0x38, 1,
+                                             6,    7,    0x7e, 0x55, 0x11, 0x7e};
+  for (bool pal : {false, true}) {
+    auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+    Check(machine->LoadCartridge(st010_test::PortGuest(pal)), "The command-port guest loads");
+    Check(!machine->LoadedCartridge()->HasSignalProcessor(), "The guest selects command execution");
+    for (bool warm : {false, true}) {
+      if (warm)
+        Check(machine->Reset(), "The command-port guest resets");
+      machine->StepFrame();
+      const auto *wram = machine->GetBus().WramData();
+      Check(wram[0x120] == 0xa5, "The command-port guest completes");
+      Check(std::equal(expected.begin(), expected.end(), wram + 0x200),
+            "CPU command-port readbacks, mirrors, open bus and ROM windows");
+    }
+  }
+}
 void Run(St010 &device, Ram &ram, uint8_t command) {
-  device.Write(0x600000, 0, ram);
   device.Write(0x680020, command, ram);
   device.Write(0x680021, 0x80, ram);
-  Check(device.Read(0x680020, ram) == 0 && device.Read(0x680021, ram) == 0,
-        "Command and execution registers clear on completion");
+  Check(device.Read(0x680020, ram) == command && device.Read(0x680021, ram) == 0,
+        "Completion retains the command byte and clears the execution bit");
 }
 
 void RegistersAndMath() {
@@ -39,11 +58,13 @@ void RegistersAndMath() {
   Word(ram, 0, 3);
   Word(ram, 2, 7);
   device.Write(0x680020, 6, ram);
-  device.Write(0x680021, 0x80, ram);
-  Check(device.Read(0x680020, ram) == 0 && Long(ram, 0x10) == 0,
-        "Register writes before control enable only update backing RAM");
-  Check(ram[0x20] == 6 && ram[0x21] == 0x80, "Disabled registers retain RAM writes");
-  Check(device.Read(0x600000, ram) == 0x80, "Control window identification byte");
+  Check(device.Read(0x680020, ram) == 6 && Long(ram, 0x10) == 0,
+        "The command byte reads directly from shared RAM before execution");
+  device.Write(0x680021, 0x85, ram);
+  Check(Long(ram, 0x10) == 42 && device.Read(0x680021, ram) == 5 && ram[0x21] == 5,
+        "A command needs no enable write and preserves the lower execution bits");
+  Check(!St010::Selects(0x600000) && !St010::Selects(0xe00000),
+        "The command model leaves the processor port windows disconnected");
   Run(device, ram, 6);
   Check(Long(ram, 0x10) == 42, "Signed multiply produces twice the product");
   Word(ram, 0, 0x8000);
@@ -68,8 +89,8 @@ void RegistersAndMath() {
   Word(ram, 0, 0);
   Word(ram, 2, 0xffff);
   Run(device, ram, 1);
-  Check(Word(ram, 4) == 0x4000 && Word(ram, 6) == 0xffff && Word(ram, 0x10) == 0,
-        "Compass preserves original Y and negative-axis quadrant behavior");
+  Check(Word(ram, 4) == 0x8000 && Word(ram, 6) == 0 && Word(ram, 0x10) == 0,
+        "Compass retains RAM outside its result slots and adjusts the axis quadrant");
   Word(ram, 0, 0);
   Run(device, ram, 7);
   Check(Word(ram, 0xf0) == 895 && Word(ram, 0x510) == 895 && Word(ram, 0x3b0) == 0,
@@ -96,23 +117,30 @@ void DriverSorting() {
         "Sort is descending and stable across ties");
   Word(ram, 0x24, 0xffff);
   std::fill(ram.begin() + 0xc0, ram.end(), 0xa5);
+  const auto before = ram;
   Run(device, ram, 2);
-  Check(std::all_of(ram.begin() + 0xc0, ram.end(), [](uint8_t b) { return b == 0xa5; }),
-        "Oversized driver counts stay within the 32-entry workspace");
+  Check(ram == before, "A negative driver count leaves the complete workspace unchanged");
 }
 
 void CommandVectors() {
   constexpr std::array<uint64_t, 8> expected{
-      0x2c0c89e7475f3fbc, 0xb42ad000bc0cba40, 0x2a54f766417d0cb5, 0xa593785c17d2fbb9,
-      0x00fc2c6268befc45, 0x972db69269cd6f12, 0xd6ad9e558119e811, 0x5f0466019cd1ad38};
+      0xdd888df8670c9438, 0x40df59a4891abdec, 0xe5288c38de8764e1, 0x0003a0ef9de7ae97,
+      0x8e1ff4b228f3ccaf, 0x49ff504db6b4ab22, 0xdc8dcd87dc5d07c1, 0x5ab8b119fd98d684};
+  constexpr std::array<unsigned, 8> counts{2025, 2048, 2048, 2047, 2048, 2048, 2048, 2048};
   for (unsigned command = 1; command <= 8; ++command) {
     uint64_t digest = 14695981039346656037ull;
+    unsigned count = 0;
     for (unsigned index = 0; index < st010_test::Cases; ++index) {
       auto ram = st010_test::Input(command, index);
+      // Keep table coordinates and squared sums within their signed ranges.
+      if (!st010_test::BoundedVector(command, ram))
+        continue;
       St010 device;
       Run(device, ram, uint8_t(command));
       digest = st010_test::Digest(digest, ram);
+      ++count;
     }
+    Check(count == counts[command - 1], "Command vector input coverage");
     if (digest != expected[command - 1]) {
       std::fprintf(stderr, "Command %u digest %016llx\n", command,
                    static_cast<unsigned long long>(digest));
@@ -159,38 +187,33 @@ void CartridgeMapping() {
   for (unsigned bank = 0; bank < 256; ++bank) {
     if (bank == 0x7e || bank == 0x7f)
       continue;
-    const bool sram = (bank >= 0x70 && bank <= 0x7d) || bank >= 0xf0;
-    Check(bus.Read((bank << 16) | 0x8100) == (sram ? 0 : (bank & 31)),
-          "Upper-bank ROM pages and SRAM precedence");
-    if (bank >= 0x60 && bank <= 0x67)
-      Check(bus.Read((bank << 16) | 0x1234) == 0x80, "Every control bank decodes");
+    Check(bus.Read((bank << 16) | 0x8100) == (bank & 31),
+          "Shared work RAM does not overlay the upper ROM banks");
   }
-  for (unsigned bank : {0x40, 0x5f, 0x60, 0x67, 0xc0, 0xe8, 0xef}) {
+  for (unsigned bank : {0x40, 0x5f, 0x60, 0x67, 0x70, 0x7d, 0xc0, 0xe0, 0xe7, 0xf0, 0xff}) {
     const unsigned address = (bank << 16) | 0x4567;
     Check(cart->Read(address, 0x5a) == 0x5a, "Lower unused cartridge windows stay open");
     bus.Write(0x7e0000, 0x5a);
     Check(bus.Read(address) == 0x5a, "Bus leaves lower unused windows unmapped");
   }
   bus.Write(0x680123, 0x69);
-  for (unsigned bank = 0x68; bank <= 0x6f; ++bank)
-    for (unsigned page = 0; page < 8; ++page)
-      Check(bus.Read((bank << 16) | (page << 12) | 0x123) == 0x69,
-            "RAM aliases every 4 KiB in device banks");
-  Check(bus.Read(0x700123) == 0x69 && bus.Read(0xf0f123) == 0x69,
-        "Device and battery RAM share storage");
-  bus.Write(0x600100, 0);
+  for (unsigned mirror : {0u, 0x80u})
+    for (unsigned bank = 0x68; bank <= 0x6f; ++bank)
+      for (unsigned page = 0; page < 8; ++page)
+        Check(bus.Read(((bank | mirror) << 16) | (page << 12) | 0x123) == 0x69,
+              "RAM aliases every 4 KiB in both sets of device banks");
   bus.Write(0x6f7000, 3);
   bus.Write(0x680002, 7);
   bus.Write(0x6fa020, 6); // Outside the device window: ROM write, no command.
   bus.Write(0x6f7020, 6);
   bus.Write(0x687021, 0x80);
-  Check(bus.Read(0x700010) == 42 && bus.Read(0x6f7020) == 0,
+  Check(bus.Read(0xe80010) == 42 && bus.Read(0x6f7020) == 6,
         "Mirrored command registers execute through the bus");
   const auto saved = emu->LoadedCartridge()->SramData();
   cart->LoadSram(saved);
-  Check(cart->Read(0x680123) == 0x69 && cart->Read(0x700010) == 42,
+  Check(cart->Read(0x680123) == 0x69 && cart->Read(0xef7010) == 42,
         "Save restoration shares device RAM");
-  Check(cart->Read(0x680020) == 0, "Save loading does not enable command registers");
+  Check(cart->Read(0x680020) == 6, "Save loading restores the shared command byte");
   auto sibling = Rom(9);
   std::string error;
   Check(!emu->LoadCartridge(std::span<const uint8_t>(image).first(4096), &error),
@@ -206,14 +229,13 @@ void CartridgeMapping() {
   Check(emu->LoadCartridge(image), "Reload ST010");
   bus.Write(0x680020, 6);
   bus.Write(0x680021, 0x80);
-  Check(bus.Read(0x680020) == 0 && bus.Read(0x680010) == 0,
-        "Reload clears enable, command and RAM state");
+  Check(bus.Read(0x680020) == 6 && bus.Read(0x680010) == 0,
+        "Reload clears RAM and accepts a command without an enable latch");
 }
 
 void CpuCommandProgram() {
   auto rom = Rom();
-  const std::array<uint8_t, 47> program{
-      0xa9, 0,    0x8f, 0,    0,    0x60, // Enable control registers.
+  const std::array<uint8_t, 41> program{
       0xa9, 12,   0x8f, 0,    0,    0x68, 0xa9, 13,   0x8f, 2,    0,    0x68, 0xa9, 6,
       0x8f, 0x20, 0,    0x68, 0xa9, 0x80, 0x8f, 0x21, 0,    0x68, 0xaf, 0x10, 0,    0x68,
       0x8f, 0,    0,    0x7e, 0xaf, 0x11, 0,    0x68, 0x8f, 1,    0,    0x7e, 0xdb};
@@ -224,10 +246,37 @@ void CpuCommandProgram() {
   Check(emu->GetBus().Read(0x7e0000) == 0x38 && emu->GetBus().Read(0x7e0001) == 1,
         "65816 program executes a cartridge math command and reads the shared result");
 }
+void CpuCommandGuest() {
+  constexpr std::array<uint64_t, 16> expected{
+      0xbcbf9dd0dbcfc5b0, 0xc13ebb3220439036, 0x43d5f39f20ff994e, 0xc13b86c3ded0ac6f,
+      0x50ebba997330de65, 0x5d6bf8e49f254fbc, 0xc66aa8c7fc96ba30, 0x81757206e60b6c91,
+      0xf66113df5a966e65, 0x81182a99d89a8cca, 0x7cd32c2e8a21544b, 0xf097439a41414a27,
+      0x3500a49f4ad14a9e, 0x90484571f3a70170, 0x10b07d8d0bda7d49, 0x2314441c94713913};
+  for (bool pal : {false, true}) {
+    auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+    Check(machine->LoadCartridge(st010_test::CommandGuest(pal)), "The command-result guest loads");
+    for (bool warm : {false, true}) {
+      if (warm)
+        Check(machine->Reset(), "The command-result guest resets");
+      for (unsigned field = 0; field < 80 && machine->GetBus().WramData()[0x120] != 0xa5; ++field)
+        machine->StepFrame();
+      const auto *wram = machine->GetBus().WramData();
+      Check(wram[0x120] == 0xa5, "The command-result guest completes");
+      for (unsigned scene = 0; scene < expected.size(); ++scene) {
+        Ram output;
+        std::copy_n(wram + 0x10000 + scene * 4096, output.size(), output.begin());
+        Check(st010_test::Digest(14695981039346656037ull, output) == expected[scene],
+              "CPU command output retains every shared RAM byte");
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
   try {
+    CpuPortGuest();
+    CpuCommandGuest();
     RegistersAndMath();
     DriverSorting();
     CommandVectors();
@@ -238,4 +287,5 @@ int main() {
     return 1;
   }
   std::puts("ST010 command, mapping, and shared RAM checks passed");
+  return 0;
 }

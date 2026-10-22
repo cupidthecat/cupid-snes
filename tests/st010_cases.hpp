@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <bit>
 #include <cstdint>
 
 namespace st010_test {
@@ -52,5 +53,24 @@ inline uint64_t Digest(uint64_t hash, const std::array<uint8_t, 4096> &ram) {
   for (auto byte : ram)
     hash = (hash ^ byte) * 1099511628211ull;
   return hash;
+}
+inline bool BoundedVector(unsigned command, const std::array<uint8_t, 4096> &ram) {
+  const auto word = [&](unsigned offset) {
+    return uint16_t(ram[offset] | (uint16_t(ram[offset + 1]) << 8));
+  };
+  if (command == 1 && (word(0) == 0x8000 || word(2) == 0x8000))
+    return false;
+  if (command == 4 && word(0) == 0x8000 && word(2) == 0x8000)
+    return false;
+  if (command == 5) {
+    const auto position = [&](unsigned offset) {
+      return std::bit_cast<int32_t>(uint32_t(word(offset)) | (uint32_t(word(offset + 2)) << 16)) >>
+             16;
+    };
+    if (uint16_t(int16_t(word(0xc2)) - position(0xc8)) == 0x8000 ||
+        uint16_t(int16_t(word(0xc0)) - position(0xc4)) == 0x8000)
+      return false;
+  }
+  return true;
 }
 } // namespace st010_test
