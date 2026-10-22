@@ -149,7 +149,7 @@ void RetainedMemoryAndRegisters() {
   }
 }
 
-void CancelSuspendedDma() {
+void CancelSuspendedDma(bool powerCycle = false) {
   auto machine = Machine();
   unsigned writes = 0;
   machine->GetBus().Map(
@@ -165,7 +165,8 @@ void CancelSuspendedDma() {
   Check(writes > 0 && writes < 65536 && machine->GetDma().InDma(),
         "Reset fixture pauses inside an unfinished DMA");
   const auto previous = writes;
-  Check(machine->Reset(), "Console resets during suspended DMA");
+  Check(powerCycle ? machine->PowerCycle() : machine->Reset(),
+        "Console restarts during suspended DMA");
   for (unsigned i = 0; i < 3; ++i)
     machine->StepFrame();
   Check(writes == previous && !machine->GetDma().InDma() && machine->GetCpu()->regs().stp,
@@ -174,7 +175,7 @@ void CancelSuspendedDma() {
   Check(writes == previous + 1, "Reset retains existing bus handlers");
 }
 
-void CancelSuspendedInstruction() {
+void CancelSuspendedInstruction(bool powerCycle = false) {
   auto machine = Machine();
   bool afterReset = false;
   unsigned writes = 0;
@@ -195,7 +196,8 @@ void CancelSuspendedInstruction() {
   timing.Tick(225 * 1364 - timing.MasterClocksElapsed() - 4);
   machine->StepFrame();
   Check(writes == 0, "The display event suspends the CPU before its store completes");
-  Check(machine->Reset(), "Console resets during a suspended instruction");
+  Check(powerCycle ? machine->PowerCycle() : machine->Reset(),
+        "Console restarts during a suspended instruction");
   afterReset = true;
   machine->StepFrame();
   Check(writes == 0 && machine->GetCpu()->regs().stp,
@@ -319,15 +321,66 @@ void ControllerAttachments() {
           "Reset retains controller devices and player assignments");
   machine->StepFrame();
 }
+
+void PowerCycleStorage() {
+  for (bool pal : {false, true}) {
+    auto machine = Machine(0, pal);
+    Output output;
+    machine->AttachVideoOutput(&output);
+    machine->AttachAudioOutput(&output);
+    machine->StepFrame();
+    auto &bus = machine->GetBus();
+    auto &smp = machine->GetSmp();
+    auto &ppu = machine->GetPpu();
+    auto &dsp = machine->GetDsp();
+    std::fill_n(bus.WramData(), MemoryBus::WramSize, 0xa6);
+    std::fill_n(smp.Ram(), Smp::RamSize, 0xd3);
+    std::fill_n(ppu.VramData(), Ppu::VramWords, 0x4567);
+    dsp.Write(0, 0x7f);
+    std::vector<uint8_t> save(machine->LoadedCartridge()->SramData().size(), 0x5a);
+    machine->LoadSram(save);
+    const auto *cart = machine->LoadedCartridge();
+    Check(machine->PowerCycle() && machine->LoadedCartridge() == cart,
+          "Power cycle restarts the loaded cartridge without replacing it");
+    Check(std::all_of(bus.WramData(), bus.WramData() + MemoryBus::WramSize,
+                      [](auto value) { return value == 0; }) &&
+              std::all_of(ppu.VramData(), ppu.VramData() + Ppu::VramWords,
+                          [](auto value) { return value == 0; }) &&
+              dsp.Read(0) == 0,
+          "Cold power initializes work RAM, video RAM and DSP registers");
+    Check(std::all_of(smp.Ram(), smp.Ram() + Smp::RamSize,
+                      [](auto value) { return value == 0xd3; }) &&
+              std::equal(save.begin(), save.end(), cart->SramData().begin()),
+          "Cold power retains the physical audio RAM and cartridge battery");
+    Check(machine->CurrentFrame() == 0 && machine->CurrentMasterCycles() == 0 &&
+              smp.HardwareClockCount() == 0 && machine->GetCpu()->Cycles() == 0,
+          "Cold power queues the reset vector without executing a frame");
+    const auto pictures = output.frames, blocks = output.blocks;
+    machine->StepFrame();
+    Check(output.frames == pictures + 1 && output.blocks == blocks + 1,
+          "Cold power preserves audio and video attachments");
+  }
+  auto graphics = Machine(0xf3);
+  for (unsigned index = 0; index < 3072; ++index)
+    graphics->GetBus().Write(0x6000 + index, uint8_t(index * 17 + 0x59));
+  Check(graphics->PowerCycle(), "The graphics cartridge powers again");
+  for (unsigned index = 0; index < 3072; ++index)
+    Check(graphics->GetBus().Read(0x6000 + index) == uint8_t(index * 17 + 0x59),
+          "Cold power retains graphics cartridge work RAM");
+}
 } // namespace
 
 int main() {
   try {
     auto empty = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
-    Check(!empty->Reset() && !empty->Initialized(), "An empty console has nothing to reset");
+    Check(!empty->Reset() && !empty->PowerCycle() && !empty->Initialized(),
+          "An empty console has nothing to restart");
     RetainedMemoryAndRegisters();
     CancelSuspendedDma();
     CancelSuspendedInstruction();
+    CancelSuspendedDma(true);
+    CancelSuspendedInstruction(true);
+    PowerCycleStorage();
     CartridgeMemory();
     Obc1SaveBacking();
     ClockAndWorkRam();

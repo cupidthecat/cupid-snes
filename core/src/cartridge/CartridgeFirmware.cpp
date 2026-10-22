@@ -1,4 +1,5 @@
 #include "snes/core/CartridgeFirmware.hpp"
+#include "snes/core/FilePath.hpp"
 
 #include <fstream>
 #include <iterator>
@@ -36,7 +37,7 @@ bool CartridgeFirmware::LoadDirectory(const std::filesystem::path &directory, st
   std::error_code code;
   if (!std::filesystem::is_directory(directory, code)) {
     if (error)
-      *error = "Cannot open firmware directory: " + directory.string();
+      *error = "Cannot open firmware directory: " + PathText(directory);
     return false;
   }
   auto loaded = *this;
@@ -52,7 +53,7 @@ bool CartridgeFirmware::LoadDirectory(const std::filesystem::path &directory, st
                                std::istreambuf_iterator<char>());
     if (!file || bytes.size() != Size(kind)) {
       if (error)
-        *error = "Invalid or unreadable firmware file: " + path.string();
+        *error = "Invalid or unreadable firmware file: " + PathText(path);
       return false;
     }
     loaded.images_[i] = std::move(bytes);

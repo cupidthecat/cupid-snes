@@ -1,6 +1,7 @@
 // Top-level subsystem wiring, cartridge loading, and frame execution.
 
 #include "snes/core/Emulator.hpp"
+#include "snes/core/FilePath.hpp"
 #include "snes/core/Logging.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/detail/Compatibility.hpp"
@@ -19,7 +20,7 @@ namespace snes::core {
 
 namespace {
 std::optional<std::vector<uint8_t>> ReadImage(const std::string &path, std::string *error) {
-  std::ifstream file(path, std::ios::binary);
+  std::ifstream file(FilePath(path), std::ios::binary);
   if (!file) {
     if (error)
       *error = "Unable to open ROM file: " + path;
@@ -174,7 +175,7 @@ bool Emulator::LoadCartridgeFromFile(const std::string &path, std::string *error
     return false;
   CartridgeFirmware adjacentFirmware;
   auto *firmware = config_.cartridgeFirmware.get();
-  const auto directory = std::filesystem::path(path).parent_path() / "firmware";
+  const auto directory = FilePath(path).parent_path() / "firmware";
   std::error_code fileError;
   if (!firmware && std::filesystem::is_directory(directory, fileError)) {
     if (!adjacentFirmware.LoadDirectory(directory, error))
@@ -189,7 +190,7 @@ bool Emulator::LoadCartridgeFromFile(const std::string &path, std::string *error
 
 void Emulator::AttachMsu1(const std::string &path) {
   auto msu1 = std::make_unique<Msu1>();
-  if (msu1->Open(path)) {
+  if (msu1->Open(FilePath(path))) {
     msu1_ = std::move(msu1);
     // Complete pending cartridge work before accessing the shared audio timeline.
     const auto slot = bus_.RegisterHandler(
@@ -300,7 +301,7 @@ bool Emulator::LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings sett
   }
   CartridgeFirmware adjacentFirmware;
   auto *firmware = config_.cartridgeFirmware.get();
-  const auto directory = std::filesystem::path(paths[0]).parent_path() / "firmware";
+  const auto directory = FilePath(paths[0]).parent_path() / "firmware";
   std::error_code fileError;
   if (!firmware && std::filesystem::is_directory(directory, fileError)) {
     if (!adjacentFirmware.LoadDirectory(directory, error))
@@ -591,10 +592,28 @@ void Emulator::InitSubsystems() {
 }
 
 bool Emulator::Reset() {
+  return Restart(true);
+}
+
+bool Emulator::PowerCycle() {
+  return Restart(false);
+}
+
+bool Emulator::Restart(bool warm) {
   if (!initialized_)
     return false;
   StopFrameExecution();
-  ResetHardware(true);
+  bus_.ResetRegisters();
+  cartridge_->Reset();
+  if (dsp1_)
+    dsp1_->Reset();
+  if (dsp2_)
+    dsp2_->Reset();
+  if (srtc_)
+    srtc_->Reset();
+  if (msu1_)
+    msu1_->Reset();
+  ResetHardware(warm);
   return true;
 }
 
@@ -613,16 +632,6 @@ void Emulator::ResetHardware(bool warm) {
   if (compatibility.initializeWram)
     std::fill_n(bus_.WramData(), MemoryBus::WramSize, uint8_t{0xff});
   if (warm) {
-    bus_.ResetRegisters();
-    cartridge_->Reset();
-    if (dsp1_)
-      dsp1_->Reset();
-    if (dsp2_)
-      dsp2_->Reset();
-    if (srtc_)
-      srtc_->Reset();
-    if (msu1_)
-      msu1_->Reset();
     dsp_.SoftReset();
   } else {
     dsp_.Power();

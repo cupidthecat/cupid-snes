@@ -95,6 +95,12 @@ void SdlAudioOutput::Pause() {
   playing_ = false;
 }
 
+void SdlAudioOutput::Clear() {
+  Pause();
+  if (stream_ && !SDL_ClearAudioStream(stream_))
+    throw std::runtime_error(std::string("Audio clear failed: ") + SDL_GetError());
+}
+
 int SdlAudioOutput::QueuedBytes() const {
   const int bytes = stream_ ? SDL_GetAudioStreamQueued(stream_) : 0;
   if (bytes < 0) {

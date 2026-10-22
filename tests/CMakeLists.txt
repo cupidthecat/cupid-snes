@@ -166,9 +166,9 @@ add_executable(snes_light_gun_tests test_light_guns.cpp)
 target_link_libraries(snes_light_gun_tests PRIVATE snes_core)
 snes_add_check(snes_light_gun_tests snes_light_gun_tests)
 
-add_executable(snes_sdl_input_tests test_sdl_input.cpp ../frontend/src/SdlInputProvider.cpp)
+add_executable(snes_sdl_input_tests test_sdl_input.cpp)
 target_include_directories(snes_sdl_input_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_input_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_input_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_sdl_input_tests snes_sdl_input_tests)
 
 add_executable(snes_cpu_regression_tests test_cpu_regressions.cpp)
@@ -240,27 +240,35 @@ add_executable(snes_dsp_batch_tests test_dsp_batch.cpp)
 target_link_libraries(snes_dsp_batch_tests PRIVATE snes_core)
 snes_add_check(snes_dsp_batch_tests snes_dsp_batch_tests)
 
-add_executable(snes_sdl_audio_tests test_sdl_audio.cpp ../frontend/src/SdlAudioOutput.cpp)
+add_executable(snes_sdl_audio_tests test_sdl_audio.cpp)
 
 add_executable(snes_frame_pacing_tests test_frame_pacing.cpp)
 target_include_directories(snes_frame_pacing_tests PRIVATE ../frontend/src)
 target_link_libraries(snes_frame_pacing_tests PRIVATE snes_core)
 snes_add_check(snes_frame_pacing_tests snes_frame_pacing_tests)
 
-add_executable(snes_sdl_video_tests test_sdl_video.cpp ../frontend/src/SdlVideoOutput.cpp)
+add_executable(snes_sdl_video_tests test_sdl_video.cpp)
 target_include_directories(snes_sdl_video_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_video_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_video_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_sdl_video_tests snes_sdl_video_tests)
 
-add_executable(snes_save_ram_tests test_save_ram.cpp ../frontend/src/SaveRamFile.cpp)
+add_executable(snes_save_ram_tests test_save_ram.cpp)
 target_include_directories(snes_save_ram_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_save_ram_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_save_ram_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_save_ram_tests snes_save_ram_tests)
 target_include_directories(snes_sdl_audio_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_audio_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_audio_tests PRIVATE snes_frontend_support)
 foreach(rate 32000 32040 44100 48000)
   snes_add_check(snes_sdl_audio_${rate} snes_sdl_audio_tests ${rate})
 endforeach()
+
+add_executable(snes_session_tests test_session.cpp)
+target_link_libraries(snes_session_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_session_tests snes_session_tests)
+
+add_executable(snes_desktop_tests test_desktop.cpp)
+target_link_libraries(snes_desktop_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_desktop_tests snes_desktop_tests)
 
 # Opt in with an existing diagnostic checkout; ROMs are never fetched by a build.
 set(SNES_DIAGNOSTIC_ROM_DIR "" CACHE PATH "Root of an external SnesTests checkout")

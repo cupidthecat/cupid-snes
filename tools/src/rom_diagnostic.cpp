@@ -1,5 +1,8 @@
 #include "snes/core/Emulator.hpp"
+#include "snes/core/FilePath.hpp"
 #include "snes/core/SnesCpu.hpp"
+
+#include <SDL3/SDL_main.h>
 
 #include <charconv>
 #include <cstdio>
@@ -57,7 +60,7 @@ int main(int argc, char **argv) {
     if (argument < argc) {
       if (std::string_view(argv[argument]) != "--expect" || argument + 2 != argc)
         throw std::runtime_error("Expected --expect followed by a text file");
-      std::ifstream file(argv[argument + 1]);
+      std::ifstream file(snes::core::FilePath(argv[argument + 1]));
       if (!file)
         throw std::runtime_error("Cannot open expected-result file");
       std::string row;

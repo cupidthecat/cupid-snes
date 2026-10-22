@@ -45,6 +45,9 @@ public:
   /// Pause the audio device.
   void Pause();
 
+  // Stop playback and discard host audio before a pause, reset or game change.
+  void Clear();
+
   /// Returns true if the audio stream was created successfully.
   bool IsValid() const noexcept {
     return stream_ != nullptr;

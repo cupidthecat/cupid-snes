@@ -39,7 +39,7 @@ Use the `debug` preset and `out/build/debug` when you need an instrumented devel
 
 ## Run a game
 
-The SDL frontend takes a ROM path. It accepts ordinary `.sfc` and `.smc` images, including images with a 512-byte copier header when the loader can identify the header.
+Launch the SDL frontend without arguments to open the desktop window, or pass a ROM path. It accepts ordinary `.sfc` and `.smc` images, including images with a 512-byte copier header when the loader can identify the header. Use Ctrl+O or drop a file into the window to open a game. [Desktop controls](docs/desktop.md) covers menus, pause, frame advance, reset, fullscreen, screenshots, and save handling.
 
 ```powershell
 .\out\build\release\frontend\snes_frontend.exe "C:\path\to\game.sfc"

@@ -38,9 +38,9 @@ SdlVideoOutput::SdlVideoOutput(const Config &config)
   int windowW = config.baseW * config.scale;
   int windowH = config.baseH * config.scale;
 
-  if (!SDL_CreateWindowAndRenderer(config.title.c_str(), windowW, windowH,
-                                   0, // no extra window flags
-                                   &window_, &renderer_)) {
+  const auto flags = SDL_WINDOW_RESIZABLE | (config.hidden ? SDL_WINDOW_HIDDEN : 0);
+  if (!SDL_CreateWindowAndRenderer(config.title.c_str(), windowW, windowH, flags, &window_,
+                                   &renderer_)) {
     throw std::runtime_error(std::string("SDL_CreateWindowAndRenderer failed: ") + SDL_GetError());
   }
 
@@ -72,6 +72,8 @@ void SdlVideoOutput::Present(const snes::core::VideoFrame &frame) {
   EnsureTexture(frame.width, frame.height);
   if (!texture_)
     return;
+
+  lastPixels_.assign(frame.pixels.begin(), frame.pixels.end());
 
   // Upload pixel data.
   // PPU output is ABGR8888 (as a uint32_t: alpha MSB, red LSB).
@@ -138,6 +140,54 @@ void SdlVideoOutput::PresentPending() {
     SDL_RenderLine(renderer_, x, y - 7, x, y + 7);
   }
   SDL_RenderPresent(renderer_);
+}
+
+void SdlVideoOutput::Redraw() {
+  if (!texture_)
+    return;
+  pending_ = true;
+  PresentPending();
+}
+
+void SdlVideoOutput::ClearPicture() {
+  if (texture_)
+    SDL_DestroyTexture(texture_);
+  texture_ = nullptr;
+  texW_ = texH_ = 0;
+  pending_ = false;
+  submittedFrames_ = 0;
+  lastPixels_.clear();
+  SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+  SDL_RenderClear(renderer_);
+  SDL_RenderPresent(renderer_);
+}
+
+void SdlVideoOutput::ShowIdle() {
+  ClearPicture();
+  SDL_SetRenderDrawColor(renderer_, 22, 24, 30, 255);
+  SDL_RenderClear(renderer_);
+  SDL_SetRenderScale(renderer_, 2, 2);
+  SDL_SetRenderDrawColor(renderer_, 235, 237, 245, 255);
+  SDL_RenderDebugText(renderer_, 20, 30, "Cupid-SNES");
+  SDL_SetRenderDrawColor(renderer_, 170, 178, 195, 255);
+  SDL_RenderDebugText(renderer_, 20, 56, "Open a game with Ctrl+O");
+  SDL_RenderDebugText(renderer_, 20, 76, "or drop a cartridge file here.");
+  SDL_SetRenderScale(renderer_, 1, 1);
+  SDL_RenderPresent(renderer_);
+}
+
+void SdlVideoOutput::SaveScreenshot(const std::filesystem::path &path) const {
+  if (lastPixels_.empty() || !texW_ || !texH_)
+    throw std::runtime_error("No game picture is available yet");
+  auto *surface = SDL_CreateSurfaceFrom(int(texW_), int(texH_), SDL_PIXELFORMAT_ABGR8888,
+                                        const_cast<uint32_t *>(lastPixels_.data()), int(texW_ * 4));
+  if (!surface)
+    throw std::runtime_error(SDL_GetError());
+  const auto name = path.u8string();
+  const bool saved = SDL_SaveBMP(surface, reinterpret_cast<const char *>(name.c_str()));
+  SDL_DestroySurface(surface);
+  if (!saved)
+    throw std::runtime_error(std::string("Cannot save screenshot: ") + SDL_GetError());
 }
 
 // WindowID

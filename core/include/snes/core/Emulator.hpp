@@ -162,6 +162,7 @@ public:
 
   // Call between emulation steps. Retains RAM, media and platform attachments.
   bool Reset();
+  bool PowerCycle();
 
   FrameStepResult StepFrame(const FrameStepOptions &options = {});
 
@@ -212,6 +213,7 @@ private:
   bool LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
                                  const CartridgeFirmware *firmware, std::string *error);
   void ResetHardware(bool warm);
+  bool Restart(bool warm);
   void AdvanceClocks(uint32_t clocks);
   void SynchronizeDevices(bool communication = false);
   void ConfigureAudioStreams();

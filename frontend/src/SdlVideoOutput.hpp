@@ -18,7 +18,9 @@
 
 #include <SDL3/SDL.h>
 #include <cstdint>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 namespace snes::frontend {
 
@@ -32,6 +34,7 @@ public:
     int baseH = 224; // Base height (non-overscan)
     bool vsync = true;
     bool deferPresentation = false;
+    bool hidden = false;
   };
 
   explicit SdlVideoOutput();
@@ -45,6 +48,10 @@ public:
   // IVideoOutput
   void Present(const snes::core::VideoFrame &frame) override;
   void PresentPending();
+  void Redraw();
+  void ShowIdle();
+  void ClearPicture();
+  void SaveScreenshot(const std::filesystem::path &path) const;
 
   // State queries
 
@@ -85,6 +92,7 @@ private:
   bool deferredPresentation_ = false;
   bool pending_ = false;
   uint64_t submittedFrames_ = 0;
+  std::vector<uint32_t> lastPixels_;
 };
 
 } // namespace snes::frontend

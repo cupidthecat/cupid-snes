@@ -1,6 +1,7 @@
 // Streaming MSU-1 register and PCM implementation.
 
 #include "snes/core/Msu1.hpp"
+#include "snes/core/FilePath.hpp"
 
 #include <algorithm>
 #include <system_error>
@@ -87,7 +88,7 @@ bool Msu1::Open(const std::filesystem::path &romPath, std::string *error) {
   dataPath += ".msu";
   if (!data_.Open(dataPath)) {
     if (error)
-      *error = "Cannot open MSU-1 data file: " + dataPath.string();
+      *error = "Cannot open MSU-1 data file: " + PathText(dataPath);
     basePath_.clear();
     return false;
   }
