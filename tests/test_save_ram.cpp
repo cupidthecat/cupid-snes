@@ -3,11 +3,13 @@
 #include "ConsoleConfig.hpp"
 #include "SaveRamFile.hpp"
 #include "cartridge/St010CommandFixture.hpp"
+#include "gameboy/BatteryProgram.hpp"
 #include "snes/core/BsMemory.hpp"
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/gameboy/Cartridge.hpp"
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -77,6 +79,84 @@ void CommandStorage(const fs::path &directory) {
     }
   }
 }
+void HandheldStorage(const fs::path &directory) {
+  using namespace snes::core;
+  const auto check = [](bool condition, const char *message) {
+    if (!condition)
+      throw std::runtime_error(message);
+  };
+  const auto write = [&](const fs::path &path, std::span<const uint8_t> data) {
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(data.data()), data.size());
+    file.close();
+    check(bool(file), "The handheld storage fixture is written to disk");
+  };
+  for (bool secondModel : {false, true}) {
+    for (bool pal : {false, true}) {
+      for (int savedSize : {-1, 0, 17, 32768}) {
+        const auto casePath = directory / (std::string(secondModel ? "second" : "first") +
+                                           (pal ? "-pal-" : "-ntsc-") + std::to_string(savedSize));
+        fs::create_directory(casePath);
+        const auto biosPath = casePath / "adapter.sfc", gamePath = casePath / "handheld.gb",
+                   bootPath = casePath / "boot.rom";
+        write(biosPath, snes::tests::gameboy::BatteryBios(secondModel, pal));
+        write(gamePath, snes::tests::gameboy::BatteryProgram());
+        write(bootPath, snes::tests::gameboy::BatteryBoot());
+        auto savePath = fs::weakly_canonical(gamePath);
+        savePath.replace_extension(".sav");
+        std::vector<uint8_t> expected(32768, 0xff);
+        if (savedSize >= 0) {
+          std::vector<uint8_t> initial(savedSize);
+          for (size_t index = 0; index < initial.size(); ++index)
+            initial[index] = uint8_t(index * 37 + (index >> 8) * 13 + 0x53);
+          write(savePath, initial);
+          std::copy(initial.begin(), initial.end(), expected.begin());
+        }
+        std::unique_ptr<Emulator> machine;
+        std::unique_ptr<SaveRamFile> save;
+        for (unsigned phase = 0; phase < 3; ++phase) {
+          if (phase == 1) {
+            check(machine->Reset(), "The adapter storage fixture resets");
+            check(machine->SaveSlotBattery(0) == expected,
+                  "Warm reset retains every handheld battery byte");
+          } else {
+            auto config = snes::tests::DeterministicConsoleConfig();
+            config.ppu.model = Ppu::RenderModel::Scanline;
+            machine = std::make_unique<Emulator>(config);
+            check(machine->LoadSuperGameBoyFromFiles(biosPath.string(), gamePath.string(),
+                                                     bootPath.string()),
+                  "The adapter, game and boot images load through the file API");
+            save = std::make_unique<SaveRamFile>(savePath);
+            const auto bytes = save->LoadUpTo(machine->SaveSlotBattery(0).size());
+            if (!bytes.empty())
+              check(machine->LoadSlotBattery(0, bytes), "The slot accepts its battery file");
+            check(machine->SaveSlotBattery(0) == expected,
+                  "Missing, empty, short and complete saves retain all expected RAM bytes");
+          }
+          for (unsigned field = 0; field < 6; ++field)
+            machine->StepFrame();
+          for (unsigned bank = 0; bank < 4; ++bank) {
+            expected[bank * 8192 + 0x123] = uint8_t(0x53 + bank * 37);
+            expected[bank * 8192 + 0x1ffe] = uint8_t(0xa0 + bank);
+          }
+          const auto battery = machine->SaveSlotBattery(0);
+          check(battery == expected, "Handheld instructions write separate physical RAM banks");
+          check(machine->SaveSlotBattery(1).empty() && !machine->LoadSlotBattery(1, battery) &&
+                    machine->SaveSlotBattery(0) == expected,
+                "An absent second slot cannot read or overwrite handheld battery storage");
+          save->Flush(battery);
+          check(SaveRamFile(savePath).Load(expected.size()) == expected,
+                "The frontend save helper persists the complete slot battery image");
+          const auto timestamp = fs::last_write_time(savePath) - std::chrono::hours(1);
+          fs::last_write_time(savePath, timestamp);
+          save->Flush(machine->SaveSlotBattery(0));
+          check(fs::last_write_time(savePath) == timestamp,
+                "Unchanged handheld battery data keeps the existing file");
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -120,6 +200,7 @@ int main() {
     check(rejected, "Reject a save with the wrong size");
     check(SaveRamFile(path).Load(data.size()) == data, "Rejecting a save preserves its contents");
     CommandStorage(directory);
+    HandheldStorage(directory);
     std::vector<uint8_t> handheldImage(32768);
     handheldImage[0x147] = 0x10;
     handheldImage[0x149] = 2;
