@@ -5,7 +5,8 @@
 #include <vector>
 
 inline std::vector<uint8_t> PpuGraphicsProgram(unsigned mode, bool objects, bool dynamic,
-                                               bool extended) {
+                                               bool extended, unsigned mosaic = 0,
+                                               unsigned screenMask = 0xff) {
   std::vector<uint8_t> code;
   code.reserve(4096);
   code.push_back(0x78);
@@ -52,8 +53,10 @@ inline std::vector<uint8_t> PpuGraphicsProgram(unsigned mode, bool objects, bool
     }
   }
   port(0x2133, extended ? 0x40 : 0);
-  port(0x212c, objects ? 0x10 : extended ? 3 : 1);
+  port(0x212c, screenMask != 0xff ? screenMask : objects ? 0x10 : extended ? 3 : 1);
   port(0x212d, 0);
+  if (mosaic)
+    port(0x2106, mosaic);
   port(0x2100, 15);
   if (dynamic) {
     const auto loop = code.size();

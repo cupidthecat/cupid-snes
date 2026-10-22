@@ -18,7 +18,8 @@ public:
 
   // Reset control and mosaic state while retaining fetched column data.
   void Reset();
-  void BeginLine(uint16_t line, bool field, const Ppu::IO &io);
+  void BeginLine(uint16_t line, bool field, const Ppu::IO &io,
+                 Ppu::RenderModel model = Ppu::RenderModel::Progressive);
   // Consume successive two-master-clock edges. True marks a complete output dot.
   bool Clock(uint16_t clock, const Ppu::IO &io, Vram vram);
   const Output &Samples() const noexcept {
@@ -53,6 +54,7 @@ private:
   uint16_t line_ = 0;
   uint16_t horizontalOffset_ = 0, verticalOffset_ = 0;
   bool field_ = false;
+  Ppu::RenderModel model_ = Ppu::RenderModel::Progressive;
 };
 
 } // namespace snes::core

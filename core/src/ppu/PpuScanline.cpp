@@ -20,7 +20,7 @@ PpuScanlineStatus SamplePpuScanline(Ppu::Line &line, std::span<const uint16_t> v
     objects.Clock(65535, line.fieldID, state, latch, oam, vram);
     objects.BeginLine(line.y, state.obj);
   }
-  background.BeginLine(line.y, line.fieldID, state);
+  background.BeginLine(line.y, line.fieldID, state, Ppu::RenderModel::Scanline);
   for (unsigned clock = 0; clock < 1080; clock += 2) {
     if (!background.Clock(uint16_t(clock), state, vram))
       continue;

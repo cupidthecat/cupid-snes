@@ -259,6 +259,45 @@ void GraphicsPrograms() {
     }
   }
 }
+
+void IndependentMode7Mosaic() {
+  constexpr uint64_t digests[3][4]{
+      {0xfacd29f73124ff25ull, 0xbdbb459b32e92325ull, 0xfacd29f73124ff25ull, 0xbdbb459b32e92325ull},
+      {0xfacd29f73124ff25ull, 0xfacd29f73124ff25ull, 0xbdbb459b32e92325ull, 0xbdbb459b32e92325ull},
+      {0xfacd29f73124ff25ull, 0xce5070d3bf203929ull, 0xb1215d6a5d373a81ull, 0xbdbb459b32e92325ull}};
+  constexpr uint64_t progressiveDigests[2][2]{{0xc6acc36ee9690f25ull, 0xe6697bcd06edcb25ull},
+                                              {0x9d1a87d5292f60a5ull, 0x9844ea08d3e84749ull}};
+  for (unsigned layers = 1; layers <= 3; ++layers) {
+    for (unsigned mosaic = 0; mosaic < 4; ++mosaic) {
+      for (bool pal : {false, true}) {
+        auto rom = PpuGraphicsProgram(7, false, false, true, 0x30 | mosaic, layers);
+        rom[0x7fd9] = pal ? 2 : 1;
+        for (auto model : {Ppu::RenderModel::Progressive, Ppu::RenderModel::Scanline}) {
+          Emulator::Config config;
+          config.entropyMode = EntropyMode::None;
+          config.entropySeed = 0;
+          config.ppu.model = model;
+          auto machine = std::make_unique<Emulator>(config);
+          Check(machine->LoadCartridge(rom), "The independent mosaic guest loads");
+          Output output;
+          machine->AttachVideoOutput(&output);
+          auto expected = digests[layers - 1][mosaic];
+          if (model == Ppu::RenderModel::Progressive && layers > 1 && (mosaic == 1 || mosaic == 2))
+            expected = progressiveDigests[layers - 2][mosaic - 1];
+          for (bool warm : {false, true}) {
+            if (warm)
+              Check(machine->Reset(), "The independent mosaic guest resets");
+            for (unsigned field = 0; field < 4; ++field)
+              machine->StepFrame({false, false, false});
+            Check(output.frame.width == 256 && output.frame.height == 224 &&
+                      output.Digest() == expected,
+                  "Mode 7 mosaic enables retain the selected renderer's coordinate sampling");
+          }
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -270,6 +309,7 @@ int main() {
     ScanlineVramCapacity();
     ModelStatusRegisters();
     GraphicsPrograms();
+    IndependentMode7Mosaic();
     std::puts("Scanline video checks passed");
     return 0;
   } catch (const std::exception &error) {

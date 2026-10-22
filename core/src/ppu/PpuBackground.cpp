@@ -43,9 +43,11 @@ const Ppu::Background &PpuBackground::Registers(const Ppu::IO &io, unsigned laye
   }
 }
 
-void PpuBackground::BeginLine(uint16_t line, bool field, const Ppu::IO &io) {
+void PpuBackground::BeginLine(uint16_t line, bool field, const Ppu::IO &io,
+                              Ppu::RenderModel model) {
   line_ = line;
   field_ = field;
+  model_ = model;
   horizontalOffset_ = verticalOffset_ = 0;
   for (unsigned i = 0; i < 4; ++i) {
     auto &layer = layers_[i];
@@ -176,7 +178,7 @@ PpuBackground::Sample PpuBackground::Mode7(unsigned id, const Ppu::IO &io, Vram 
     layer.mosaicX += io.mosaic.size;
   }
   int y = line_;
-  if (io.bg1.mosaicEnable)
+  if (model_ == Ppu::RenderModel::Scanline ? bg.mosaicEnable : io.bg1.mosaicEnable)
     y -= io.mosaic.size - io.mosaic.counter;
   if (io.mode7.hflip)
     x = 255 - x;
