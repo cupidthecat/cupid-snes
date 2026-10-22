@@ -10,6 +10,9 @@ namespace snes::frontend {
 // follows device clock drift gradually instead of following individual callbacks.
 class FramePacer {
 public:
+  // Keep callback headroom when preparation briefly exceeds one picture interval.
+  static constexpr uint32_t kTargetAudioQueueMilliseconds = 60;
+
   void Reset() noexcept {
     active_ = false;
     queueError_ = 0;
@@ -29,7 +32,7 @@ public:
 
     // The input queue drains in device-sized blocks. Average those steps
     // before correcting playback speed, with at most a 0.5% adjustment.
-    queueError_ += (queuedMilliseconds - 40.0 - queueError_) / 64.0;
+    queueError_ += (queuedMilliseconds - kTargetAudioQueueMilliseconds - queueError_) / 64.0;
     const double adjustment = 1.0 + std::clamp(queueError_ / 2000.0, -0.005, 0.005);
     const double period =
         double(masterClocks) * 1'000'000'000.0 / clockHz * adjustment + fractionalNanoseconds_;
@@ -38,18 +41,19 @@ public:
     periodNanoseconds_ = whole;
     deadline_ += whole;
 
-    // A slow frame or suspended window starts a fresh cadence. Replaying a
-    // backlog of deadlines would display several pictures almost at once.
-    if (deadline_ < now)
+    // Keep the clock phase when computation runs slightly past its deadline.
+    // A full interval of lateness starts a fresh cadence, preventing a backlog
+    // of overdue pictures after a slow frame or suspended window.
+    if (deadline_ < now && now - deadline_ >= whole)
       deadline_ = now;
     return deadline_;
   }
 
   void Presented(uint64_t now) noexcept {
-    // Event handling, save writes or the renderer can stall after Schedule.
-    // Small wake-up jitter keeps the absolute clock; a material delay starts
-    // the next interval at the picture that was actually displayed.
-    if (active_ && now > deadline_ && now - deadline_ > periodNanoseconds_ / 4)
+    // Renderer completion and timer wakeups can arrive partway through a
+    // picture interval. Retain the console clock across those delays. A full
+    // interval of lateness starts the next deadline at this picture.
+    if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_)
       deadline_ = now;
   }
 

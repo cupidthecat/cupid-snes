@@ -1,9 +1,13 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
+#include "audio/AdapterMsuFixture.hpp"
+#include "audio/MsuFixture.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -106,19 +110,11 @@ std::vector<uint8_t> Rom(std::initializer_list<uint8_t> code = {0x80, 0xfe}, boo
 }
 
 std::unique_ptr<Emulator> Load(const std::filesystem::path &path) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!machine->LoadCartridgeFromFile(path.string(), &error))
     throw std::runtime_error(error);
   return machine;
-}
-
-void Play(Emulator &machine, bool repeat = false) {
-  auto &bus = machine.GetBus();
-  bus.Write(0x2004, 1);
-  bus.Write(0x2005, 0);
-  bus.Write(0x2006, 255);
-  bus.Write(0x2007, repeat ? 3 : 1);
 }
 
 struct Audio final : IAudioOutput {
@@ -128,92 +124,6 @@ struct Audio final : IAudioOutput {
     samples.insert(samples.end(), buffer.interleavedStereo.begin(), buffer.interleavedStereo.end());
   }
 };
-
-std::vector<PcmFrame> Waveform(size_t count) {
-  std::vector<PcmFrame> frames(count);
-  for (size_t i = 0; i < count; ++i) {
-    frames[i] = {static_cast<int16_t>(static_cast<int>((i * 137 + 17) % 60001) - 30000),
-                 static_cast<int16_t>(static_cast<int>((i * 911 + 77) % 56003) - 28001)};
-  }
-  return frames;
-}
-
-// Evaluate the waveform's cumulative integral at arbitrary times. This has no
-// playback cursor or resampler state and never calls the device under test.
-class PcmOracle {
-public:
-  explicit PcmOracle(std::span<const PcmFrame> frames, bool repeat = false, size_t loopFrame = 0)
-      : frames_(frames), prefix_(frames.size() + 1), repeat_(repeat), loopFrame_(loopFrame) {
-    Check(!frames.empty() && loopFrame < frames.size(), "Valid PCM oracle fixture");
-    for (size_t i = 0; i < frames.size(); ++i)
-      for (unsigned channel = 0; channel < 2; ++channel)
-        prefix_[i + 1][channel] = prefix_[i][channel] + frames[i][channel];
-  }
-
-  PcmFrame Frame(uint64_t index) const {
-    PcmFrame result{};
-    for (unsigned channel = 0; channel < 2; ++channel) {
-      const int64_t area =
-          Integral((index + 1) * 44100, channel) - Integral(index * 44100, channel);
-      result[channel] = static_cast<int16_t>(area / 44100);
-    }
-    return result;
-  }
-
-private:
-  int64_t Integral(uint64_t ticks, unsigned channel) const {
-    // A source frame lasts 32,040 ticks; an output interval lasts 44,100.
-    const uint64_t wholeFrames = ticks / AudioTiming::SampleRate;
-    size_t frame;
-    int64_t sum;
-    if (wholeFrames < frames_.size()) {
-      frame = static_cast<size_t>(wholeFrames);
-      sum = prefix_[frame][channel];
-    } else if (repeat_) {
-      const uint64_t extra = wholeFrames - frames_.size();
-      const size_t period = frames_.size() - loopFrame_;
-      frame = loopFrame_ + static_cast<size_t>(extra % period);
-      const int64_t loopSum = prefix_.back()[channel] - prefix_[loopFrame_][channel];
-      sum = prefix_.back()[channel] + static_cast<int64_t>(extra / period) * loopSum +
-            prefix_[frame][channel] - prefix_[loopFrame_][channel];
-    } else {
-      return prefix_.back()[channel] * AudioTiming::SampleRate;
-    }
-    return sum * AudioTiming::SampleRate +
-           int64_t{frames_[frame][channel]} * static_cast<int64_t>(ticks % AudioTiming::SampleRate);
-  }
-
-  std::span<const PcmFrame> frames_;
-  std::vector<std::array<int64_t, 2>> prefix_;
-  bool repeat_;
-  size_t loopFrame_;
-};
-
-uint64_t DspFrameCount(Emulator &machine) {
-  const uint64_t clocks = machine.GetTiming().MasterClocksElapsed() * Smp::kClockFrequency /
-                          machine.GetTiming().MasterClockHz();
-  Check(machine.GetSmp().CycleCount() == clocks, "SMP reaches the exact master-clock deadline");
-  Check(machine.GetDsp().Phase() == clocks % 32,
-        "DSP phase remains continuous across output buffers");
-  // Phase 27 publishes output: the first frame follows 28 SMP clocks, then
-  // one follows every 32. SamplesWritten() is deliberately not the oracle.
-  return (clocks + 4) / 32;
-}
-
-void CheckWaveform(std::span<const float> samples, uint64_t firstFrame, const PcmOracle &oracle) {
-  Check(samples.size() % 2 == 0, "PCM output contains complete stereo frames");
-  for (size_t i = 0; i < samples.size() / 2; ++i) {
-    const auto expected = oracle.Frame(firstFrame + i);
-    for (unsigned channel = 0; channel < 2; ++channel) {
-      if (samples[i * 2 + channel] != static_cast<float>(expected[channel]) / 32768.0f) {
-        throw std::runtime_error("PCM mismatch at output frame " + std::to_string(firstFrame + i) +
-                                 ", channel " + std::to_string(channel) + ": expected " +
-                                 std::to_string(expected[channel]) + ", got " +
-                                 std::to_string(samples[i * 2 + channel] * 32768.0f));
-      }
-    }
-  }
-}
 
 void MappingAndLifecycle() {
   Fixture fixture;
@@ -225,7 +135,8 @@ void MappingAndLifecycle() {
   for (uint32_t bank = 0; bank <= 0xbf; ++bank) {
     if (bank & 0x40)
       continue;
-    Check(bus.Read((bank << 16) | 0x2000) == 2, "MSU-1 status maps across both system-bank ranges");
+    Check(bus.Read((bank << 16) | 0x2000) == 0x0a,
+          "MSU-1 status maps across both system-bank ranges");
     Check(bus.Read((bank << 16) | 0x2002) == 'S' && bus.Read((bank << 16) | 0x2007) == '1',
           "MSU-1 signature has mirrored bus decoding");
   }
@@ -258,7 +169,7 @@ void MappingAndLifecycle() {
   Check(bus.Read(0x2002) == 0xa5, "A new plain cartridge removes old MSU-1 handlers");
 
   Check(machine->LoadCartridgeFromFile(path.string()), "MSU-1 game can be reloaded");
-  Check(bus.Read(0x2000) == 2 && bus.Read(0x2001) == 0x59,
+  Check(bus.Read(0x2000) == 0x0a && bus.Read(0x2001) == 0x59,
         "Reloading resets playback registers and the data position");
   const auto plain = fixture.Write("plain.sfc", rom);
   Check(machine->LoadCartridgeFromFile(plain.string()),
@@ -267,254 +178,297 @@ void MappingAndLifecycle() {
   Check(bus.Read(0x2002) == 0xa5, "A ROM without a sidecar keeps normal expansion-bus behavior");
 }
 
-void TimedAudioControls() {
-  for (const bool pal : {false, true}) {
-    Fixture fixture;
-    fixture.Pack();
-    const auto rom = Rom(
-        {
-            0xa9, 1,    0x8d, 4,    0x20, 0x9c, 5,   0x20,          // Select track 1.
-            0xa9, 255,  0x8d, 6,    0x20, 0xa9, 1,   0x8d, 7, 0x20, // Play.
-            0xa2, 0,    0xe8, 0xd0, 0xfd,                           // Wait 256 loop iterations.
-            0x9c, 6,    0x20,                                       // Mute during the same frame.
-            0xa2, 0,    0xe8, 0xd0, 0xfd, 0xa9, 255, 0x8d, 6, 0x20, // Restore volume.
-            0xa2, 0,    0xe8, 0xd0, 0xfd, 0x9c, 7,   0x20,          // Stop before the frame ends.
-            0x80, 0xfe,
-        },
-        pal);
-    auto machine = Load(fixture.Write("game.sfc", rom));
-    Audio audio;
-    machine->AttachAudioOutput(&audio);
-    machine->StepFrame();
-    Check(audio.samples.size() == DspFrameCount(*machine) * 2,
-          "Audio reaches the first display event at its exact regional clock");
-    std::vector<bool> transitions;
-    for (size_t i = 0; i < audio.samples.size(); i += 2) {
-      const bool playing = audio.samples[i] != 0;
-      Check(audio.samples[i] == (playing ? 10000 / 32768.0f : 0) &&
-                audio.samples[i + 1] == (playing ? -7000 / 32768.0f : 0),
-            "PCM preserves signed stereo and the volume active at each DSP sample");
-      if (transitions.empty() && !playing)
-        continue;
-      if (transitions.empty() || transitions.back() != playing)
-        transitions.push_back(playing);
+void TrackFile(Fixture &fixture, uint16_t track, std::span<const uint8_t> payload,
+               uint32_t loop = 0) {
+  std::vector<uint8_t> bytes{'M', 'S', 'U', '1'};
+  for (unsigned byte = 0; byte < 4; ++byte)
+    bytes.push_back(uint8_t(loop >> (8 * byte)));
+  bytes.insert(bytes.end(), payload.begin(), payload.end());
+  fixture.Write(("game-" + std::to_string(track) + ".pcm").c_str(), bytes);
+}
+
+std::vector<uint8_t> Waveform(unsigned count, unsigned seed = 0) {
+  std::vector<uint8_t> bytes;
+  for (unsigned i = 0; i < count; ++i)
+    for (int value :
+         {int((i * 137 + seed) % 60001) - 30000, int((i * 911 + 77 + seed) % 56003) - 28001}) {
+      bytes.push_back(uint8_t(value));
+      bytes.push_back(uint8_t(value >> 8));
     }
-    Check(transitions == std::vector<bool>({true, false, true, false}),
-          "Mid-frame mute, unmute and stop retain audio already produced");
-    Check((machine->GetBus().Read(0x2000) & 0x10) == 0, "CPU stop command clears playing status");
-  }
+  return bytes;
 }
 
-void PlaybackWithoutOutput() {
-  Fixture fixture;
-  fixture.Pack();
-  auto machine = Load(fixture.Write("game.sfc", Rom()));
-  Play(*machine);
-  const auto target = machine->GetTiming().MasterClockHz() / 5;
-  while (machine->GetTiming().MasterClocksElapsed() < target)
-    machine->GetCpu()->idle();
-  Check((machine->GetBus().Read(0x2000) & 0x10) == 0,
-        "PCM reaches EOF without a sink, including after the DSP buffer fills");
-  Audio audio;
-  machine->AttachAudioOutput(&audio);
-  machine->StepFrame();
-  Check(!audio.samples.empty() && std::all_of(audio.samples.begin(), audio.samples.end(),
-                                              [](float value) { return value == 0; }),
-        "Attaching a sink does not replay old headless audio");
+void SceneAssets(Fixture &fixture, unsigned scene) {
+  fixture.Write("game.msu", std::array<uint8_t, 2>{0x5a, 0xa5});
+  const bool shortTrack = scene == 0 || scene == 3;
+  TrackFile(fixture, 1, Waveform(shortTrack ? 3 : 257), shortTrack ? 0 : 23);
+  TrackFile(fixture, 2, Waveform(73, 99), 7);
+  TrackFile(fixture, 3, {});
+  TrackFile(fixture, 4, std::array<uint8_t, 1>{0x12});
+  TrackFile(fixture, 5, std::array<uint8_t, 3>{0x34, 0x92, 0x56});
+  TrackFile(fixture, 6, Waveform(3), 3);
+  TrackFile(fixture, 7, Waveform(3), 4);
+  TrackFile(fixture, 8, Waveform(3), 0xffffffff);
+  TrackFile(fixture, 65535, Waveform(19), 5);
+  if (scene == 6)
+    TrackFile(fixture, 0, Waveform(7), 2);
 }
 
-void ActivePlaybackWithoutOutput() {
-  for (const bool pal : {false, true}) {
-    Fixture fixture;
-    const auto pcm = Waveform(10007);
-    fixture.Pack(pcm);
-    const PcmOracle oracle(pcm);
-    auto machine = Load(fixture.Write("game.sfc", Rom({0x80, 0xfe}, pal)));
-    Play(*machine);
-    const uint64_t firstFrame = DspFrameCount(*machine);
-
-    // Pass a complete headless buffer, then attach between DSP publications
-    // while the PCM cursor also lies partway through a source frame.
-    constexpr uint64_t hiddenFrames = 2309;
-    const uint64_t target = hiddenFrames * 32 + 7;
-    while (machine->GetSmp().CycleCount() < target)
-      machine->GetCpu()->idle();
-    const uint64_t skipped = DspFrameCount(*machine) - firstFrame;
-    Check(skipped == hiddenFrames && skipped > 2048, "Headless playback crosses a full DSP buffer");
-    Check(machine->GetDsp().Phase() != 0 && (skipped * 44100) % AudioTiming::SampleRate != 0,
-          "Audio attachment exercises fractional DSP and PCM positions");
-    Check((machine->GetBus().Read(0x2000) & 0x18) == 0x10,
-          "PCM is still playing at audio attachment");
-
-    Audio audio;
-    machine->AttachAudioOutput(&audio);
-    for (unsigned frame = 0; frame < 2; ++frame) {
-      const size_t delivered = audio.samples.size();
-      machine->StepFrame();
-      const uint64_t audible = DspFrameCount(*machine) - firstFrame - skipped;
-      Check(audio.samples.size() == audible * 2 && audio.samples.size() > delivered,
-            "Attached audio contains exactly the newly published DSP frames");
-      CheckWaveform(std::span<const float>{audio.samples}.subspan(delivered),
-                    skipped + delivered / 2, oracle);
+uint64_t Digest(std::span<const float> samples) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  for (float sample : samples) {
+    Check(std::isfinite(sample) && sample >= -1 && sample <= 1,
+          "The mixed stream contains finite, clipped stereo samples");
+    const uint16_t value = uint16_t(std::lrint(double(sample) * 32768));
+    for (unsigned byte = 0; byte < 2; ++byte) {
+      hash ^= uint8_t(value >> (byte * 8));
+      hash *= 0x100000001b3ull;
     }
-    Check((machine->GetBus().Read(0x2000) & 0x18) == 0x10,
-          "Headless-to-audio continuity is checked before PCM reaches EOF");
+  }
+  return hash;
+}
+
+void ClockedPrograms() {
+  // Cold and warm PCM signatures include stream priming and the complete tail.
+  constexpr std::array<std::array<std::array<uint64_t, 2>, 8>, 2> expected{
+      {{{{0x4e3ef690b7abd1d5ull, 0x4e3ef690b7abd1d5ull},
+         {0xdccec114ee9c321full, 0xdccec114ee9c321full},
+         {0xb585547aeec5a824ull, 0xb585547aeec5a824ull},
+         {0xc6823c52f339e45eull, 0xc6823c52f339e45eull},
+         {0xaa9079ab7ff28fbeull, 0xaa9079ab7ff28fbeull},
+         {0xfdb10ab5cc0e6c9dull, 0xfdb10ab5cc0e6c9dull},
+         {0x88151fc6d848fadfull, 0x88151fc6d848fadfull},
+         {0x80cff6c265f36ec9ull, 0x80cff6c265f36ec9ull}}},
+       {{{0x0fc64e1d41598775ull, 0x0fc64e1d41598775ull},
+         {0xd9dbc155d9af5619ull, 0xd9dbc155d9af5619ull},
+         {0x5691b97eab8e2b16ull, 0x5691b97eab8e2b16ull},
+         {0x25286a1a0e3bb9e3ull, 0x25286a1a0e3bb9e3ull},
+         {0xe57c2fda73e35c8aull, 0xe57c2fda73e35c8aull},
+         {0x4ee30e648613b509ull, 0x4ee30e648613b509ull},
+         {0x43d58e3760b8e359ull, 0x43d58e3760b8e359ull},
+         {0x4533c71669bc4069ull, 0x4533c71669bc4069ull}}}}};
+  constexpr std::array<std::array<size_t, 8>, 2> expectedFrames{
+      {{{8455u, 8455u, 8456u, 8455u, 8455u, 8455u, 8455u, 8455u}},
+       {{10073u, 10074u, 10073u, 10074u, 10074u, 10074u, 10074u, 10074u}}}};
+  const std::array<std::vector<uint8_t>, 8> statuses{
+      {{10, 2},
+       {10, 2, 2, 2, 2, 2},
+       {10, 2, 2, 2, 2, 2},
+       {10, 2, 2, 2},
+       {10, 2, 2, 50, 2, 50, 2, 50, 2, 50, 2, 50, 2, 50, 2, 50},
+       {10, 2, 2, 2, 2},
+       {2, 50},
+       {0, 0}}};
+  for (unsigned pal = 0; pal < 2; ++pal) {
+    for (unsigned scene = 0; scene < 8; ++scene) {
+      Fixture fixture;
+      SceneAssets(fixture, scene);
+      const auto path = fixture.Write("game.sfc", msu_test::Rom(scene, pal != 0));
+      auto machine = Load(path);
+      Audio audio;
+      machine->AttachAudioOutput(&audio);
+      size_t hiddenPrefix = 0;
+      std::vector<float> cold;
+      for (unsigned warm = 0; warm < 2; ++warm) {
+        audio.samples.clear();
+        if (warm)
+          Check(machine->Reset(), "A mounted MSU pack survives console reset");
+        for (unsigned frame = 0; frame < 16; ++frame) {
+          machine->StepFrame();
+          if (!warm && frame == 7)
+            hiddenPrefix = audio.samples.size();
+        }
+        Check(audio.samples.size() == expectedFrames[pal][scene] * 2,
+              "The independent input clocks deliver the complete regional stream");
+        if (Digest(audio.samples) != expected[pal][scene][warm])
+          throw std::runtime_error("MSU PCM signature differs for scene " + std::to_string(scene) +
+                                   ", region " + std::to_string(pal) + ", reset " +
+                                   std::to_string(warm));
+        for (unsigned i = 0; i < statuses[scene].size(); ++i)
+          Check(machine->GetBus().Read(0x7e0100 + i) == statuses[scene][i],
+                "Program and DMA status bytes retain their expected values");
+        Check(machine->GetBus().Read(0x7e01ff) == 0xa5,
+              "The console program completes sound upload, controls and DMA");
+        if (!warm)
+          cold = audio.samples;
+      }
+      // Detaching the host sink must not pause either oscillator or replay its queue.
+      auto headless = Load(path);
+      for (unsigned frame = 0; frame < 8; ++frame)
+        headless->StepFrame();
+      Audio resumed;
+      headless->AttachAudioOutput(&resumed);
+      for (unsigned frame = 0; frame < 8; ++frame)
+        headless->StepFrame();
+      Check(resumed.samples.size() == cold.size() - hiddenPrefix,
+            "Attaching a sink delivers only newly mixed samples");
+      for (size_t i = 0; i < resumed.samples.size(); ++i)
+        Check(resumed.samples[i] == cold[hiddenPrefix + i],
+              "Headless playback preserves interpolation and file position");
+    }
   }
 }
 
-void DmaAudioAcrossFrames() {
+void ThreeStreamClipping() {
+  audio::StreamMixer mixer;
+  using Input = audio::StreamMixer::Input;
+  std::vector<float> output;
+  mixer.SetOutput([&](float left, float right) {
+    output.push_back(left);
+    output.push_back(right);
+  });
+  for (const auto input : {Input::Console, Input::Handheld, Input::Expansion})
+    mixer.SetRate(input, AudioTiming::SampleRate);
+  for (unsigned i = 0; i < 8; ++i) {
+    mixer.Write(Input::Console, 0.75, -0.75);
+    mixer.Write(Input::Handheld, 0.75, -0.75);
+    mixer.Write(Input::Expansion, -0.75, 0.75);
+  }
+  Check(output.size() == 18 && output[output.size() - 2] == 0.75f && output.back() == -0.75f,
+        "All three streams add before clipping, including cancellation after two loud inputs");
+}
+
+void StreamBurstBoundaries() {
+  using Input = audio::StreamMixer::Input;
+  for (unsigned burst : {639u, 640u}) {
+    audio::StreamMixer mixer;
+    std::vector<std::array<float, 2>> output;
+    mixer.SetOutput([&](float left, float right) { output.push_back({left, right}); });
+    for (const auto input : {Input::Console, Input::Handheld, Input::Expansion})
+      mixer.SetRate(input, AudioTiming::SampleRate);
+    for (unsigned i = 0; i < burst; ++i) {
+      const double pulse = i + 2 == burst ? 0.75 : 0;
+      mixer.Write(Input::Console, pulse, -pulse);
+    }
+    Check(output.empty(), "A producer waits for the other active sample clocks");
+    for (unsigned i = 0; i < burst; ++i) {
+      mixer.Write(Input::Handheld, 0, 0);
+      mixer.Write(Input::Expansion, 0, 0);
+    }
+    Check(output.size() == burst + 1, "A wrapped stream retains its scheduled sample count");
+    const float first = burst == 640 ? 0.75f : 0;
+    Check(output.front()[0] == first && output.front()[1] == -first,
+          "A stream burst wraps its interpolation history after twenty milliseconds");
+    Check(output.back()[0] == 0.75f && output.back()[1] == -0.75f,
+          "Draining a wrapped stream reaches the retained final sample");
+  }
+}
+
+void AdapterPackFileLoading() {
   Fixture fixture;
-  const auto pcm = Waveform(4099);
-  constexpr uint32_t loopFrame = 137;
-  fixture.Pack(pcm, loopFrame);
-  const PcmOracle oracle(pcm, true, loopFrame);
-  auto machine = Load(fixture.Write("game.sfc", Rom()));
+  SceneAssets(fixture, 2);
+  auto bios = msu_test::Rom(2, false);
+  // Enable the handheld before uploading the console sound program.
+  const std::array<uint8_t, 5> enable{0xa9, 0x81, 0x8d, 3, 0x60};
+  std::copy_backward(bios.begin(), bios.begin() + 0x380, bios.begin() + 0x380 + enable.size());
+  std::copy(enable.begin(), enable.end(), bios.begin());
+  bios.resize(0x80000);
+  bios[0x7fd6] = 0xe3;
+  bios[0x7fd7] = 9;
+  const auto path = fixture.Write("game.sfc", bios);
+  const auto boot = msu_test::AdapterBoot();
+  const auto bootPath = fixture.Write("boot.bin", boot);
+  const auto game = msu_test::AdapterGame();
+  const auto gamePath = fixture.Write("handheld.gb", game);
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+  Check(machine->LoadSuperGameBoyFromFiles(path.string(), gamePath.string(), bootPath.string()),
+        "The adapter file loader accepts a pack beside its console BIOS");
+  Check(machine->GetBus().Read(0x2002) == 'S', "The adapter exposes the external audio registers");
+  size_t handheldFrames = 0, audibleHandheld = 0;
+  const_cast<Cartridge *>(machine->LoadedCartridge())
+      ->SetGameBoyAudioOutput([&](int16_t left, int16_t right, uint32_t) {
+        ++handheldFrames;
+        audibleHandheld += left != 0 || right != 0;
+      });
   Audio audio;
   machine->AttachAudioOutput(&audio);
-  Play(*machine, true);
-  const uint64_t firstFrame = DspFrameCount(*machine);
-  auto &bus = machine->GetBus();
-  for (unsigned channel = 0; channel < 8; ++channel) {
-    const uint32_t reg = 0x4300 + channel * 16;
-    bus.Write(reg, 8);
-    bus.Write(reg + 1, 0x80);
-    bus.Write(reg + 2, 1);
-    bus.Write(reg + 3, 0x20);
-    bus.Write(reg + 4, 0);
-    bus.Write(reg + 5, 0);
-    bus.Write(reg + 6, 0); // 65,536 bytes per channel.
-  }
-  bus.Write(0x420b, 0xff);
-  for (unsigned frame = 0; frame < 15; ++frame) {
+  for (unsigned frame = 0; frame < 16; ++frame)
     machine->StepFrame();
-    Check(machine->GetTiming().FrameCount() == frame,
-          "Long DMA delivers each video field separately");
-    Check(audio.samples.size() == (DspFrameCount(*machine) - firstFrame) * 2,
-          "Each resumed DMA field delivers only its newly generated samples");
-  }
-  const uint64_t dmaFrames = DspFrameCount(*machine) - firstFrame;
-  Check(!machine->GetDma().AnyDmaEnabled() && dmaFrames >= 3 * 2048,
-        "All DMA channels complete while PCM advances across successive fields");
-  Check(audio.samples.size() == dmaFrames * 2, "DMA delivers every DSP frame exactly once");
-  CheckWaveform(audio.samples, 0, oracle);
-
-  const size_t delivered = audio.samples.size();
-  machine->StepFrame();
-  const uint64_t totalFrames = DspFrameCount(*machine) - firstFrame;
-  Check(totalFrames > dmaFrames && audio.samples.size() == totalFrames * 2,
-        "The frame after long DMA preserves the exact cumulative audio count");
-  CheckWaveform(std::span<const float>{audio.samples}.subspan(delivered), dmaFrames, oracle);
-  Check((bus.Read(0x2000) & 0x38) == 0x30,
-        "Looping PCM remains active after DMA and the following frame");
+  Check(machine->GetBus().Read(0x7e01ff) == 0xa5 && audio.samples.size() > 16000,
+        "The three input clocks deliver audio while both processors execute");
+  Check(handheldFrames > 8000 && audibleHandheld > 1000 &&
+            std::any_of(audio.samples.begin(), audio.samples.end(),
+                        [](float value) { return std::abs(value) > 0.01f; }),
+        "The adapter pack produces audible mixed output");
+  Check(machine->Reset(), "The adapter and mounted pack reset together");
+  audio.samples.clear();
+  for (unsigned frame = 0; frame < 16; ++frame)
+    machine->StepFrame();
+  Check(machine->GetBus().Read(0x7e01ff) == 0xa5 && audio.samples.size() > 16000,
+        "All three streams restart after reset without stale queues");
 }
 
-void ResetWithMountedMedia() {
-  Fixture fixture;
-  fixture.Pack();
-  auto machine = Load(fixture.Write("game.sfc", Rom({0xdb})));
-  Audio audio;
-  machine->AttachAudioOutput(&audio);
-  Play(*machine, true);
-  machine->StepFrame();
-  auto &bus = machine->GetBus();
-  Check((bus.Read(0x2000) & 0x30) == 0x30, "PCM playback is active before reset");
-  bus.Write(0x2000, 0x70);
-  bus.Write(0x2003, 0);
-  Check(bus.Read(0x2001) == (0x70 ^ 0x59), "The data stream has advanced before reset");
-  Check(machine->Reset(), "Console resets with mounted MSU-1 files");
-  Check(bus.Read(0x2000) == 2 && bus.Read(0x2002) == 'S' && bus.Read(0x2001) == 0x59,
-        "Reset stops playback, rewinds data and retains the mounted media");
-  audio.samples.clear();
-  machine->StepFrame();
-  Check(!audio.samples.empty() && std::all_of(audio.samples.begin(), audio.samples.end(),
-                                              [](float value) { return value == 0; }),
-        "Reset discards queued PCM playback");
-  Play(*machine);
-  audio.samples.clear();
-  machine->StepFrame();
-  Check(std::any_of(audio.samples.begin(), audio.samples.end(),
-                    [](float value) { return value != 0; }),
-        "Retained PCM files play again after reset");
+void CoupledClockChanges() {
+  constexpr uint64_t expected[2][2][2]{
+      {{0x88a3da94088690d4, 0xca96f9d9ba2c2d06}, {0x9d50c92b33630286, 0x211eef054c7fe5d6}},
+      {{0x958672057bf3838f, 0x7475398b6858728c}, {0x6216bbfda0892c03, 0xc11a49eb039d50f5}}};
+  for (unsigned reads = 0; reads < 2; ++reads)
+    for (unsigned pal = 0; pal < 2; ++pal) {
+      Fixture fixture;
+      SceneAssets(fixture, 2);
+      const auto bios =
+          fixture.Write("game.sfc", msu_test::ClockedAdapterRom(pal != 0, reads != 0));
+      const auto game = fixture.Write("handheld.gb", msu_test::AdapterGame());
+      const auto boot = fixture.Write("boot.bin", msu_test::AdapterBoot());
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+      Check(machine->LoadSuperGameBoyFromFiles(bios.string(), game.string(), boot.string()),
+            "Load three sound clocks and guest-driven divider changes");
+      Audio audio;
+      machine->AttachAudioOutput(&audio);
+      for (unsigned warm = 0; warm < 2; ++warm) {
+        if (warm)
+          Check(machine->Reset(), "Reset the coupled sound clocks");
+        audio.samples.clear();
+        for (unsigned field = 0; field < 16; ++field)
+          machine->StepFrame();
+        Check(machine->GetBus().Read(0x7e01ff) == 0xa5,
+              "The console guest finishes all running divider changes");
+        Check(audio.samples.size() == (pal     ? 10073u
+                                       : reads ? 8455u
+                                               : 8454u) *
+                                          2,
+              "Expansion accesses synchronize queued handheld output before divider changes");
+        uint64_t digest = 0xcbf29ce484222325;
+        for (const auto sample : audio.samples) {
+          const auto bits = std::bit_cast<uint32_t>(sample);
+          for (unsigned byte = 0; byte < 4; ++byte) {
+            digest ^= uint8_t(bits >> (byte * 8));
+            digest *= 0x100000001b3;
+          }
+        }
+        Check(digest == expected[reads][pal][warm],
+              "All three streams retain exact samples through clock changes and reset");
+      }
+    }
 }
 
-void NativeAudioMixing() {
-  Fixture fixture;
-  const std::array<PcmFrame, 1> pcm{PcmFrame{30000, -30000}};
-  fixture.Pack(pcm);
-  const auto rom = Rom();
-  auto native = Load(fixture.Write("plain.sfc", rom));
-  auto mixed = Load(fixture.Write("game.sfc", rom));
-
-  for (auto *machine : {native.get(), mixed.get()}) {
-    // Stop the sound program so it cannot alter the synthetic voice; its
-    // idle clocks still drive the entire DSP pipeline through the emulator.
-    auto &smp = machine->GetSmp();
-    smp.r.stop = true;
-    auto *ram = smp.Ram();
-    ram[0x100] = 0;
-    ram[0x101] = 2;
-    ram[0x102] = 0;
-    ram[0x103] = 2;
-    std::fill_n(ram + 0x200, 9, uint8_t{0});
-    ram[0x200] = 3; // A silent looping BRR block keeps the noise voice keyed on.
-
-    auto &dsp = machine->GetDsp();
-    for (unsigned reg = 0; reg < Dsp::RegisterCount; ++reg)
-      dsp.Write(static_cast<uint8_t>(reg), 0);
-    dsp.Write(Dsp::kDir, 1);
-    dsp.Write(Dsp::kPitchH, 0x10);
-    dsp.Write(Dsp::kVolL, 0x7f);
-    dsp.Write(Dsp::kVolR, 0x7f);
-    dsp.Write(Dsp::kMVolL, 0x7f);
-    dsp.Write(Dsp::kMVolR, 0x7f);
-    dsp.Write(Dsp::kGain, 0x7f);
-    dsp.Write(Dsp::kNon, 1);
-    dsp.Write(Dsp::kFlg, 0x3f); // Fast noise, echo writes disabled, output unmuted.
-    dsp.Write(Dsp::kKon, 1);
-  }
-
-  Audio nativeAudio, mixedAudio;
-  native->AttachAudioOutput(&nativeAudio);
-  mixed->AttachAudioOutput(&mixedAudio);
-  Play(*mixed, true);
-  for (unsigned frame = 0; frame < 2; ++frame) {
-    native->StepFrame();
-    mixed->StepFrame();
-  }
-  const uint64_t frames = DspFrameCount(*native);
-  Check(frames != 0 && DspFrameCount(*mixed) == frames &&
-            nativeAudio.samples.size() == frames * 2 && mixedAudio.samples.size() == frames * 2,
-        "Plain and MSU machines publish the same complete native DSP timeline");
-
-  bool nonzeroNative = false, positiveClip = false, negativeClip = false, unclippedMix = false;
-  for (size_t i = 0; i < nativeAudio.samples.size(); ++i) {
-    const int value = static_cast<int>(nativeAudio.samples[i] * 32768.0f);
-    const int sum = value + pcm[0][i % 2];
-    const int expected = std::clamp(sum, -32768, 32767);
-    Check(mixedAudio.samples[i] == static_cast<float>(expected) / 32768.0f,
-          "MSU-1 adds PCM to native DSP audio with signed saturation");
-    nonzeroNative |= value != 0;
-    positiveClip |= sum > 32767;
-    negativeClip |= sum < -32768;
-    unclippedMix |= value != 0 && sum > -32768 && sum < 32767;
-  }
-  Check(nonzeroNative && unclippedMix,
-        "Mixer comparison includes nonzero native audio and unclipped addition");
-  Check(positiveClip && negativeClip,
-        "Mixer comparison exercises both positive and negative saturation");
+void StreamRounding() {
+  audio::StreamMixer mixer;
+  std::vector<std::array<float, 2>> output;
+  mixer.SetOutput([&](float left, float right) { output.push_back({left, right}); });
+  mixer.SetRate(audio::StreamMixer::Input::Console, AudioTiming::SampleRate);
+  constexpr double input[]{0, 1, 0, 0, -1, 0, 0.5, 0, 0, -0.5, 0, 0};
+  for (auto value : input)
+    mixer.Write(audio::StreamMixer::Input::Console, value, value);
+  const float quiet = float(1e-25);
+  const float expected[]{0, 0, quiet, 1, 0, quiet, -1, 0, 0.5f, 0, quiet, -0.5f, 0};
+  Check(output.size() == std::size(expected), "Cubic stream priming preserves every output sample");
+  for (unsigned i = 0; i < output.size(); ++i)
+    Check(output[i][0] == expected[i] && output[i][1] == expected[i],
+          "Cubic polynomial evaluation preserves rounding at silence transitions");
 }
 } // namespace
 
 int main() {
   try {
+    StreamRounding();
+    StreamBurstBoundaries();
+    CoupledClockChanges();
     MappingAndLifecycle();
-    TimedAudioControls();
-    PlaybackWithoutOutput();
-    ActivePlaybackWithoutOutput();
-    DmaAudioAcrossFrames();
-    NativeAudioMixing();
-    ResetWithMountedMedia();
-    std::puts("MSU-1 console integration passed");
+    ClockedPrograms();
+    ThreeStreamClipping();
+    AdapterPackFileLoading();
+    std::puts("MSU-1 console clock, mute, loop, mixing and reset tests passed");
     return 0;
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

@@ -7,6 +7,7 @@
 
 #include "snes/core/Logging.hpp"
 #include "snes/core/Sdd1.hpp"
+#include "snes/core/gameboy/Adapter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -113,6 +114,11 @@ bool HasSignature(std::span<const uint8_t> bytes, size_t offset, std::string_vie
 
 } // namespace
 
+Cartridge::Cartridge() = default;
+Cartridge::~Cartridge() = default;
+Cartridge::Cartridge(Cartridge &&) noexcept = default;
+Cartridge &Cartridge::operator=(Cartridge &&) noexcept = default;
+
 const char *MappingName(MappingType mapping) noexcept {
   switch (mapping) {
   case MappingType::LoRom:
@@ -196,6 +202,8 @@ const char *ChipName(EnhancementChip chip) noexcept {
     return "ST018";
   case EnhancementChip::Competition:
     return "Competition timer + DSP-1";
+  case EnhancementChip::SuperGameBoy:
+    return "Super Game Boy";
   }
   return "Unknown";
 }
@@ -274,6 +282,7 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
     cart.rom_.resize(cart.rom_.size() - trailer);
   }
   cart.romCrc32_ = ComputeCrc32(cart.rom_);
+  cart.ApplyBiosCompatibility();
   cart.memselFast_ = false;
 
   if (cart.header_.chip == EnhancementChip::Sdd1)
@@ -391,11 +400,23 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   }
   if (cart.header_.mapping == MappingType::Bsx)
     cart.InitializeBroadcast();
+  if (cart.header_.chip == EnhancementChip::SuperGameBoy) {
+    cart.sram_.clear();
+    cart.gameBoy_ = std::make_unique<gameboy::Adapter>(cart.header_.title == "Super GAMEBOY2");
+  }
 
   const auto firmwareKind = SignalFirmware(cart.header_);
   const auto firmwareBytes = !embeddedFirmware.empty()  ? std::span<const uint8_t>(embeddedFirmware)
                              : firmwareKind && firmware ? firmware->Find(*firmwareKind)
                                                         : std::span<const uint8_t>{};
+  if (firmwareBytes.empty() &&
+      (firmwareKind == FirmwareKind::Dsp3 || firmwareKind == FirmwareKind::St011 ||
+       firmwareKind == FirmwareKind::St018)) {
+    if (error)
+      *error = std::string("Missing cartridge firmware for ") + ChipName(cart.header_.chip) + ": " +
+               CartridgeFirmware::FileName(*firmwareKind);
+    return std::nullopt;
+  }
   const bool seta =
       cart.header_.chip == EnhancementChip::St010 || cart.header_.chip == EnhancementChip::St011;
   const auto board = seta                                         ? NecDsp::Board::Seta
@@ -435,6 +456,23 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
   return cart;
 }
 
+std::optional<Cartridge> Cartridge::FromSuperGameBoy(std::span<const uint8_t> bios,
+                                                     std::span<const uint8_t> game,
+                                                     std::span<const uint8_t> boot,
+                                                     std::string *error) {
+  auto cartridge = FromRomImage(bios, nullptr, nullptr, error);
+  if (!cartridge)
+    return std::nullopt;
+  if (!cartridge->gameBoy_) {
+    if (error)
+      *error = "The base image is not a Super Game Boy BIOS";
+    return std::nullopt;
+  }
+  if (!cartridge->gameBoy_->Load(game, boot, error))
+    return std::nullopt;
+  return cartridge;
+}
+
 std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bios,
                                                     std::span<const uint8_t> slotA,
                                                     std::span<const uint8_t> slotB,
@@ -450,11 +488,10 @@ std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bio
     return std::nullopt;
   }
   for (const auto &slot : slots) {
-    if (!slot.empty() &&
-        (slot.size() < 0x80000 || slot.size() > 0x100000 ||
-         !HasSignature(slot, 0, "BANDAI SFC-ADX") || HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
+    if (!slot.empty() && (slot.size() < 0x20000 || !HasSignature(slot, 0, "BANDAI SFC-ADX") ||
+                          HasSignature(slot, 0x10, "SFC-ADX BACKUP"))) {
       if (error)
-        *error = "Invalid Sufami Turbo slot image (expected a 512 KiB to 1 MiB game)";
+        *error = "Invalid Sufami Turbo slot image (expected a game of at least 128 KiB)";
       return std::nullopt;
     }
   }
@@ -463,11 +500,13 @@ std::optional<Cartridge> Cartridge::FromSufamiTurbo(std::span<const uint8_t> bio
     return std::nullopt;
   cart->header_.mapping = MappingType::SufamiTurbo;
   cart->header_.chip = EnhancementChip::None;
-  // A stable 16 KiB region per slot keeps saves independent of slot occupancy.
-  cart->sram_.assign(0x8000, 0xff);
+  cart->sram_.clear();
   for (unsigned i = 0; i < 2; ++i) {
     cart->slotOffset_[i] = cart->rom_.size();
     cart->slotSize_[i] = slots[i].size();
+    cart->slotSramOffset_[i] = cart->sram_.size();
+    cart->slotSramSize_[i] = slots[i].empty() ? 0 : size_t(slots[i][0x37]) * 0x800;
+    cart->sram_.resize(cart->sram_.size() + cart->slotSramSize_[i], 0xff);
     cart->rom_.insert(cart->rom_.end(), slots[i].begin(), slots[i].end());
   }
   cart->romCrc32_ = ComputeCrc32(cart->rom_);
@@ -482,7 +521,45 @@ uint32_t Cartridge::RomCrc32() const noexcept {
   return romCrc32_;
 }
 
+void Cartridge::InitializePowerOnMemory(PowerOnState &state) {
+  if (armDsp_)
+    armDsp_->Power(state);
+}
+
+void Cartridge::InitializeFlashPages(PowerOnState &state) {
+  if (bsx_)
+    bsx_->InitializePageBuffers(state);
+  if (memoryPackDevice_)
+    memoryPackDevice_->InitializePageBuffers(state);
+}
+
+void Cartridge::InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state) {
+  if (gameBoy_)
+    gameBoy_->InitializeStartup(std::move(state));
+}
+
+void Cartridge::SetSa1BusContention(bool enabled) {
+  if (sa1_)
+    sa1_->SetBusContention(enabled);
+}
+
+void Cartridge::SetCx4DelayedSync(bool enabled) {
+  if (cx4Processor_)
+    cx4Processor_->SetDelayedSync(enabled);
+}
+
+std::optional<Cx4Processor::RetainedStorage> Cartridge::CaptureCx4Storage() const {
+  return cx4Processor_ ? std::optional(cx4Processor_->CaptureStorage()) : std::nullopt;
+}
+
+void Cartridge::InitializeCx4Storage(const Cx4Processor::RetainedStorage &storage) {
+  if (cx4Processor_)
+    cx4Processor_->InitializeStorage(storage);
+}
+
 void Cartridge::Reset() {
+  if (gameBoy_)
+    gameBoy_->Reset();
   if (competition_)
     competition_->Reset();
   if (necDsp_)
@@ -532,6 +609,8 @@ bool Cartridge::MemselFast() const noexcept {
 uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
   if (!boardConnected_)
     return openBus;
+  if (gameBoy_ && gameboy::Adapter::Selects(cpuAddress))
+    return gameBoy_->Read(cpuAddress);
   if (competition_)
     return competition_->Read(cpuAddress, openBus);
   if (cx4Processor_)
@@ -596,6 +675,10 @@ uint8_t Cartridge::Read(uint32_t cpuAddress, uint8_t openBus) const {
 void Cartridge::Write(uint32_t cpuAddress, uint8_t value) {
   if (!boardConnected_)
     return;
+  if (gameBoy_ && gameboy::Adapter::Selects(cpuAddress)) {
+    gameBoy_->Write(cpuAddress, value);
+    return;
+  }
   if (competition_) {
     competition_->Write(cpuAddress, value);
     return;
@@ -679,28 +762,33 @@ uint32_t Cartridge::AccessCycles(uint32_t cpuAddress) const noexcept {
   return (memselFast_ && IsFastRegion(cpuAddress)) ? 6u : 8u;
 }
 
-void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+void Cartridge::AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing,
+                                bool synchronizeProcessors) {
+  if (gameBoy_)
+    gameBoy_->Advance(masterClocks, synchronizeProcessors);
   if (bsx_)
-    bsx_->Advance(masterClocks);
+    bsx_->Advance(masterClocks, synchronizeProcessors);
   if (memoryPackDevice_)
-    memoryPackDevice_->Advance(masterClocks);
+    memoryPackDevice_->Advance(masterClocks, synchronizeProcessors);
   if (competition_)
     competition_->Advance(masterClocks);
   if (spc7110_)
     spc7110_->Advance(masterClocks);
   if (cx4Processor_)
-    cx4Processor_->Advance(masterClocks);
+    cx4Processor_->Advance(masterClocks, synchronizeProcessors);
   if (armDsp_)
-    armDsp_->Advance(masterClocks);
+    armDsp_->Advance(masterClocks, synchronizeProcessors);
   if (necDsp_)
     necDsp_->Advance(masterClocks);
   if (sa1_)
-    sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing);
+    sa1_->Advance(masterClocks, cpuAddress, cpuRefreshing, synchronizeProcessors);
   if (superFx_)
     superFx_->AdvanceMasterClocks(masterClocks);
 }
 
 void Cartridge::SetPal(bool pal) {
+  if (gameBoy_)
+    gameBoy_->SetPal(pal);
   if (bsx_)
     bsx_->SetPal(pal);
   if (memoryPackDevice_)
@@ -742,7 +830,16 @@ std::span<const uint8_t> Cartridge::SramData() const noexcept {
     return competition_->SaveRam();
   if (necDsp_ && necDsp_->HasSaveRam())
     return necDsp_->SaveRam();
+  if (header_.mapping == MappingType::St010) {
+    // Command work RAM is separate from the inactive processor's battery image.
+    static constexpr std::array<uint8_t, 0x1000> processorRam{};
+    return processorRam;
+  }
   return sram_;
+}
+
+size_t Cartridge::SramLoadSize() const noexcept {
+  return header_.mapping == MappingType::St010 && !necDsp_ ? 0 : SramData().size();
 }
 
 void Cartridge::LoadSram(std::span<const uint8_t> data) {
@@ -754,6 +851,8 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
     necDsp_->LoadRam(data);
     return;
   }
+  if (header_.mapping == MappingType::St010)
+    return;
   if (sram_.empty()) {
     return;
   }
@@ -771,6 +870,43 @@ bool Cartridge::MapSignalProcessor(MemoryBus &bus, uint8_t slot) const {
   return true;
 }
 
+bool Cartridge::MapGameBoy(MemoryBus &bus, uint8_t slot) const {
+  if (!gameBoy_)
+    return false;
+  gameboy::Adapter::MapCpu(bus, slot);
+  return true;
+}
+
+void Cartridge::SetGameBoyAudioOutput(GameBoyAudioSink output) {
+  if (gameBoy_)
+    gameBoy_->SetAudioOutput(std::move(output));
+}
+
+void Cartridge::SetGameBoyMixedAudioOutput(std::function<void(float, float)> output) {
+  if (gameBoy_)
+    gameBoy_->SetMixedAudioOutput(std::move(output));
+}
+
+void Cartridge::WriteGameBoyConsoleAudio(int16_t left, int16_t right) {
+  if (gameBoy_)
+    gameBoy_->WriteConsoleAudio(left, right);
+}
+
+void Cartridge::SetGameBoyConsoleAudioRate(uint32_t rate) {
+  if (gameBoy_)
+    gameBoy_->SetConsoleAudioRate(rate);
+}
+
+void Cartridge::SetGameBoyExpansionAudioRate(uint32_t rate) {
+  if (gameBoy_)
+    gameBoy_->SetExpansionAudioRate(rate);
+}
+
+void Cartridge::WriteGameBoyExpansionAudio(float left, float right) {
+  if (gameBoy_)
+    gameBoy_->WriteExpansionAudio(left, right);
+}
+
 bool Cartridge::MapSpc7110(MemoryBus &bus, uint8_t slot) const {
   if (!spc7110_)
     return false;
@@ -786,15 +922,33 @@ bool Cartridge::MapCx4Processor(MemoryBus &bus, uint8_t slot) const {
 }
 
 std::span<const uint8_t> Cartridge::SlotSramData(unsigned slot) const noexcept {
-  if (header_.mapping != MappingType::SufamiTurbo || slot >= 2 || slotSize_[slot] == 0)
+  if (header_.mapping != MappingType::SufamiTurbo || slot >= 2)
     return {};
-  return std::span<const uint8_t>(sram_).subspan(slot * 0x4000, 0x4000);
+  return std::span<const uint8_t>(sram_).subspan(slotSramOffset_[slot], slotSramSize_[slot]);
 }
 
 void Cartridge::LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
   const auto size = SlotSramData(slot).size();
   if (size)
-    std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slot * 0x4000);
+    std::copy_n(data.begin(), std::min(data.size(), size), sram_.begin() + slotSramOffset_[slot]);
+}
+
+std::vector<uint8_t> Cartridge::SaveSlotBattery(unsigned slot) const {
+  if (gameBoy_ && slot == 0)
+    return gameBoy_->SaveBattery();
+  const auto bytes = SlotSramData(slot);
+  return {bytes.begin(), bytes.end()};
+}
+
+bool Cartridge::LoadSlotBattery(unsigned slot, std::span<const uint8_t> data) {
+  if (gameBoy_ && slot == 0) {
+    gameBoy_->LoadBattery(data);
+    return true;
+  }
+  if (SlotSramData(slot).empty())
+    return false;
+  LoadSlotSram(slot, data);
+  return true;
 }
 
 std::vector<uint8_t> Cartridge::RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed) {
@@ -845,10 +999,10 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
       return std::nullopt;
     return MirrorOffset((size_t(bank & 0x1f) << 16) | addr, rom_.size());
   case MappingType::SufamiTurbo: {
-    if (addr < 0x8000 || (bank & 0x7f) >= 0x60)
+    if ((bank & 0x7f) >= 0x60 || ((bank & 0x7f) < 0x40 && addr < 0x8000))
       return std::nullopt;
     const unsigned window = (bank & 0x7f) / 0x20;
-    const size_t linear = (size_t(bank & 0x1f) << 15) | (addr & 0x7fff);
+    const size_t linear = (size_t(bank) << 15) | (addr & 0x7fff);
     if (window == 0)
       return MirrorOffset(linear, std::min(rom_.size(), size_t(0x40000)));
     const unsigned slot = window - 1;
@@ -878,7 +1032,8 @@ std::optional<size_t> Cartridge::ResolveRomOffset(uint32_t cpuAddress) const {
   case MappingType::LoRom: {
     const bool lowerArmRom = header_.chip == EnhancementChip::St018 &&
                              ((bank >= 0x40 && bank <= 0x6f) || (bank >= 0xc0 && bank <= 0xef));
-    if ((addr >= 0x8000 || lowerArmRom) && bank != 0x7e && bank != 0x7f)
+    const bool lowerGameBoyRom = gameBoy_ && (bank & 0x40);
+    if ((addr >= 0x8000 || lowerArmRom || lowerGameBoyRom) && bank != 0x7e && bank != 0x7f)
       return MirrorOffset((size_t(bank) << 15) | (addr & 0x7fff), rom_.size());
     return std::nullopt;
   }
@@ -946,6 +1101,7 @@ bool Cartridge::SelectsLoRomSram(uint32_t cpuAddress) const {
   switch (header_.mapping) {
   case MappingType::St011:
   case MappingType::St010:
+    return false;
   case MappingType::LoRom:
   case MappingType::ExLoRom:
   case MappingType::BroadcastLoRom:
@@ -981,14 +1137,14 @@ std::optional<size_t> Cartridge::ResolveSramOffset(uint32_t cpuAddress) const {
   case MappingType::Sdd1:
     return std::nullopt;
   case MappingType::SufamiTurbo: {
-    const unsigned mirroredBank = bank & 0x7f;
-    if (addr < 0x8000 || !((mirroredBank >= 0x60 && mirroredBank <= 0x63) ||
-                           (mirroredBank >= 0x70 && mirroredBank <= 0x73)))
+    const bool first = (bank >= 0x60 && bank <= 0x6f) || (bank >= 0xe0 && bank <= 0xef);
+    const bool second = (bank >= 0x70 && bank <= 0x7d) || bank >= 0xf0;
+    if (!first && !second)
       return std::nullopt;
-    const unsigned slot = mirroredBank >= 0x70 ? 1 : 0;
-    if (slotSize_[slot] == 0)
+    const unsigned slot = second ? 1 : 0;
+    if (slotSramSize_[slot] == 0)
       return std::nullopt;
-    return slot * 0x4000 + (addr & 0x3fff);
+    return slotSramOffset_[slot] + MirrorOffset(cpuAddress & 0xffffff, slotSramSize_[slot]);
   }
   case MappingType::LoRomLargeSram:
     if (bank >= 0x70 && bank <= 0x73) {

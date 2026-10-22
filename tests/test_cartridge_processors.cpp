@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -33,8 +33,10 @@ std::vector<uint8_t> Rom(uint8_t mode, uint8_t type, size_t size = 0x100000) {
   return bytes;
 }
 
-std::unique_ptr<Emulator> Machine(const std::vector<uint8_t> &rom) {
-  auto machine = std::make_unique<Emulator>();
+std::unique_ptr<Emulator>
+Machine(const std::vector<uint8_t> &rom,
+        Emulator::Config config = snes::tests::DeterministicConsoleConfig()) {
+  auto machine = std::make_unique<Emulator>(config);
   std::string error;
   if (!machine->LoadCartridge(rom, &error))
     throw std::runtime_error(error);
@@ -114,7 +116,7 @@ void Sa1Expansion() {
         "An absent expansion retains base ROM mirroring in both windows");
   Check(!Cartridge::FromBroadcastCartridge(rom, std::span<const uint8_t>(expansion).first(4096)),
         "Invalid expansion sizes are rejected");
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadBroadcastCartridge(rom, expansion),
         "Slot-board loader connects SA-1 and its expansion");
   auto &bus = machine->GetBus();
@@ -373,7 +375,9 @@ void SuperFxMasterReset() {
 
 void CoprocessorBusSynchronization() {
   for (bool write : {false, true}) {
-    auto machine = Machine(Rom(0x20, 0x15));
+    auto config = snes::tests::DeterministicConsoleConfig();
+    config.superFxDelayedSync = false;
+    auto machine = Machine(Rom(0x20, 0x15), config);
     auto &bus = machine->GetBus();
     bus.Write(0x3039, 1);
     bus.Write(0x303a, 8);
@@ -394,10 +398,10 @@ void CoprocessorBusSynchronization() {
       machine->GetCpu()->write(0x7e0100, 0);
     else
       machine->GetCpu()->read(0x7e0100);
-    Check(
-        machine->LoadedCartridge()->SramData()[0x100] == 0x55 &&
-            machine->LoadedCartridge()->CpuIrqPending(),
-        "CPU reads and writes synchronize all preceding coprocessor clocks before their bus edge");
+    Check(machine->LoadedCartridge()->SramData()[0x100] == 0x55 &&
+              machine->LoadedCartridge()->CpuIrqPending(),
+          "Bus synchronization mode executes preceding coprocessor clocks before CPU reads and "
+          "writes");
   }
 }
 
@@ -551,4 +555,5 @@ int main() {
     return 1;
   }
   std::puts("Cartridge processor bus, scheduling, IRQ and save integration checks passed");
+  return 0;
 }

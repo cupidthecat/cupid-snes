@@ -1,8 +1,10 @@
 # Broadcast controllers and memory packs
 
-The BIOS cartridge controller provides 512 KiB PSRAM, header-sized battery RAM, a memory-pack slot, and radio registers. The normal BIOS declares 32 KiB battery RAM. LoROM, HiROM, and SA-1 slot boards use the same memory-pack device. BIOS, game images, and recorded broadcasts are supplied separately.
+The BIOS cartridge controller provides 512 KiB PSRAM, header-sized battery RAM, and a memory-pack slot. The normal BIOS declares 32 KiB battery RAM. LoROM, HiROM, and SA-1 slot boards use the same memory-pack device. The radio receiver attaches to the console expansion port. BIOS, game images, and recorded broadcasts are supplied separately.
 
 A valid extended identifier selects the board before processor detection. Maker byte $33 enables four uppercase letters or digits: `ZBSJ` selects the BIOS controller, while other `Z??J` identifiers select the slot variant of the header's LoROM, HiROM, or SA-1 map. The BIOS title alone does not select a controller. These profiles need a save-RAM declaration; unsupported combinations remain unconnected.
+
+Loading a BIOS with the exact title `Satellaview BS-X` and at least 1 MiB of program data bypasses four known limited-play branches. Each site changes only when its original opcode is present. Copier headers are removed first, and the caller's image and original normalized CRC remain intact. This preparation applies independently of optional startup fixes and persists through reset.
 
 ## Controller and slot maps
 
@@ -30,8 +32,10 @@ Metadata stores capacity, identifiers, serial number, block erase counts, and lo
 
 ## Radio and recorded reception
 
-The default radio interface occupies `$2188-$219F` in system banks. Stored registers retain all eight bits, unreadable ports return open bus, and `$2193` reads with bits 2 and 3 clear. Writing `$2192` sets `$2190` to `$80`. Writing `$2191` restarts the serial clock record.
+The expansion port starts disconnected. Select `--expansion=satellaview` in the frontend, or set `Emulator::Config::expansionDevice` in a core caller, to attach the receiver. It works with ordinary cartridges and BS-X BIOS cartridges. `SetExpansionDevice` changes the attachment during execution. Reconnection, console reset, and cartridge replacement clear receiver registers and the serial cursor while retaining the selection, supplied assets, and time provider. A disconnected port returns open bus and ignores writes.
 
-Reading `$2192` cycles through eighteen bytes. Bytes 5 and 6 contain 1; bytes 10, 11, and 12 contain seconds, minutes, and hours. Other bytes are zero. Time is sampled once per record. The cartridge supplies local time by default; core callers can inject a provider with `SetBroadcastTimeSource`.
+The radio interface occupies `$00-$3F,$80-$BF:$2188-$219F`. Stored registers retain all eight bits, unreadable ports return open bus, and `$2193` reads with bits 2 and 3 clear. Writing `$2192` sets `$2190` to `$80`. Writing `$2191` restarts the serial clock record.
+
+Reading `$2192` cycles through eighteen bytes. Bytes 5 and 6 contain 1; bytes 10, 11, and 12 contain seconds, minutes, and hours. Other bytes are zero. Time is sampled once per record. The console supplies local time by default; core callers can inject a provider with `SetBroadcastTimeSource` while the receiver is attached.
 
 Installing a payload with `LoadBroadcastStream` explicitly enables recorded reception. Its two receivers keep separate packet cursors and prefix flags; channel zero supplies the existing 23-byte calendar record. Standalone callers can use `Bsx::ClearStreams` to remove payloads and restore the default radio registers. Live broadcasts and SoundLink audio are not implemented.

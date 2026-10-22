@@ -8,7 +8,7 @@
 // Read  registers: $2134-$213F
 //
 // Internal memory:
-//   VRAM  - 64 KB (32K × 16-bit words)
+//   VRAM  - 64 or 128 KiB, selected by the hardware configuration
 //   OAM   - 544 bytes (128 objects × 4 bytes + 32 bytes high table)
 //   CGRAM - 512 bytes (256 × 15-bit colors stored as uint16_t)
 //
@@ -29,19 +29,36 @@ namespace snes::core {
 
 class PpuBackground;
 class PpuObject;
+class PowerOnState;
 
 // Ppu - PPU register model
 class Ppu {
 public:
+  enum class RenderModel { Progressive, Scanline };
+  struct Config {
+    uint8_t revision2 = 3;
+    uint32_t vramBytes = 65536;
+    RenderModel model = RenderModel::Progressive;
+    bool deinterlace = true;
+    uint16_t renderCycle = 512;
+  };
+
   Ppu();
+  explicit Ppu(Config config);
   ~Ppu();
 
   // Non-copyable
   Ppu(const Ppu &) = delete;
   Ppu &operator=(const Ppu &) = delete;
 
-  // Warm reset retains VRAM; OAM, CGRAM and latches reset on either path.
+  // Scanline power retains graphics memory on warm reset. Progressive power
+  // retains VRAM and reinitializes palette, sprite and register state.
   void Reset(bool retainVram = false);
+  void Power(PowerOnState &state, bool retainVram = false);
+  void Power(PowerOnState &state, Config config, bool retainVram = false);
+  const Config &Configuration() const noexcept {
+    return config_;
+  }
 
   // Bus interface - called from MemoryBus via handler callbacks
   //   addr is the full 24-bit address (only $2100-$213F are dispatched here)
@@ -54,7 +71,7 @@ public:
   /// Called at the start of each frame (V=0).
   void FrameBegin();
 
-  /// Called at H=512 on each visible scanline (V=1..vdisp-1).
+  /// Called at the configured sampling clock on each visible scanline.
   /// Retains screen registers for final composition.
   void ScanlineBegin(uint16_t line);
 
@@ -138,6 +155,7 @@ public:
     return vram_.get();
   }
   static constexpr size_t VramWords = 32768; // 64KB / 2
+  static constexpr size_t VramStorageWords = 65536;
 
   uint8_t *OamData() noexcept {
     return oam_.data();
@@ -362,6 +380,7 @@ public:
     bool fieldID = false;
 
     IO io; // Snapshot of PPU IO
+    std::array<uint16_t, CgramColors> palette{};
     Pixel sampledAbove[256] = {}, sampledBelow[256] = {};
     bool sampledHires = false;
     Pixel above[256] = {};      // Main screen line buffer
@@ -475,6 +494,8 @@ private:
 
   /// Render a single cached scanline.
   void RenderLine(Line &line);
+  void CacheScanline(uint16_t line);
+  void FlushCachedLines();
 
   /// Render one IO state over a logical 256-dot span of a cached scanline.
   void RenderLineSpan(Line &line, const IO &state, int x0, int x1, ColorMathLatch &latch);
@@ -484,31 +505,44 @@ private:
 
   /// Color math compositing for a single pixel.
   uint16_t CompositePixel(const Line &line, int x, ColorMathLatch &latch) const;
+  uint16_t CompositePixel(const Line &line, const Pixel &main, const Pixel &sub, int x,
+                          ColorMathLatch &latch) const;
+  uint16_t CompositePixel(const IO &io, const Pixel &main, const Pixel &sub, bool visible,
+                          bool mathEnabled, ColorMathLatch &latch) const;
 
   /// Sub(x+1) uses Main(x)'s visibility, math enable, operand selection, and
   /// halving decision. Fixed color and the add/subtract operation remain live.
   uint16_t CompositeHiresSubPixel(const Line &line, int x, const ColorMathLatch &latch) const;
+  uint16_t CompositeHiresSubPixel(const IO &io, const Pixel &sub,
+                                  const ColorMathLatch &latch) const;
 
   /// Color math blend (add/subtract with saturation).
-  uint16_t Blend(const Line &line, uint16_t x, uint16_t y, bool halve) const;
-
-  /// Direct color mode conversion.
-  static uint16_t DirectColor(uint8_t paletteIndex, uint8_t paletteColor);
+  uint16_t Blend(const IO &io, uint16_t x, uint16_t y, bool halve) const;
 
   /// Build the brightness lookup table.
   void BuildLightTable();
 
   void SynchronizePipeline(uint16_t clock);
   void StorePipelinePixel(unsigned x);
+  uint16_t ProgressiveColor(uint16_t color) const;
+  void StoreDisplayFeedback(unsigned x, uint16_t color);
+  void LatchProgressiveDisplay();
+  void InitializePowerOnState(PowerOnState &state, bool retainVram);
+  void InitializeScanlineState(bool retainMemory);
+  bool ScanlineModel() const noexcept {
+    return config_.model == RenderModel::Scanline;
+  }
 
   // State
+  Config config_;
   std::unique_ptr<PpuBackground> background_;
   std::unique_ptr<PpuObject> object_;
   uint16_t pipelineClock_ = 0;
+  ColorMathLatch pipelineMath_;
   IO io_;
   Latch latch_;
 
-  // VRAM - 64 KB = 32K × 16-bit words (heap-allocated to avoid stack overflow)
+  // Physical VRAM storage; the configured address mask selects the visible capacity.
   std::unique_ptr<uint16_t[]> vram_;
 
   // OAM - 544 bytes raw (128 objects × 4 bytes + 32 bytes high table)
@@ -525,6 +559,8 @@ private:
   std::unique_ptr<Line[]> lines_;
   int lineStart_ = 0;
   int lineCount_ = 0;
+  uint16_t pendingScanline_ = 0;
+  bool scanlineHires_ = false;
   std::array<std::vector<RasterEvent>, MaxVisibleLines> rasterEvents_;
 
   // Mosaic progression normally happens from SetCurrentLine at H=0.  Direct
@@ -534,11 +570,18 @@ private:
 
   // Output framebuffer - 512×480 RGBA8888
   std::unique_ptr<uint32_t[]> output_;
+  // Progressive dots retain the complete display raster, including border rows.
+  // Bit 15 preserves the public output's forced-blank pixel formatting.
+  std::unique_ptr<uint16_t[]> progressiveOutput_;
 
   // Brightness lookup table: lightTable_[brightness][bgr555] → bgr555 dimmed
   // 16 brightness levels × 32768 colors
   std::unique_ptr<uint16_t[]> lightTableData_;
   uint16_t *lightTable_[16] = {};
+  // Lower-border output feeds the dim-color lookup in progressive rendering.
+  // Keep those words separate from both frame storage and scanline tables.
+  std::unique_ptr<std::array<uint16_t, 8192>> displayFeedback_;
+  bool feedbackOverscan_ = false;
 
   // Current scanline (set by timing layer for display-disable checks)
   uint16_t currentLine_ = 0;

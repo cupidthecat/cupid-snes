@@ -161,15 +161,15 @@ void PpuObject::FetchEdge(bool field, Ppu::IO &io, Ppu::Latch &latch, Oam oam, V
     const uint16_t character = uint16_t(base_ + ((characterX_ + column) & 15) * 16);
     address_ = uint16_t((character & 0xfff0) | (y_ & 7));
     if (!io.displayDisable)
-      tile.planes = vram[address_ & 0x7fff];
+      tile.planes = vram[address_ & (vram.size() - 1)];
     phase_ = Fetch::HighWord;
     nextFetch_ += 4;
     break;
   }
   case Fetch::HighWord:
     if (!io.displayDisable)
-      banks_[writing_].tiles[tileCount_ - 1].planes |= uint32_t(vram[(address_ + 8) & 0x7fff])
-                                                       << 16;
+      banks_[writing_].tiles[tileCount_ - 1].planes |=
+          uint32_t(vram[(address_ + 8) & (vram.size() - 1)]) << 16;
     ++column_;
     phase_ = Fetch::Tile;
     nextFetch_ += 4;

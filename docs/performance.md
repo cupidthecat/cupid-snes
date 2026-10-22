@@ -1,5 +1,25 @@
 # Performance checks
 
+## Scanline video, 2026-10-20
+
+Headless Windows Release replays used normal core video and audio with cartridge video selection enabled. Each replay ran 1,200 warmup fields followed by 3,600 measured fields. Video hashing and PCM-file capture were disabled during timing. Active renderer observations confirmed scanline video for both adapter models and progressive video for Desert Fighter.
+
+| Replay | Fields/s | Median field, ms | p95 field, ms | Stereo frames delivered |
+| --- | ---: | ---: | ---: | ---: |
+| Kirby's Dream Land, Super Game Boy | 90.97 | 10.900 | 12.103 | 1,919,238 |
+| Kirby's Dream Land, Super Game Boy 2 | 91.43 | 10.859 | 11.799 | 1,919,239 |
+| Desert Fighter, progressive video | 103.03 | 9.597 | 10.460 | 2,306,512 |
+
+All three sequences exceeded full speed and delivered every generated native audio frame. Separate capture runs checked complete PCM, sample counts, pixels, processor state, and cartridge memory. These measurements cover core throughput; display presentation and physical audio-device pacing remain separate checks. Other workspace work was active, so field-time distributions include host contention.
+
+An earlier interlaced-hires RPM Racing replay reached 78.14 fields/s and delivered 1,922,880 stereo frames over the same measured duration. That run preceded automatic cartridge video selection.
+
+A later Marvelous replay with selectable SA-1 contention reached 61.85 fields/s in progressive hires video. It used 1,200 warmup fields and 3,600 measured fields with normal video and audio, while other heavy validation was stopped. Median field time was 16.099 ms and p95 was 17.090 ms. Every generated stereo audio frame was delivered, totaling 1,919,194 frames. This sequence exceeded average full speed, though its p95 field time crossed an individual display deadline. Separate 1,800-field captures for four SA-1 games checked complete pixels, PCM, counts, clocks, processor state and cartridge memory.
+
+With deferred GSU execution enabled, Dirt Racer reached 87.80 fields/s and Yoshi's Island reached 122.33 fields/s using the same 1,200-field warmup and 3,600-field measurement. Median field times were 11.588 and 8.142 ms, with p95 times of 12.266 and 8.924 ms. Both used default scanline video and presented all measured fields. Dirt Racer's sequence was silent; Yoshi's Island produced audible output and delivered all 1,919,176 generated stereo frames. Separate 1,800-field captures covered five GSU games, with another Dirt Racer capture checking execution at CPU bus accesses. Other workspace activity remained present during timing.
+
+With low entropy and seed 1, a later Kirby's Dream Land replay reached 97.03 fields/s on the first adapter and 96.28 fields/s on the second. Each used 1,200 warmup fields and 3,600 measured fields with normal scanline video and audible output. Median field times were 10.255 and 10.330 ms, with p95 times of 10.962 and 11.163 ms. Every measured field was presented, and all generated native stereo frames were delivered: 1,919,238 and 1,919,239 respectively. Separate 2,400-field captures checked five games on both models with low entropy, plus two games on both models with deterministic and high entropy. All 270 checkpoints retained complete memory, processor, video, PCM, count, clock and battery checks. Other workspace activity continued during timing.
+
 ## Release compiler optimization
 
 Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.

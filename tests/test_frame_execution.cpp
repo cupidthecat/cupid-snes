@@ -1,4 +1,5 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
+#include "audio/SoundClockExpectations.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -29,7 +30,7 @@ std::vector<uint8_t> Rom(bool pal = false) {
 }
 
 std::unique_ptr<Emulator> Machine(bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(Rom(pal), &error), "The frame fixture loads");
   return machine;
@@ -66,11 +67,11 @@ void BoundaryDelivery() {
               "Host frames count display events, including the first partial field");
         Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
               "Every field delivers exactly one video frame and one audio block");
-        const auto hardwareClocks =
-            result.masterCycles * Smp::kHardwareClockFrequency / timing.MasterClockHz();
-        Check(machine->GetSmp().CycleCount() == hardwareClocks / 2 &&
-                  output.samples == (hardwareClocks / 2 + 4) / 32,
-              "Sound reaches the exact display deadline before delivery");
+        const auto hardwareClocks = machine->GetSmp().HardwareClockCount();
+        Check(output.samples > 0 &&
+                  output.samples == sound_clock_test::UnityStreamFrames(hardwareClocks) &&
+                  machine->GetDsp().Phase() == sound_clock_test::DspClocks(hardwareClocks) % 32,
+              "Field delivery retains stream priming and the DSP half-cycle phase");
       }
     }
   }
@@ -109,7 +110,8 @@ void DmaAcrossFields() {
             "A DMA spanning several fields never skips a display event");
       Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
             "Long DMA delivers video and audio on every field");
-      Check(output.samples == (machine->GetSmp().CycleCount() + 4) / 32,
+      Check(output.samples > 0 && output.samples == sound_clock_test::UnityStreamFrames(
+                                                        machine->GetSmp().HardwareClockCount()),
             "Resuming DMA neither repeats nor drops audio samples");
       if (frame == 0)
         Check(writes > 0 && writes < 65536 && machine->GetDma().InDma(),
@@ -127,7 +129,7 @@ void CartridgeAtScanlineBoundary() {
       auto rom = Rom(pal);
       rom[0x7fd5] = 0x23;
       rom[0x7fd6] = 0x35;
-      auto machine = std::make_unique<Emulator>();
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       std::string error;
       Check(machine->LoadCartridge(rom, &error), "The scanline cartridge fixture loads");
       machine->GetCpu()->Step();
@@ -286,4 +288,5 @@ int main() {
     return 1;
   }
   std::puts("Frame boundary and suspended DMA checks passed");
+  return 0;
 }

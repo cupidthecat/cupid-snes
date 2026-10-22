@@ -1,5 +1,5 @@
+#include "ConsoleConfig.hpp"
 #include "snes/core/CpuIoRegisters.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -213,7 +213,7 @@ std::unique_ptr<Emulator> Machine() {
   rom[0x7fdf] = 0;
   rom[0x7ffc] = 0;
   rom[0x7ffd] = 0x80;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!machine->LoadCartridge(rom, &error))
     throw std::runtime_error(error);

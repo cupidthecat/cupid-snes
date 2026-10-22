@@ -1,8 +1,8 @@
 # Audio playback
 
-The DSP produces 32,000 stereo frames per second. It decodes BRR samples, applies Gaussian interpolation and envelopes, and mixes voices and echo with signed 16-bit saturation. The frontend converts these samples to floats and lets SDL resample them for the playback device.
+The DSP normally produces 32,040 stereo frames per second. It decodes BRR samples, applies Gaussian interpolation and envelopes, and mixes voices and echo with signed 16-bit saturation. The core converts each active audio stream with cubic interpolation, sums the streams and clips once. Its output stays at 32,040 stereo frames per second, including when a cartridge selects a different DSP input clock. SDL resamples this output for the playback device.
 
-The frontend prepares each picture ahead of its presentation deadline. Deadlines follow elapsed console master clocks, including PAL, NTSC, short scanlines, interlace and transfers that span several fields. Computation can finish early without displaying the next picture early. A stall during computation, event handling or presentation starts a fresh cadence instead of releasing a burst of overdue pictures.
+The frontend prepares each picture ahead of its presentation deadline. Deadlines follow elapsed console master clocks, including PAL, NTSC, short scanlines, interlace and transfers that span several fields. Computation can finish early without displaying the next picture early. Computation, timer wakeups and renderer completion retain the existing clock unless a picture is at least one full presentation interval late. Short delays therefore keep playback on time, while larger stalls avoid a burst of overdue pictures.
 
 The audio queue adjusts the wall-clock pace gradually, by at most 0.5%, to follow the playback device's clock. Queue measurements are averaged across frames so individual audio callbacks do not dictate when pictures appear. This adjustment does not change CPU, PPU or sound-chip clock relationships inside the core. VSync is disabled; visible tearing is still possible.
 
@@ -12,15 +12,19 @@ Playback starts after at least 40 ms has accumulated. If the stream runs out of 
 
 Audio and video output buffers retain their capacity across frames. Output callbacks borrow these buffers only for the duration of the call; a consumer that retains their contents must copy them. Diagnostic screenshots are disabled by default. Set `SNES_PROBE_FRAME` to a nonnegative frame index to write that frame as a BMP.
 
-The sound CPU's timers and DSP keep advancing during SLEEP and STOP. Each SMP bus or idle cycle advances one DSP phase. The 32-phase schedule captures voice registers, reads BRR and directory data, decodes samples, updates envelopes, mixes voices, and accesses echo RAM at their individual phases. A CPU write between phases can therefore affect the next latch without changing an earlier one. Power cycling clears the key-on latch.
+The sound CPU's timers and DSP keep advancing during SLEEP and STOP. The DSP starts on the first SMP half-cycle and advances on alternate edges. The 32-phase schedule captures voice registers, reads BRR and directory data, decodes samples, updates envelopes, mixes voices, and accesses echo RAM at their individual phases. A CPU write between phases can therefore affect the next latch without changing an earlier one. Power cycling clears the key-on latch.
+
+The console exchanges control with the sound CPU at scanline events and sound-port accesses. The sound CPU can finish a bus phase beyond the console deadline before returning control. Its clocks and interpolation history continue across video fields, including when no audio output is attached. A unity-rate stream retains the cubic interpolator's startup delay and priming output.
+
+Handheld oscillator time accumulates under the divider active during each completed console bus interval. Pending handheld instructions run at scanline handoffs. A control-port reset clears the old clock credit before starting the new oscillator phase. Divider changes and repeated resets therefore preserve the phase of both raw handheld samples and the mixed stream.
 
 A long DMA can advance several video fields before `StepFrame` returns. The core drains full DSP output blocks during those transfers and submits the collected samples together. The normal 2,048-sample buffer therefore does not truncate that operation's audio. A maximal eight-channel DMA test compares the submitted count with the DSP phase count and checks that the following frame contains no stale samples.
 
-[MSU-1 packs](msu1.md) add file-backed stereo PCM. The core resamples PCM to 32 kHz and mixes it at each DSP output sample, before the next console bus operation. Playback continues without a host audio sink, and full buffers are drained during long transfers. Mid-frame volume, pause and track changes retain samples that have already played.
+[MSU-1 packs](msu1.md) add file-backed stereo PCM on an independent 44.1 kHz clock. Cubic interpolation aligns active streams at 32,040 stereo frames per second, then the mixer adds them and clamps once. Playback continues through DSP mute, headless operation and long transfers. Timed volume, pause and track changes preserve interpolation history.
 
 ## Checks
 
-`snes_audio_regression_tests` checks sound CPU halts and DSP reset behavior. `snes_dsp_phase_tests` checks register latch boundaries, shared-RAM echo writes, output timing, key-on delay, and SMP timer/port interactions. `snes_sdl_audio_tests` uses SDL's dummy audio device at 32, 44.1 and 48 kHz to check queue accounting, preservation of submitted blocks, startup buffering, underrun recovery and pause/resume behavior.
+`snes_audio_regression_tests` checks sound CPU halts and DSP reset behavior. `snes_dsp_phase_tests` checks register latch boundaries, shared-RAM echo writes, output timing, key-on delay, and SMP timer/port interactions. `snes_cartridge_compatibility_tests` checks startup overrides, both input clocks, audible output, complete PCM signatures and sound handoff phases across cold and warm starts. `snes_sdl_audio_tests` uses SDL's dummy audio device at 32, 44.1 and 48 kHz to check queue accounting, preservation of submitted blocks, startup buffering, underrun recovery and pause/resume behavior.
 
 `snes_frame_pacing_tests` checks actual region and field lengths, fractional deadlines, delayed computation and presentation, and batched audio consumption with device-clock drift. `snes_sdl_video_tests` checks immediate and deferred rendering and resolution changes with SDL's dummy/software backend. These tests use synthetic samples and pictures; they do not measure physical display latency or GPU backbuffer behavior.
 

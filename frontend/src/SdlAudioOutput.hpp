@@ -39,7 +39,7 @@ public:
 
   // Playback control
 
-  /// Request playback after at least 40 ms of input has been queued.
+  /// Request playback after at least 60 ms of input has been queued.
   void Resume();
 
   /// Pause the audio device.
@@ -52,6 +52,9 @@ public:
 
   /// Returns queued bytes in the input format (stereo float).
   int QueuedBytes() const;
+
+  /// Whether the stream can currently supply samples to the device.
+  bool HasPendingOutput() const;
 
   /// The frame loop should wait while enough audio is already queued.
   bool NeedsSamples() const;

@@ -34,8 +34,36 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
   std::optional<uint8_t> competitionDip;
+  std::optional<snes::core::Region> regionOverride;
+  auto expansion = snes::core::Emulator::ExpansionDevice::None;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
+    if (value.starts_with("--region=")) {
+      const auto name = value.substr(9);
+      if (name == "auto")
+        regionOverride.reset();
+      else if (name == "ntsc")
+        regionOverride = snes::core::Region::NTSC;
+      else if (name == "pal")
+        regionOverride = snes::core::Region::PAL;
+      else {
+        std::cerr << "Region must be auto, ntsc, or pal\n";
+        return EXIT_FAILURE;
+      }
+      continue;
+    }
+    if (value.starts_with("--expansion=")) {
+      const auto name = value.substr(12);
+      if (name == "none")
+        expansion = snes::core::Emulator::ExpansionDevice::None;
+      else if (name == "satellaview")
+        expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
+      else {
+        std::cerr << "Unknown expansion device: " << name << '\n';
+        return EXIT_FAILURE;
+      }
+      continue;
+    }
     if (value.starts_with("--competition-dip=")) {
       const auto digits = value.substr(18);
       unsigned setting = 0;
@@ -83,23 +111,28 @@ int main(int argc, char *argv[]) {
       arguments.emplace_back(value);
   }
   const bool sufami = !arguments.empty() && arguments[0] == "--sufami";
+  const bool handheld = !arguments.empty() && arguments[0] == "--super-game-boy";
   const bool broadcast = !arguments.empty() && arguments[0] == "--broadcast";
   const bool campus = !arguments.empty() && arguments[0] == "--competition92";
   const bool powerfest = !arguments.empty() && arguments[0] == "--competition94";
   const bool competition = campus || powerfest;
-  if ((!sufami && !broadcast && !competition && arguments.size() != 1) ||
+  if ((!sufami && !handheld && !broadcast && !competition && arguments.size() != 1) ||
       (sufami && (arguments.size() < 3 || arguments.size() > 4)) ||
-      (broadcast && arguments.size() != 3) || (competition && arguments.size() != 5) ||
-      (competitionDip.has_value() && !competition)) {
+      (handheld && arguments.size() != 4) || (broadcast && arguments.size() != 3) ||
+      (competition && arguments.size() != 5) || (competitionDip.has_value() && !competition)) {
     std::cerr
         << "Usage: snes_frontend [--port1=pad|mouse|multitap|none] [--port2=...] <rom_file.smc>\n"
         << "       snes_frontend [controller options] --sufami <bios.bin> <slot-a.st|-> "
            "[slot-b.st|-]\n"
         << "       snes_frontend [controller options] --broadcast <base.sfc> <pack.bs|->\n";
+    std::cerr << "       snes_frontend [controller options] --super-game-boy <bios.sfc> "
+                 "<game.gb> <boot.bin>\n";
     std::cerr << "       snes_frontend --competition92|--competition94 <boot.sfc> <game1.sfc> "
                  "<game2.sfc> <game3.sfc> [--competition-dip=0..255]\n";
     std::cerr << "       Port 2 also supports scope, justifier, justifiers, and rifle\n";
     std::cerr << "       --firmware-dir=<directory> supplies cartridge processor firmware\n";
+    std::cerr << "       --expansion=none|satellaview selects the console expansion device\n";
+    std::cerr << "       --region=auto|ntsc|pal selects the console hardware region\n";
     return EXIT_FAILURE;
   }
   if (devices[0] == ControllerDevice::Mouse && devices[1] == ControllerDevice::Mouse) {
@@ -114,11 +147,13 @@ int main(int argc, char *argv[]) {
     std::cerr << "The host pointer cannot control a relative mouse and a light gun together\n";
     return EXIT_FAILURE;
   }
-  const std::string romPath = arguments[sufami || broadcast || competition ? 1 : 0];
+  const std::string romPath = arguments[sufami || handheld || broadcast || competition ? 1 : 0];
   const std::array<std::string, 2> slotPaths{sufami ? arguments[2] : "",
                                              sufami && arguments.size() == 4 ? arguments[3] : ""};
 
   snes::core::Emulator::Config emulatorConfig;
+  emulatorConfig.regionOverride = regionOverride;
+  emulatorConfig.expansionDevice = expansion;
   if (!firmwareDirectory.empty()) {
     auto firmware = std::make_shared<snes::core::CartridgeFirmware>();
     std::string error;
@@ -186,6 +221,8 @@ int main(int argc, char *argv[]) {
     std::copy_n(arguments.begin() + 1, 4, competitionPaths.begin());
   const bool loaded =
       sufami ? emulator->LoadSufamiTurboFromFiles(romPath, slotPaths[0], slotPaths[1], &loadError)
+      : handheld
+          ? emulator->LoadSuperGameBoyFromFiles(romPath, arguments[2], arguments[3], &loadError)
       : broadcast   ? emulator->LoadBroadcastCartridgeFromFiles(romPath, arguments[2], &loadError)
       : competition ? emulator->LoadCompetitionCartridgeFromFiles(competitionSettings,
                                                                   competitionPaths, &loadError)
@@ -209,8 +246,16 @@ int main(int argc, char *argv[]) {
   packMetadataPath += ".meta";
   snes::frontend::SaveRamFile savePackMetadata(packMetadataPath);
   std::array<std::unique_ptr<snes::frontend::SaveRamFile>, 2> slotSaves;
+  std::unique_ptr<snes::frontend::SaveRamFile> handheldSave;
   try {
-    if (sufami) {
+    if (handheld) {
+      auto path = std::filesystem::weakly_canonical(arguments[2]);
+      path.replace_extension(".sav");
+      handheldSave = std::make_unique<snes::frontend::SaveRamFile>(path);
+      const auto battery = handheldSave->LoadUpTo(emulator->SaveSlotBattery(0).size());
+      if (!battery.empty() && !emulator->LoadSlotBattery(0, battery))
+        throw std::runtime_error("Invalid handheld battery save: " + path.string());
+    } else if (sufami) {
       std::array<std::filesystem::path, 2> paths;
       for (unsigned i = 0; i < 2; ++i) {
         if (cart->SlotSramData(i).empty())
@@ -228,7 +273,7 @@ int main(int argc, char *argv[]) {
         emulator->LoadSlotSram(i, slotSaves[i]->Load(cart->SlotSramData(i).size()));
       }
     } else {
-      emulator->LoadSram(saveRam.Load(cart->SramData().size()));
+      emulator->LoadSram(saveRam.Load(cart->SramLoadSize()));
       const auto rtc = saveRtc.Load(emulator->SaveRtc().size());
       if (!rtc.empty() && !emulator->LoadRtc(rtc))
         throw std::runtime_error("Invalid cartridge clock save: " + rtcPath.string());
@@ -249,7 +294,9 @@ int main(int argc, char *argv[]) {
   }
 
   const auto flushSaves = [&] {
-    if (sufami) {
+    if (handheld) {
+      handheldSave->Flush(emulator->SaveSlotBattery(0));
+    } else if (sufami) {
       for (unsigned i = 0; i < 2; ++i)
         if (slotSaves[i])
           slotSaves[i]->Flush(cart->SlotSramData(i));

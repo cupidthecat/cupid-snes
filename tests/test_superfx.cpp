@@ -68,6 +68,58 @@ int Signed16(uint16_t value) {
   return value < 32768 ? value : int(value) - 65536;
 }
 
+void RegisterWindow() {
+  for (uint32_t bank : {0u, 0x3f0000u, 0x800000u, 0xbf0000u}) {
+    Fixture f;
+    Check(SuperFx::Selects(bank | 0x3300) && SuperFx::Selects(bank | 0x34ff),
+          "The graphics register window includes unused ports and register mirrors");
+    f.chip.WriteCpu(bank | 0x3400, 0x12);
+    f.chip.WriteCpu(bank | 0x3401, 0x34);
+    Check(f.Reg(0) == 0x3412 && f.chip.ReadCpu(bank | 0x3400, 0xa5) == 0x12 &&
+              f.chip.ReadCpu(bank | 0x343b, 0xa5) == 4,
+          "The final register page mirrors the first page");
+    f.chip.WriteCpu(bank | 0x3431, 0x80);
+    Check(f.chip.ReadCpu(bank | 0x3431) == 0x80 && f.chip.ReadCpu(bank | 0x3031) == 0 &&
+              !f.chip.CpuIrqPending(),
+          "Reading the mirrored IRQ register clears the stored flag");
+    for (unsigned offset = 0; offset < 256; ++offset) {
+      f.chip.WriteCpu(bank | (0x3100 + offset), 0x44);
+      f.chip.WriteCpu(bank | (0x3300 + offset), 0x55);
+      Check(f.chip.ReadCpu(bank | (0x3300 + offset), 0xa5) == 0 &&
+                f.chip.ReadCpu(bank | (0x3100 + offset)) == 0x44,
+            "Unused ports return zero and ignore cache writes");
+    }
+    Check(f.chip.ReadCpu(bank | 0x3500, 0x4b) == 0x4b &&
+              f.chip.ReadCpu(bank | 0x2fff, 0x4b) == 0x4b,
+          "Addresses outside the register window retain open bus");
+  }
+}
+
+void IrqOutput() {
+  Fixture f;
+  f.chip.WriteCpu(0x3431, 0x80);
+  Check(!f.chip.CpuIrqPending(), "Software SFR writes do not assert the cartridge IRQ output");
+  Check(f.chip.ReadCpu(0x3431) == 0x80 && !f.chip.CpuIrqPending(),
+        "A stored IRQ flag can be read without a processor interrupt");
+  f.Cache({0, 1});
+  f.Run(0);
+  Check(f.chip.CpuIrqPending(), "An unmasked STOP asserts the cartridge IRQ output");
+  f.chip.WriteCpu(0x3431, 0);
+  Check(f.chip.CpuIrqPending(), "Clearing the stored SFR flag retains the active IRQ output");
+  Check(f.chip.ReadCpu(0x3431) == 0 && !f.chip.CpuIrqPending(),
+        "The acknowledge read clears IRQ even when software cleared its stored flag");
+  f.Run(0);
+  f.chip.Reset();
+  Check(!f.chip.CpuIrqPending(), "Processor reset clears the IRQ output");
+  Fixture masked;
+  masked.chip.WriteCpu(0x3037, 0x80);
+  masked.chip.WriteCpu(0x3431, 0x80);
+  masked.Cache({0, 1});
+  masked.Run(0);
+  Check(!masked.chip.CpuIrqPending() && masked.chip.ReadCpu(0x3431) == 0x80,
+        "A masked STOP retains the writable status flag without asserting IRQ");
+}
+
 void CacheFillAndInternalRam() {
   for (unsigned idlePhase = 1; idlePhase < 6; ++idlePhase) {
     Fixture f;
@@ -1176,6 +1228,8 @@ void CacheBoundaryAndClockModes() {
 
 int main() {
   try {
+    IrqOutput();
+    RegisterWindow();
     CacheFillAndInternalRam();
     MasterClockSynchronization();
     RegistersAndMapping();
@@ -1205,4 +1259,5 @@ int main() {
     return 1;
   }
   std::puts("Super FX instruction, pipeline, pixel, cache, mapping, IRQ and clock checks passed");
+  return 0;
 }

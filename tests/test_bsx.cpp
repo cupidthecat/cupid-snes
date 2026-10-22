@@ -1,4 +1,6 @@
+#include "cartridge/BroadcastFixture.hpp"
 #include "snes/core/Bsx.hpp"
+#include "snes/core/Emulator.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -390,6 +392,146 @@ void FlashEraseAndMetadata() {
   }
 }
 
+void ClockedErasePolling() {
+  for (unsigned slot = 0; slot < 3; ++slot)
+    for (bool delayedStart : {false, true})
+      for (bool pal : {false, true}) {
+        snes::core::Emulator::Config config;
+        config.entropyMode = snes::core::EntropyMode::None;
+        snes::core::Emulator emulator(config);
+        const auto rom = broadcast_test::ErasePollingRom(pal, delayedStart, slot);
+        const std::vector<uint8_t> pack(0x100000);
+        std::string error;
+        Check(emulator.LoadBroadcastCartridge(rom, pack, &error),
+              "The erase-polling guest loads through the normal cartridge API");
+        for (unsigned pass = 0; pass < 2; ++pass) {
+          if (pass)
+            Check(emulator.Reset(), "The erase-polling guest resets normally");
+          for (unsigned field = 0; field < 24; ++field)
+            emulator.StepFrame();
+          const auto *ram = emulator.GetBus().WramData();
+          const unsigned polls = ram[0x200] | (unsigned(ram[0x201]) << 8);
+          Check(ram[0x120] == 0xa5,
+                "The guest observes erase completion and reaches its stop marker");
+          const unsigned expected = delayedStart ? (pal ? 3109u : 3771u) : (pal ? 1825u : 2443u);
+          Check(polls == expected,
+                "Cold and warm erase polling retain the regional cartridge handoff boundary");
+          Check(emulator.LoadedCartridge()->MemoryPackData()[0x1234] == (slot ? 0 : 0xff),
+                "Erase completion preserves the slot's physical write protection");
+        }
+      }
+}
+
+void PageBufferStartup() {
+  struct Scene {
+    snes::core::EntropyMode mode;
+    uint32_t seed;
+    uint64_t digest;
+    bool resetBeforeReload = false;
+  };
+  constexpr uint64_t zeroPages = 0x7da144b97d054b25;
+  for (const auto scene : {Scene{snes::core::EntropyMode::None, 206, zeroPages},
+                           Scene{snes::core::EntropyMode::Low, 194, 0x7a3e5bfa6a481c32},
+                           Scene{snes::core::EntropyMode::High, 198, 0x1bdba64555c30c4e},
+                           Scene{snes::core::EntropyMode::None, 358, zeroPages, true},
+                           Scene{snes::core::EntropyMode::Low, 214, 0x70be016e39521cf5, true},
+                           Scene{snes::core::EntropyMode::High, 213, 0xd08ba3c7bccd8341, true}})
+    for (unsigned slot = 0; slot < 3; ++slot) {
+      snes::core::Emulator::Config config;
+      config.entropyMode = scene.mode;
+      config.entropySeed = scene.seed;
+      snes::core::Emulator emulator(config);
+      const auto rom = broadcast_test::PageReadRom(slot);
+      const std::vector<uint8_t> pack(0x100000);
+      std::string error;
+      const auto readPages = [&]() {
+        emulator.StepFrame();
+        const auto *ram = emulator.GetBus().WramData();
+        Check(ram[0x120] == 0xa5, "The guest reads both complete page buffers");
+        uint64_t digest = 0xcbf29ce484222325;
+        for (unsigned index = 0x300; index < 0x500; ++index)
+          digest = (digest ^ ram[index]) * 0x100000001b3;
+        return digest;
+      };
+      Check(emulator.LoadBroadcastCartridge(rom, pack, &error), "The page-read guest loads");
+      Check(readPages() == zeroPages, "First-load pages start before the first seeded power cycle");
+      if (scene.resetBeforeReload)
+        Check(emulator.Reset(), "The page-read guest resets before cartridge replacement");
+      Check(emulator.LoadBroadcastCartridge(rom, pack, &error), "The page-read guest reloads");
+      Check(readPages() == scene.digest,
+            "Reloaded pages consume the stream retained by the previous power or reset");
+      Check(emulator.Reset(), "The page-read guest resets normally");
+      Check(readPages() == scene.digest, "A processor reset retains the existing flash pages");
+    }
+}
+
+void InformationPageLayout() {
+  constexpr std::array<unsigned, 64> positions{
+      0,  8,  16, 24, 64,  72,  80,  88,  128, 136, 144, 152, 192, 200, 208, 216,
+      32, 40, 48, 56, 96,  104, 112, 120, 160, 168, 176, 184, 224, 232, 240, 248,
+      4,  12, 20, 28, 68,  76,  84,  92,  132, 140, 148, 156, 196, 204, 212, 220,
+      36, 44, 52, 60, 100, 108, 116, 124, 164, 172, 180, 188, 228, 236, 244, 252};
+  for (size_t size : {0x100000u, 0x200000u, 0x400000u}) {
+    for (unsigned slot = 0; slot < 3; ++slot) {
+      for (bool pal : {false, true}) {
+        snes::core::Emulator::Config config;
+        config.entropyMode = snes::core::EntropyMode::None;
+        snes::core::Emulator emulator(config);
+        const auto rom = broadcast_test::InformationPageRom(pal, slot);
+        const std::vector<uint8_t> pack(size);
+        Check(emulator.LoadBroadcastCartridge(rom, pack), "The information-page guest loads");
+        auto metadata = emulator.LoadedCartridge()->MemoryPackMetadata();
+        const unsigned blocks = unsigned(size >> 16);
+        for (unsigned block = 0; block < blocks; ++block) {
+          metadata[16 + block * 5] = uint8_t(block);
+          metadata[17 + block * 5] = 3;
+          metadata[18 + block * 5] = 2;
+          metadata[19 + block * 5] = 1;
+        }
+        Check(emulator.LoadMemoryPackMetadata(metadata),
+              "Startup metadata supplies distinct physical erase counts");
+        std::array<uint8_t, 256> first{}, second{};
+        for (unsigned byte = 0; byte < first.size(); ++byte) {
+          first[byte] = uint8_t(byte * 37 + 0x53);
+          second[byte] = uint8_t(byte * 37 + 0x64);
+        }
+        auto information = first;
+        information[6] = 6;
+        information[7] = 0;
+        for (unsigned block = 0; block < blocks; ++block) {
+          const unsigned offset = positions[block];
+          information[offset] = uint8_t(block);
+          information[offset + 1] = 3;
+          information[offset + 2] = 2;
+          information[offset + 3] = 0x81;
+        }
+        for (bool warm : {false, true}) {
+          if (warm)
+            Check(emulator.Reset(), "The information-page guest resets");
+          for (unsigned field = 0; field < 4; ++field)
+            emulator.StepFrame();
+          const auto *ram = emulator.GetBus().WramData();
+          Check(ram[0x120] == 0xa5, "The information-page guest completes");
+          Check(std::equal(first.begin(), first.end(), ram + 0x300),
+                "Sequential loading preserves the entire initial page");
+          for (unsigned repeat = 0; repeat < 3; ++repeat) {
+            Check(std::equal(second.begin(), second.end(), ram + 0x400 + repeat * 0x200),
+                  "Information upload swaps to the untouched page buffer");
+            Check(std::equal(information.begin(), information.end(), ram + 0x500 + repeat * 0x200),
+                  "Every information record has a deterministic offset and little-endian count");
+          }
+          Check(std::equal(information.begin(), information.end(), ram + 0xa00),
+                "Rejected information confirmation preserves page selection and contents");
+          Check(emulator.LoadedCartridge()->MemoryPackMetadata() == metadata &&
+                    std::equal(pack.begin(), pack.end(),
+                               emulator.LoadedCartridge()->MemoryPackData().begin()),
+                "Information upload leaves physical erase counts, locks and flash bytes unchanged");
+        }
+      }
+    }
+  }
+}
+
 void RadioAndClock() {
   Fixture f;
   Check(f.chip.ReadCpu(0x2196) == 0 && f.chip.ReadCpu(0x2197) == 0,
@@ -505,6 +647,9 @@ int main() {
     MappingPriority();
     FlashCommandsAndIrq();
     FlashEraseAndMetadata();
+    ClockedErasePolling();
+    PageBufferStartup();
+    InformationPageLayout();
     RadioAndClock();
     PacketStreams();
   } catch (const std::exception &error) {
@@ -513,4 +658,5 @@ int main() {
   }
   std::puts(
       "BS-X mapper, clocked flash, metadata, PSRAM, radio, clock and packet-stream checks passed");
+  return 0;
 }

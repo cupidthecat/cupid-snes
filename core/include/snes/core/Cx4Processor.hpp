@@ -15,12 +15,21 @@ class ExecutionContext;
 class Cx4Processor : private Hg51b {
 public:
   enum class Layout { LoRom, HiRom };
+  struct RetainedStorage {
+    std::array<std::array<uint16_t, 256>, 2> program{};
+    std::array<uint32_t, 8> stack{};
+  };
   Cx4Processor(std::span<const uint8_t> rom, std::span<uint8_t> save,
                std::span<const uint8_t> firmware, Layout layout = Layout::LoRom);
   ~Cx4Processor();
   void Reset();
+  RetainedStorage CaptureStorage() const noexcept;
+  void InitializeStorage(const RetainedStorage &storage);
   void SetPal(bool pal);
-  void Advance(uint32_t masterClocks);
+  void SetDelayedSync(bool enabled) noexcept {
+    delayedSync_ = enabled;
+  }
+  void Advance(uint32_t masterClocks, bool synchronize = true);
   uint8_t Read(uint32_t address, uint8_t openBus);
   void Write(uint32_t address, uint8_t value);
   void MapCpu(MemoryBus &bus, uint8_t slot) const;
@@ -51,6 +60,7 @@ private:
   uint32_t masterFrequency_ = 21'477'272;
   int64_t balance_ = 0;
   bool irqLine_ = false;
+  bool delayedSync_ = false;
 };
 
 } // namespace snes::core

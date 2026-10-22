@@ -8,14 +8,18 @@
 
 namespace snes::core {
 
+class PowerOnState;
+
 class BsMemory {
 public:
   // The cartridge owns the image and keeps its allocation stable.
   BsMemory(std::span<uint8_t> image, bool readOnly);
   void Reset();
+  void InitializePageBuffers(PowerOnState &state);
   void SetWritable(bool writable);
   void SetPal(bool pal);
-  void Advance(uint32_t masterClocks);
+  // Accrue bus clocks while execution waits for a cartridge processor handoff.
+  void Advance(uint32_t masterClocks, bool synchronizeProcessor = true);
   uint8_t Read(uint32_t address, uint8_t openBus = 0xff) const;
   void Write(uint32_t address, uint8_t value);
   std::vector<uint8_t> Metadata() const;

@@ -2,11 +2,14 @@
 
 #include "snes/core/Timing.hpp"
 
+#include <algorithm>
+
 namespace snes::core {
 
 // Construction & Reset
 
-Timing::Timing(Region region) : region_(region) {
+Timing::Timing(Region region, uint8_t cpuRevision)
+    : region_(region), cpuRevision_(std::clamp<uint8_t>(cpuRevision, 1, 2)) {
   Reset();
 }
 
@@ -25,8 +28,8 @@ void Timing::Reset() {
 
   masterClocksElapsed_ = 0;
   frameCount_ = 0;
-  dramRefreshPosition_ = kDramRefreshPos;
-  hdmaSetupPosition_ = 12;
+  dramRefreshPosition_ = cpuRevision_ == 1 ? 530 : kDramRefreshPos;
+  hdmaSetupPosition_ = cpuRevision_ == 1 ? 20 : 12;
   hdmaSetupFired_ = false;
   halfClockPending_ = false;
 
@@ -47,6 +50,11 @@ void Timing::SetRegion(Region r) noexcept {
   previousVPeriod_ = vperiod_;
 }
 
+void Timing::SetRenderCycle(uint16_t clock) noexcept {
+  renderCycle_ = std::clamp<uint16_t>(clock, 2, kDotsPerLineShort);
+  updateNextEvent();
+}
+
 // Core tick
 
 void Timing::Tick(uint32_t clocks) {
@@ -59,8 +67,13 @@ void Timing::Tick(uint32_t clocks) {
     --clocks;
   }
   while (clocks >= 2) {
-    tickOnce();
-    clocks -= 2;
+    // Skip an intermediate edge only when no callback or scanline event observes it.
+    const uint8_t step = clocks >= 4 && (hcounter_ & 2) && hcounter_ + 2 < nextEventH_ &&
+                                 ((masterClocksElapsed_ + 2) & 127) != 0
+                             ? 4
+                             : 2;
+    tickOnce(step);
+    clocks -= step;
   }
   // Preserve a half tick so splitting an interval into odd batches does not
   // change event positions or lose clocks from the horizontal counter.
@@ -112,8 +125,8 @@ void Timing::dispatchScanlineEvents() {
       onNmiPoint();
   }
 
-  // PPU render sampling point (visible lines 1..vdisp-1).
-  if (!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_ && hcounter_ >= kRenderCycle) {
+  // PPU sampling uses the active cartridge's visible-line clock.
+  if (!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_ && hcounter_ >= renderCycle_) {
     renderCycleFired_ = true;
     if (onRenderCycle)
       onRenderCycle(vcounter_);
@@ -158,7 +171,7 @@ void Timing::updateNextEvent() {
   };
   include(!hdmaSetupFired_ && vcounter_ == 0, hdmaSetupPosition_);
   include(!nmiFired_ && vcounter_ == vdisp_, kNmiHPos);
-  include(!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_, kRenderCycle);
+  include(!renderCycleFired_ && vcounter_ > 0 && vcounter_ < vdisp_, renderCycle_);
   include(!dramRefreshFired_, dramRefreshPosition_);
   include(!hblankFired_ && vcounter_ < vdisp_, kHBlankStart);
   include(!hdmaFired_ && vcounter_ < vdisp_, kHdmaPosition);
@@ -187,7 +200,8 @@ void Timing::tickScanline() {
     vcounter_ = 0;
     field_ = !field_;
     frameCount_++;
-    hdmaSetupPosition_ = uint16_t(12 + (masterClocksElapsed_ & 7));
+    const auto divider = masterClocksElapsed_ & 7;
+    hdmaSetupPosition_ = uint16_t(cpuRevision_ == 1 ? 20 - divider : 12 + divider);
     hdmaSetupFired_ = false;
 
     // Recalculate vperiod for the new frame.
@@ -200,7 +214,8 @@ void Timing::tickScanline() {
 
   // Update H period for the new scanline (short/long line logic).
   updateHPeriod();
-  dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
+  if (cpuRevision_ == 2)
+    dramRefreshPosition_ = uint16_t(538 - (masterClocksElapsed_ & 7));
 
   // Reset per-scanline event flags.
   dramRefreshFired_ = false;

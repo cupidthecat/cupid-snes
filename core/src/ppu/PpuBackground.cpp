@@ -23,6 +23,7 @@ bool Hires(const Ppu::IO &io) {
 void PpuBackground::Reset() {
   output_ = {};
   line_ = horizontalOffset_ = verticalOffset_ = 0;
+  previousHorizontalOffset_ = previousVerticalOffset_ = 0;
   field_ = false;
   for (auto &layer : layers_) {
     layer.column = layer.position = layer.mosaicClock = layer.mosaicX = 0;
@@ -43,10 +44,13 @@ const Ppu::Background &PpuBackground::Registers(const Ppu::IO &io, unsigned laye
   }
 }
 
-void PpuBackground::BeginLine(uint16_t line, bool field, const Ppu::IO &io) {
+void PpuBackground::BeginLine(uint16_t line, bool field, const Ppu::IO &io,
+                              Ppu::RenderModel model) {
   line_ = line;
   field_ = field;
+  model_ = model;
   horizontalOffset_ = verticalOffset_ = 0;
+  previousHorizontalOffset_ = previousVerticalOffset_ = 0;
   for (unsigned i = 0; i < 4; ++i) {
     auto &layer = layers_[i];
     layer.column = 0;
@@ -62,7 +66,7 @@ uint16_t PpuBackground::MapAddress(const Ppu::Background &bg, unsigned x, unsign
     offset += 0x400;
   if ((y & 32) && (bg.screenSize & 2))
     offset += (bg.screenSize & 1) ? 0x800 : 0x400;
-  return uint16_t(bg.screenAddress + offset) & 0x7fff;
+  return uint16_t(bg.screenAddress + offset);
 }
 
 void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vram) {
@@ -80,19 +84,23 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
     const unsigned scrollX = unsigned(bg.hoffset) << unsigned(hires);
     unsigned x = screenX + scrollX, row = y + bg.voffset;
     if (io.bgMode == 2 || io.bgMode == 4 || io.bgMode == 6) {
+      // Large scanline tiles delay offset entries by another eight-pixel column.
+      const bool delayed = model_ == Ppu::RenderModel::Scanline && !hires && bg.tileSize;
+      const unsigned horizontal = delayed ? previousHorizontalOffset_ : horizontalOffset_;
+      const unsigned vertical = delayed ? previousVerticalOffset_ : verticalOffset_;
       const unsigned select = 0x2000u << id;
       if (io.bgMode == 4) {
-        if (horizontalOffset_ & select) {
-          if (horizontalOffset_ & 0x8000)
-            row = y + horizontalOffset_;
+        if (horizontal & select) {
+          if (horizontal & 0x8000)
+            row = y + horizontal;
           else
-            x = screenX + (horizontalOffset_ & ~7u) + (scrollX & 7);
+            x = screenX + (horizontal & ~7u) + (scrollX & 7);
         }
       } else {
-        if (horizontalOffset_ & select)
-          x = screenX + (horizontalOffset_ & ~7u) + (scrollX & 7);
-        if (verticalOffset_ & select)
-          row = y + verticalOffset_;
+        if (horizontal & select)
+          x = screenX + (horizontal & ~7u) + (scrollX & 7);
+        if (vertical & select)
+          row = y + vertical;
       }
     }
     const unsigned width = 256u << unsigned(hires);
@@ -100,7 +108,7 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
     row &= (width << unsigned(bg.tileSize) << ((bg.screenSize >> 1) & 1)) - 1;
     const unsigned xShift = hires ? 4 : 3 + unsigned(bg.tileSize);
     const unsigned yShift = 3 + unsigned(bg.tileSize);
-    const uint16_t entry = vram[MapAddress(bg, x >> xShift, row >> yShift)];
+    const uint16_t entry = vram[MapAddress(bg, x >> xShift, row >> yShift) & (vram.size() - 1)];
     unsigned character = entry & 1023;
     if (xShift == 4 && bool(x & 8) != bool(entry & 0x4000))
       ++character;
@@ -110,7 +118,8 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
       row ^= 7;
     auto &column = layers_[id].columns[(clock / 32 << unsigned(hires)) + half];
     const unsigned shift = 3 + depthMode;
-    const unsigned tile = ((character & 1023) + (bg.tiledataAddress >> shift)) & (0x7fff >> shift);
+    const unsigned tile =
+        ((character & 1023) + (bg.tiledataAddress >> shift)) & ((vram.size() - 1) >> shift);
     column.address = uint16_t((tile << shift) + (row & 7));
     column.group = (entry >> 10) & 7;
     column.palette = uint8_t((io.bgMode == 0 ? id * 32 : 0) +
@@ -123,7 +132,7 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
 void PpuBackground::Pattern(unsigned id, unsigned pair, unsigned half, unsigned clock,
                             const Ppu::IO &io, Vram vram) {
   auto &column = layers_[id].columns[(clock / 32 << unsigned(Hires(io))) + half];
-  const uint16_t word = vram[(column.address + pair * 8) & 0x7fff];
+  const uint16_t word = vram[(column.address + pair * 8) & (vram.size() - 1)];
   unsigned low = word & 255, high = word >> 8;
   if (column.flip) {
     low = Reverse(low);
@@ -139,8 +148,12 @@ void PpuBackground::Offset(bool vertical, unsigned clock, const Ppu::IO &io, Vra
   const unsigned x = clock / 32 * 8 + (bg.hoffset & ~7u);
   const unsigned y = bg.voffset + (vertical ? 8 : 0);
   const unsigned xShift = Hires(io) ? 3 : 3 + unsigned(bg.tileSize);
-  const uint16_t word = vram[MapAddress(bg, x >> xShift, y >> (3 + unsigned(bg.tileSize)))];
-  (vertical ? verticalOffset_ : horizontalOffset_) = word;
+  const uint16_t word =
+      vram[MapAddress(bg, x >> xShift, y >> (3 + unsigned(bg.tileSize))) & (vram.size() - 1)];
+  auto &current = vertical ? verticalOffset_ : horizontalOffset_;
+  auto &previous = vertical ? previousVerticalOffset_ : previousHorizontalOffset_;
+  previous = current;
+  current = word;
 }
 
 void PpuBackground::Fetch(uint16_t clock, const Ppu::IO &io, Vram vram) {
@@ -173,11 +186,16 @@ PpuBackground::Sample PpuBackground::Mode7(unsigned id, const Ppu::IO &io, Vram 
     layer.mosaicClock = io.mosaic.size;
     layer.mosaicX += io.mosaic.size;
   }
-  int y = line_;
-  if (io.bg1.mosaicEnable)
+  const auto row = TransformMode7(
+      line_, model_ == Ppu::RenderModel::Scanline ? bg.mosaicEnable : io.bg1.mosaicEnable, io);
+  return Mode7At(id, x, row, io, vram);
+}
+
+PpuBackground::Mode7Transform PpuBackground::TransformMode7(uint16_t line, bool mosaic,
+                                                            const Ppu::IO &io) {
+  int y = line;
+  if (mosaic)
     y -= io.mosaic.size - io.mosaic.counter;
-  if (io.mode7.hflip)
-    x = 255 - x;
   if (io.mode7.vflip)
     y = 255 - y;
   const auto signed13 = [](uint16_t n) { return int(n & 0x1fff) - ((n & 0x1000) ? 0x2000 : 0); };
@@ -187,10 +205,17 @@ PpuBackground::Sample PpuBackground::Mode7(unsigned id, const Ppu::IO &io, Vram 
   const int centerX = signed13(io.mode7.x), centerY = signed13(io.mode7.y);
   const int h = clip(signed13(io.mode7.hoffset) - centerX);
   const int v = clip(signed13(io.mode7.voffset) - centerY);
-  const int pixelX =
-      ((a * h & ~63) + (b * v & ~63) + (b * y & ~63) + centerX * 256 + a * int(x)) >> 8;
-  const int pixelY =
-      ((c * h & ~63) + (d * v & ~63) + (d * y & ~63) + centerY * 256 + c * int(x)) >> 8;
+  return {a, c, (a * h & ~63) + (b * v & ~63) + (b * y & ~63) + centerX * 256,
+          (c * h & ~63) + (d * v & ~63) + (d * y & ~63) + centerY * 256};
+}
+
+PpuBackground::Sample PpuBackground::Mode7At(unsigned id, unsigned x, const Mode7Transform &row,
+                                             const Ppu::IO &io, Vram vram) {
+  if (io.mode7.hflip)
+    x = 255 - x;
+  const auto &bg = Registers(io, id);
+  const int pixelX = (row.x + row.a * int(x)) >> 8;
+  const int pixelY = (row.y + row.c * int(x)) >> 8;
   const bool outside = (pixelX | pixelY) & ~1023;
   if (outside && io.mode7.repeat == 2)
     return {};
@@ -259,6 +284,51 @@ bool PpuBackground::Clock(uint16_t clock, const Ppu::IO &io, Vram vram) {
   if (clock >= 56 && clock <= 1078)
     Shift(!(clock & 2), clock, io, vram);
   return clock >= 58 && clock <= 1078 && (clock & 3) == 2;
+}
+
+std::array<PpuBackground::Output, 256> PpuBackground::SampleLine(uint16_t line, bool field,
+                                                                 const Ppu::IO &io, Vram vram) {
+  std::array<Output, 256> samples{};
+  BeginLine(line, field, io, Ppu::RenderModel::Scanline);
+  if (!line)
+    return samples;
+  if (io.bgMode < 7)
+    for (unsigned clock = 0; clock <= 1054; clock += 4)
+      Fetch(uint16_t(clock), io, vram);
+
+  const bool hires = Hires(io);
+  for (unsigned id = 0; id < 4; ++id) {
+    const auto &bg = Registers(io, id);
+    if ((!bg.aboveEnable && !bg.belowEnable) || bg.tileMode == Ppu::TileMode::Inactive)
+      continue;
+    const unsigned bits = 2u << unsigned(bg.tileMode);
+    const unsigned fine = layers_[id].position;
+    const auto row = bg.tileMode == Ppu::TileMode::Mode7
+                         ? TransformMode7(line_, bg.mosaicEnable, io)
+                         : Mode7Transform{};
+    for (unsigned x = 0; x < (256u << unsigned(hires)); ++x) {
+      Sample sample;
+      if (bg.tileMode == Ppu::TileMode::Mode7)
+        sample =
+            Mode7At(id, bg.mosaicEnable ? x / io.mosaic.size * io.mosaic.size : x, row, io, vram);
+      else {
+        const unsigned size = bg.mosaicEnable ? unsigned(io.mosaic.size) << unsigned(hires) : 1;
+        const unsigned position = fine + x / size * size;
+        const auto &column = layers_[id].columns[position / 8];
+        const unsigned color = unsigned(column.pixels >> ((position & 7) * 8)) & ((1u << bits) - 1);
+        sample = {color ? uint8_t(column.palette + color) : uint8_t{0}, column.group,
+                  column.priority};
+      }
+      if (!sample.palette)
+        continue;
+      auto &dot = samples[x >> unsigned(hires)];
+      if (bg.aboveEnable && (!hires || (x & 1)))
+        dot.above[id] = sample;
+      if (bg.belowEnable && (!hires || !(x & 1)))
+        dot.below[id] = sample;
+    }
+  }
+  return samples;
 }
 
 } // namespace snes::core

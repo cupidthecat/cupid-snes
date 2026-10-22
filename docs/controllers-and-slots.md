@@ -21,11 +21,11 @@ Manual reads at $4016/$4017 and automatic polling at $4218-$421F share the same 
 
 Gamepads serialize B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R, then four zero bits. Further reads return one. Opposing directions cancel. Each port receives independent input, including when an older input provider only supplies player one.
 
-The CPU latch and automatic latch are combined. A rising edge captures input; reads while the latch is high do not advance the packet. Multitaps return a two-bit identification value of 2 while latched. WRIO bit 6 selects the pad pair on port one, and bit 7 selects it on port two. Each pair keeps its own read position. An empty multitap socket returns zero even after the other socket finishes its packet.
+The CPU latch and automatic latch are combined. Gamepads capture buttons on the falling edge; reads while the latch is high return the live B button without advancing the packet. Multitaps return a two-bit identification value of 2 while latched. WRIO bit 6 selects the pad pair on port one, and bit 7 selects it on port two. Each pair keeps its own read position. An empty multitap socket returns zero even after the other socket finishes its packet.
 
-Mouse packets contain eight zero bits, a button/sensitivity/signature byte, signed Y movement, and signed X movement. Each movement byte uses a sign bit and a seven-bit magnitude. Movement beyond 127 counts carries into later packets. Reads with the latch high cycle the three sensitivity settings. These settings appear in the packet; the frontend passes host movement counts without applying an additional sensitivity curve.
+Mouse packets contain eight zero bits, a button/sensitivity/signature byte, signed Y movement, and signed X movement. Both latch transitions sample movement and buttons. Reads with the latch high cycle the three sensitivity settings, which scale movement by 1, 1.5, or 2 before truncating fractional counts and clipping each magnitude to 127. Excess movement is discarded. The frontend keeps one host movement snapshot per frame so both latch transitions can sample it.
 
-Core callers configure devices through `GetAutoJoypad().Ports().Configure(...)`. An explicit array assigns up to four player IDs to a port, with `-1` for an empty socket. Input providers can override `PollController(player, frame)` and `PollMouse(port, frame)`. Mouse deltas must be consumed once per call. Reset preserves device assignments and clears protocol state.
+Core callers configure devices through `GetAutoJoypad().Ports().Configure(...)`. An explicit array assigns up to four player IDs to a port, with `-1` for an empty socket. Input providers can override `PollController(player, frame)` and `PollMouse(port, frame)`. Mouse providers return the current host input snapshot rather than clearing movement on each call. Reset preserves device assignments and clears protocol state.
 
 ## BS cartridge slots
 

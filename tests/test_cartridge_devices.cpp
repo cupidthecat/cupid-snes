@@ -1,6 +1,6 @@
 // Regression coverage for cartridge mappers and enhancement devices.
 
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -24,6 +24,14 @@ void Check(bool value, const char *label) {
   }
 }
 
+std::shared_ptr<CartridgeFirmware> DetectionFirmware() {
+  auto firmware = std::make_shared<CartridgeFirmware>();
+  for (auto kind : {FirmwareKind::Dsp3, FirmwareKind::St011, FirmwareKind::St018})
+    Check(firmware->Set(kind, std::vector<uint8_t>(CartridgeFirmware::Size(kind))),
+          "Header fixtures provide complete zero-operation processor images");
+  return firmware;
+}
+
 std::vector<uint8_t> Rom(size_t size = 0x100000, uint8_t mode = 0x20, uint8_t type = 0) {
   std::vector<uint8_t> bytes(size, 0xea);
   const size_t header = mode == 0x35 || mode == 0x25     ? 0x40ffc0
@@ -45,7 +53,7 @@ std::vector<uint8_t> Rom(size_t size = 0x100000, uint8_t mode = 0x20, uint8_t ty
 }
 
 std::unique_ptr<Emulator> Load(const std::vector<uint8_t> &bytes) {
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   if (!emu->LoadCartridge(bytes, &error))
     throw std::runtime_error(error);
@@ -76,7 +84,7 @@ void IdentifiedSlotCartridges() {
     if (mode != 0x23) {
       Check(cart->Read(mode == 0x21 ? 0x208123 : 0xc08123, 0x49) == 0x49,
             "An absent ordinary memory slot preserves open bus");
-      auto machine = std::make_unique<Emulator>();
+      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       Check(machine->LoadBroadcastCartridge(bytes, {}), "An explicit empty slot loads");
       machine->GetBus().Write(0x7e0000, 0x5b);
       Check(machine->LoadedCartridge()->MemoryPackData().empty() &&
@@ -270,7 +278,8 @@ void HeaderRamDeclarations() {
   image[0x7fd8] = 3;
   image[0] = 0x78;
   image[0x123] = 0x45;
-  auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+  const auto firmware = DetectionFirmware();
+  auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, firmware.get());
   Check(cart && cart->Read(0x400000) == 0x78 && cart->Read(0xc00000) == 0x78 &&
             cart->Read(0x600123) == 0x45 && cart->Read(0xe00123) == 0x45,
         "The ARM cartridge retains its lower-half ROM windows");
@@ -309,6 +318,7 @@ void BootHeaderRanking() {
 }
 
 void DeviceFamilyHeaders() {
+  const auto firmware = DetectionFirmware();
   for (const auto [mode, type, chip] :
        {std::tuple{uint8_t(0x22), uint8_t(0x45), EnhancementChip::Sdd1},
         std::tuple{uint8_t(0x33), uint8_t(0x35), EnhancementChip::Sa1},
@@ -326,14 +336,14 @@ void DeviceFamilyHeaders() {
   Check(controller && controller->Header().chip == EnhancementChip::Spc7110 &&
             controller->Header().mapping == MappingType::Spc7110,
         "A device family's controller takes priority over a conflicting mapping mode");
-  const auto identified = [](std::string_view title, uint8_t mode, uint8_t type, uint8_t subtype,
-                             uint8_t maker) {
+  const auto identified = [&](std::string_view title, uint8_t mode, uint8_t type, uint8_t subtype,
+                              uint8_t maker) {
     auto image = Rom(0x100000, mode, type);
     std::fill_n(image.begin() + 0x7fc0, 21, ' ');
     std::copy(title.begin(), title.end(), image.begin() + 0x7fc0);
     image[0x7fbf] = subtype;
     image[0x7fda] = maker;
-    return Cartridge::FromRomImage(image, nullptr, nullptr, nullptr);
+    return Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, firmware.get());
   };
   auto dsp1 = identified("PILOTWINGS", 0x20, 5, 0, 0);
   auto dsp2 = identified("DUNGEON MASTER", 0x30, 5, 0, 0);
@@ -373,6 +383,9 @@ void DeviceFamilyHeaders() {
 }
 
 void DetectionAndReload() {
+  const auto firmware = DetectionFirmware();
+  auto config = snes::tests::DeterministicConsoleConfig();
+  config.cartridgeFirmware = firmware;
   struct Fixture {
     uint8_t mode, type, maker;
     EnhancementChip chip;
@@ -410,10 +423,11 @@ void DetectionAndReload() {
                         : f.chip == EnhancementChip::St018 ? 2
                         : f.chip == EnhancementChip::St010 ? 1
                                                            : 0;
-    auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr);
+    auto cart = Cartridge::FromRomImage(bytes, nullptr, nullptr, nullptr, firmware.get());
     Check(cart && cart->Header().chip == f.chip,
           "Chip detection uses device family, subtype and title");
-    auto emu = Load(Rom());
+    auto emu = std::make_unique<Emulator>(config);
+    Check(emu->LoadCartridge(Rom()), "The reload fixture starts with an ordinary cartridge");
     emu->GetBus().Write(0x7e0123, 0x5a);
     std::string error;
     Check(emu->LoadCartridge(bytes, &error) == f.supported,
@@ -430,7 +444,7 @@ void DetectionAndReload() {
   auto st011 = Rom(0x100000, 0x30, 0xf6);
   st011[0x7fbf] = 1;
   std::copy_n("2DAN MORITA SHOUGI", 18, st011.begin() + 0x7fc0);
-  Check(Cartridge::FromRomImage(st011, nullptr, nullptr, nullptr)->Header().chip ==
+  Check(Cartridge::FromRomImage(st011, nullptr, nullptr, nullptr, firmware.get())->Header().chip ==
             EnhancementChip::St011,
         "ST011 detection uses its identifying title");
   auto emu = Load(Rom());
@@ -726,6 +740,8 @@ void ObjectController() {
   auto emu = Load(image);
   auto &bus = emu->GetBus();
   Check(bus.Read(0x006000) == 0xff && bus.Read(0xbf7ff6) == 0xff, "OBC1 power-on RAM");
+  for (unsigned byte = 0; byte < 4; ++byte)
+    bus.Write(0x7e7ff0 + byte, uint8_t(0xf0 + byte));
   for (unsigned select = 0; select < 2; ++select) {
     bus.Write(0x007ff5, static_cast<uint8_t>(select));
     const unsigned base = select ? 0x7800 : 0x7c00;
@@ -737,7 +753,7 @@ void ObjectController() {
               "OBC1 object port writes backing RAM");
         Check(bus.Read(0xbf7ff0 + byte) == uint8_t(object + byte),
               "OBC1 object ports share bank mirrors");
-        Check(bus.Read(0x7e7ff0 + byte) != uint8_t(object + byte), "OBC1 leaves WRAM mapped");
+        Check(bus.Read(0x7e7ff0 + byte) == uint8_t(0xf0 + byte), "OBC1 leaves WRAM mapped");
       }
     }
     bus.Write(base + 0x200, 0);
@@ -765,7 +781,9 @@ void Sufami() {
   std::vector<uint8_t> a(0x80000, 0x11), b(0x100000, 0x22);
   Signature(a, 0, "BANDAI SFC-ADX");
   Signature(b, 0, "BANDAI SFC-ADX");
-  auto emu = std::make_unique<Emulator>();
+  a[0x37] = 4;
+  b[0x37] = 1;
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadSufamiTurbo(bios, a, b), "Load two Sufami Turbo slots");
   Check(emu->LoadedCartridge()->Header().mapping == MappingType::SufamiTurbo,
         "Sufami Turbo mapper selection");
@@ -777,6 +795,9 @@ void Sufami() {
     Check(bus.Read((bank << 16) | 0x8123) == 0x11, "Sufami slot A mirrors its own ROM");
   for (unsigned bank : {0x40u, 0x5fu, 0xc0u, 0xdfu})
     Check(bus.Read((bank << 16) | 0x8123) == 0x22, "Sufami slot B bank selection");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0x400123) == 0x22 && bus.Read(0xdf0123) == 0x22,
+        "Sufami slot B ROM occupies both bank halves");
   bus.Write(0x608123, 0x57);
   bus.Write(0x708123, 0x63);
   Check(bus.Read(0xe3c123) == 0x57 && bus.Read(0xf3c123) == 0x63,
@@ -784,12 +805,21 @@ void Sufami() {
   Check(emu->LoadedCartridge()->SlotSramData(0)[0x123] == 0x57 &&
             emu->LoadedCartridge()->SlotSramData(1)[0x123] == 0x63,
         "Sufami save API exposes both slots");
+  Check(bus.Read(0x600123) == 0x57 && bus.Read(0x6fe123) == 0x57 && bus.Read(0xef0123) == 0x57 &&
+            bus.Read(0x700123) == 0x63 && bus.Read(0x7d8923) == 0x63 && bus.Read(0xff0123) == 0x63,
+        "Sufami RAM occupies full banks and mirrors each slot's capacity");
+  bus.Write(0x6f2123, 0x48);
+  bus.Write(0xff0923, 0x79);
+  Check(bus.Read(0x608123) == 0x48 && bus.Read(0x708123) == 0x79,
+        "Sufami RAM writes use lower halves and outer bank aliases");
+  bus.Write(0x608123, 0x57);
+  bus.Write(0x708123, 0x63);
   const std::vector<uint8_t> saved(emu->LoadedCartridge()->SlotSramData(0).begin(),
                                    emu->LoadedCartridge()->SlotSramData(0).end());
   bus.Write(0x7e8123, 0xa5);
   Check(bus.Read(0x7e8123) == 0xa5, "Sufami preserves WRAM");
   bus.Write(0x400123, 0x76);
-  Check(bus.Read(0x400123) == 0x76, "Sufami lower cartridge windows read open bus");
+  Check(bus.Read(0x400123) == 0x22, "Sufami ROM ignores writes in its lower bank half");
   Check(!emu->LoadSufamiTurbo(bios, bios, b), "Reject a BIOS passed as a game");
   Check(bus.Read(0x608123) == 0x57, "Failed Sufami load preserves the existing slots");
   bios.insert(bios.begin(), 512, 0);
@@ -802,6 +832,27 @@ void Sufami() {
   emu->LoadSlotSram(1, saved);
   Check(bus.Read(0xf08123) == 0x57, "A Sufami save can follow its game to the other slot");
   Check(emu->LoadSufamiTurbo(bios, {}, {}), "Sufami BIOS-only operation");
+  a[0x37] = 0;
+  Check(emu->LoadSufamiTurbo(bios, a, a), "Sufami games can omit RAM");
+  bus.Write(0x7e0000, 0xa5);
+  Check(bus.Read(0x600123) == 0xa5 && bus.Read(0xff8123) == 0xa5 &&
+            emu->LoadedCartridge()->SramData().empty() && emu->SaveSlotBattery(0).empty(),
+        "RAM-free Sufami slots leave their RAM windows open");
+  Check(!emu->LoadSlotBattery(0, saved), "A RAM-free slot has no battery storage to restore");
+  a.resize(0x300000, 0x11);
+  std::fill(a.begin() + 0x100000, a.begin() + 0x200000, 0x52);
+  std::fill(a.begin() + 0x200000, a.end(), 0x73);
+  a[0x37] = 3;
+  Check(emu->LoadSufamiTurbo(bios, a, a), "Sufami accepts larger slot images");
+  Check(bus.Read(0x208123) == 0x52 && bus.Read(0xa08123) == 0x52 && bus.Read(0x400123) == 0x73 &&
+            bus.Read(0xc00123) == 0x73,
+        "Sufami ROM mirroring retains the slot's bank address lines");
+  bus.Write(0x601123, 0x49);
+  bus.Write(0x600923, 0x61);
+  Check(bus.Read(0xef1923) == 0x49 && bus.Read(0x608923) == 0x61,
+        "Sufami non-power-of-two RAM mirrors its populated blocks");
+  Check(emu->Reset() && bus.Read(0x601923) == 0x49 && bus.Read(0xe08923) == 0x61,
+        "Sufami RAM retains writes through console reset");
 }
 
 std::array<uint8_t, 13> ReadClock(Srtc &clock) {
@@ -904,6 +955,43 @@ void Regions() {
   }
 }
 
+void RegionOverride() {
+  for (Region region : {Region::NTSC, Region::PAL}) {
+    auto config = snes::tests::DeterministicConsoleConfig();
+    config.regionOverride = region;
+    auto emu = std::make_unique<Emulator>(config);
+    for (uint8_t country : {uint8_t(1), uint8_t(2)}) {
+      auto image = Rom();
+      image[0] = 0x80;
+      image[1] = 0xfe;
+      image[0x7fd9] = country;
+      Check(emu->LoadCartridge(image), "Load a cartridge on selected regional hardware");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(emu->Reset(), "Selected regional hardware survives reset");
+        const bool pal = region == Region::PAL;
+        Check(emu->LoadedCartridge()->Header().country == country,
+              "Hardware selection preserves the cartridge region metadata");
+        Check(emu->GetTiming().GetRegion() == region &&
+                  emu->GetTiming().MasterClockHz() ==
+                      (pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz) &&
+                  emu->GetTiming().VPeriod() == (pal ? 312 : 262),
+              "Startup selection overrides the header's console clock and field length");
+        Check((emu->GetBus().Read(0x213f) & 0x10) == (pal ? 0x10 : 0),
+              "PPU status reports the selected hardware region");
+        const auto first = emu->StepFrame();
+        const auto second = emu->StepFrame();
+        Check(second.masterCycles - first.masterCycles == (pal ? 425568 : 357368),
+              "Selected hardware retains its frame timing after reload and reset");
+        const auto target =
+            second.masterCycles * Smp::kClockFrequency / emu->GetTiming().MasterClockHz();
+        Check(emu->GetSmp().CycleCount() >= target && emu->GetSmp().CycleCount() < target + 20,
+              "Sound synchronization uses the selected hardware clock");
+      }
+    }
+  }
+}
+
 void CombinedSufami() {
   auto bios = Rom(0x40000);
   const std::string_view signature = "BANDAI SFC-ADX";
@@ -915,6 +1003,7 @@ void CombinedSufami() {
   for (const auto offset : {0x100000u, 0x200000u}) {
     std::fill_n(combined.begin() + offset, 0x100000, offset == 0x100000 ? 0x31 : 0x72);
     std::copy(signature.begin(), signature.end(), combined.begin() + offset);
+    combined[offset + 0x37] = offset == 0x100000 ? 4 : 1;
   }
   auto emu = Load(combined);
   Check(emu->LoadedCartridge()->Header().mapping == MappingType::SufamiTurbo,
@@ -926,7 +1015,7 @@ void CombinedSufami() {
   bus.Write(0x708010, 0x83);
   const auto save = emu->LoadedCartridge()->SramData();
   const std::vector<uint8_t> saved(save.begin(), save.end());
-  Check(saved.size() == 0x8000 && saved[0x10] == 0x19 && saved[0x4010] == 0x83,
+  Check(saved.size() == 0x2800 && saved[0x10] == 0x19 && saved[0x2010] == 0x83,
         "Combined saves contain two independent SRAM regions");
   combined.insert(combined.begin(), 512, 0);
   RomNormalizationInfo info;
@@ -964,7 +1053,7 @@ void BroadcastBoards() {
     std::vector<uint8_t> pack(0x100000, 0xff);
     pack[0x8123] = 0x53;
     pack[0x18123] = 0x72;
-    auto emu = std::make_unique<Emulator>();
+    auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     std::string error;
     Check(emu->LoadBroadcastCartridge(base, pack, &error), "BS base and memory pack load");
     auto &bus = emu->GetBus();
@@ -1095,6 +1184,7 @@ int main() {
     Sufami();
     Clock();
     Regions();
+    RegionOverride();
     CombinedSufami();
     BroadcastBoards();
     InvalidMapperMetadata();

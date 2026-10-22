@@ -20,6 +20,7 @@ public:
   uint8_t Read();
   void Write(uint8_t value);
   std::array<uint8_t, SaveSize> Save();
+  // Restore calendar storage while retaining serial state and oscillator phase.
   bool Load(std::span<const uint8_t> data);
 
 private:

@@ -28,14 +28,26 @@ AudioBuffer Tone(int frames) {
   return buffer;
 }
 
+bool WaitForDrain(SdlAudioOutput &audio) {
+  const auto deadline = SDL_GetTicks() + 2000;
+  do {
+    if (!audio.HasPendingOutput() && audio.QueuedBytes() < 32 * 2 * sizeof(float))
+      return true;
+    SDL_Delay(1);
+  } while (SDL_GetTicks() < deadline);
+  std::fprintf(stderr, "Audio did not drain: queued=%d, pending=%d, playing=%d\n",
+               audio.QueuedBytes(), audio.HasPendingOutput(), audio.IsPlaying());
+  return false;
+}
+
 void QueuePreservesInput() {
   SdlAudioOutput audio;
   Expect(audio.NeedsSamples(), "an empty queue requests an emulated frame");
-  constexpr int primeFrames = 1282;
+  constexpr int primeFrames = 1923;
   audio.Submit(Tone(primeFrames - 1));
-  Expect(audio.NeedsSamples(), "a queue below 40 ms requests more input");
+  Expect(audio.NeedsSamples(), "a queue below 60 ms requests more input");
   audio.Submit(Tone(1));
-  Expect(!audio.NeedsSamples(), "40 ms of queued input stops frame production");
+  Expect(!audio.NeedsSamples(), "60 ms of queued input stops frame production");
   audio.Submit(Tone(1920));
   Expect(audio.QueuedBytes() == (primeFrames + 1920) * 2 * sizeof(float),
          "queue size uses input bytes even when the device resamples");
@@ -51,26 +63,23 @@ void PlaybackPrimesAndRecovers() {
   const int initial = audio.QueuedBytes();
   SDL_Delay(80);
   Expect(audio.QueuedBytes() == initial, "startup waits for a buffer before playing");
-  audio.Submit(Tone(1280));
-  SDL_Delay(250);
+  audio.Submit(Tone(1920));
+  Expect(WaitForDrain(audio), "a primed stream drains down to resampler padding");
   int tail = audio.QueuedBytes();
-  Expect(tail < 32 * 2 * sizeof(float), "a primed stream drains down to resampler padding");
   audio.Submit(Tone(320));
   SDL_Delay(80);
   Expect(audio.QueuedBytes() == tail + 320 * 2 * sizeof(float),
          "an underrun refills the buffer before restarting");
-  audio.Submit(Tone(1280));
-  SDL_Delay(250);
-  Expect(audio.QueuedBytes() < 32 * 2 * sizeof(float), "playback resumes after underrun recovery");
+  audio.Submit(Tone(1920));
+  Expect(WaitForDrain(audio), "playback resumes after underrun recovery");
   audio.Pause();
   tail = audio.QueuedBytes();
-  audio.Submit(Tone(1600));
+  audio.Submit(Tone(2240));
   SDL_Delay(80);
-  Expect(audio.QueuedBytes() == tail + 1600 * 2 * sizeof(float),
+  Expect(audio.QueuedBytes() == tail + 2240 * 2 * sizeof(float),
          "submitting a full buffer does not override an explicit pause");
   audio.Resume();
-  SDL_Delay(250);
-  Expect(audio.QueuedBytes() < 32 * 2 * sizeof(float), "explicit resume plays a queued buffer");
+  Expect(WaitForDrain(audio), "explicit resume plays a queued buffer");
 }
 } // namespace
 

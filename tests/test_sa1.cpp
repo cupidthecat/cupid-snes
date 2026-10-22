@@ -53,6 +53,51 @@ struct Fixture {
   }
 };
 
+void DeferredExecution() {
+  for (uint32_t address :
+       {0x7e1000u, 0x008000u, 0xc00000u, 0x503000u, 0x600000u, 0x002200u, 0x8023ffu, 0x003000u,
+        0xbf37ffu, 0x006000u, 0xbf7fffu, 0x400000u, 0x4fffffu}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(false);
+    f.chip.Advance(128, address, false, false);
+    Check(f.chip.ReadSa1(0x3000) == 0, "Charging clocks does not execute the deferred processor");
+    f.chip.ReadCpu(address);
+    const bool shared = address == 0x002200 || address == 0x8023ff || address == 0x003000 ||
+                        address == 0xbf37ff || address == 0x006000 || address == 0xbf7fff ||
+                        address == 0x400000 || address == 0x4fffff;
+    Check(f.chip.ReadSa1(0x3000) == (shared ? 0x5a : 0),
+          "Deferred execution resumes for CPU shared memory and registers only");
+    Check(f.chip.MasterClocks() == 128, "Deferring execution retains every requested clock");
+    f.chip.Advance(0, 0x7e1000, false, true);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a && f.chip.MasterClocks() == 128,
+          "A forced handoff consumes retained debt without adding time");
+  }
+  for (uint32_t address : {0x003001u, 0x006000u, 0x400000u}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(false);
+    f.chip.Advance(128, 0x7e1000, false, false);
+    f.chip.WriteCpu(address, 0);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a,
+          "A mapped write consumes debt independently of the last CPU address");
+  }
+  for (bool contention : {false, true}) {
+    Fixture f;
+    f.Code(0x8000, {0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb});
+    f.Start();
+    f.chip.WriteSa1(0x222a, 0xff);
+    f.chip.SetBusContention(contention);
+    f.chip.Advance(128, 0x7e1000, false, contention ? false : true);
+    Check(f.chip.ReadSa1(0x3000) == 0x5a,
+          "Standalone advancement and contended execution retain immediate handoffs");
+  }
+}
+
 void ResetControlFlow() {
   for (bool native : {false, true}) {
     for (uint8_t opcode : {uint8_t{0}, uint8_t{2}}) {
@@ -320,22 +365,27 @@ void MemoryTiming() {
       {0xbf8000, {2, 4, 2, 2, 2, 2}}, {0xc00000, {2, 4, 2, 2, 2, 2}},
   };
   for (bool pal : {false, true})
-    for (uint8_t opcode : {0xafu, 0x8fu})
-      for (unsigned index = 0; index < std::size(consoles); ++index)
-        for (const auto &access : accesses) {
-          Fixture f;
-          f.Code(0x8000, {opcode, uint8_t(access.address), uint8_t(access.address >> 8),
-                          uint8_t(access.address >> 16)});
-          f.chip.SetPal(pal);
-          f.Start();
-          const auto &console = consoles[index];
-          f.chip.Advance(console.fetch + access.clocks[index], console.address, console.refresh);
-          Check(f.chip.CpuRegisters().pc == 0x8004,
-                "SA-1 memory cycles retain bus conflicts and release IRAM during console refresh");
-          f.chip.Advance(1, console.address, console.refresh);
-          Check(f.chip.CpuRegisters().pc == 0x8005,
-                "SA-1 memory contention consumes only the required bus cycles");
-        }
+    for (bool contention : {false, true})
+      for (uint8_t opcode : {0xafu, 0x8fu})
+        for (unsigned index = 0; index < std::size(consoles); ++index)
+          for (const auto &access : accesses) {
+            Fixture f;
+            f.Code(0x8000, {opcode, uint8_t(access.address), uint8_t(access.address >> 8),
+                            uint8_t(access.address >> 16)});
+            f.chip.SetPal(pal);
+            f.chip.SetBusContention(contention);
+            f.chip.Reset();
+            f.Start();
+            const auto &console = consoles[index];
+            const auto clocks = contention ? console.fetch + access.clocks[index]
+                                           : consoles[0].fetch + access.clocks[0];
+            f.chip.Advance(clocks, console.address, console.refresh);
+            Check(f.chip.CpuRegisters().pc == 0x8004,
+                  "SA-1 memory cycles retain the selected contention mode across reset");
+            f.chip.Advance(1, console.address, console.refresh);
+            Check(f.chip.CpuRegisters().pc == 0x8005,
+                  "SA-1 memory contention consumes only the required bus cycles");
+          }
 }
 
 void HardwareInterruptTiming() {
@@ -1317,14 +1367,15 @@ void Interrupts() {
   Set(p, 0x220c, 0xabcd);
   Set(p, 0x220e, 0x9876);
   p.WriteSa1(0x2209, 0x50);
-  for (uint32_t vector : {0xffeau, 0xfffau})
-    Check(p.ReadCpu(vector) == 0xcd && p.ReadCpu(vector + 1) == 0xab,
-          "Console NMI vectors are substituted in both CPU modes");
-  for (uint32_t vector : {0xffeeu, 0xfffeu})
-    Check(p.ReadCpu(vector) == 0x76 && p.ReadCpu(vector + 1) == 0x98,
-          "Console IRQ vectors are substituted in both CPU modes");
-  Check(p.ReadCpu(0xfffc) == 0xea && p.ReadCpu(0xffe4) == 0xea,
-        "Vector control leaves reset and COP vectors intact");
+  for (const auto read : {&Sa1::ReadCpu, &Sa1::ReadSa1}) {
+    Check((p.*read)(0xffea, 0) == 0xcd && (p.*read)(0xffeb, 0) == 0xab,
+          "Both processors read the substituted native NMI vector");
+    Check((p.*read)(0xffee, 0) == 0x76 && (p.*read)(0xffef, 0) == 0x98,
+          "Both processors read the substituted native IRQ vector");
+    for (uint32_t vector : {0xfffau, 0xfffbu, 0xfffeu, 0xffffu, 0xfffcu, 0xffe4u})
+      Check((p.*read)(vector, 0) == 0xea,
+            "Vector control retains emulation, reset and COP ROM entries");
+  }
 }
 
 void NativeInterruptSampling() {
@@ -1515,6 +1566,7 @@ void ExecutableDmaAndTimer() {
 int main() {
   try {
     ResetControlFlow();
+    DeferredExecution();
     BusPhases();
     ExecutionLifecycle();
     ResetControl();
@@ -1546,4 +1598,5 @@ int main() {
   }
   std::puts("SA-1 processor, mapping, protection, interrupts, timers, arithmetic, DMA, conversion, "
             "and synchronization checks passed");
+  return 0;
 }

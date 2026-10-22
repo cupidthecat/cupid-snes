@@ -6,7 +6,9 @@ With a supplied data ROM, Cx4 cartridges execute their HG51B program from the ga
 
 `cx4.data.rom` contains 1,024 little-endian 24-bit words, for 3,072 bytes total. Put it in the adjacent `firmware` directory or select a directory with `--firmware-dir`. Core callers can populate `CartridgeFirmware` with `FirmwareKind::Cx4`. A data ROM appended to the game takes precedence over the catalog and is removed before calculating the cartridge CRC. Firmware assets are not included.
 
-The processor runs at 20 MHz against the console's NTSC or PAL master clock. Execution can suspend within instructions, cache fills, delayed bus accesses, DMA, and timed suspension. CPU accesses observe state at the current clock rather than waiting for a whole operation to finish.
+The processor runs at 20 MHz against the console's NTSC or PAL master clock. Default console execution accumulates clock credit during CPU bus intervals and runs the processor at scanline handoffs. CPU ROM, RAM and register accesses use the state already reached by the worker; they do not force pending execution. `Emulator::Config::cx4DelayedSync = false` selects execution at every CPU bus interval and access. Cold power, warm reset and cartridge replacement retain the selection.
+
+Execution can suspend within instructions, cache fills, delayed bus accesses, DMA, and timed suspension. Standalone `Cx4Processor::Advance` and `Cartridge::AdvanceHardware` calls synchronize by default. A deferred call retains all elapsed time for the next forced handoff. Direct processor instances keep per-access synchronization unless delayed mode is selected explicitly.
 
 When the worker is suspended in a halted idle cycle with no pending activity, clock intervals advance arithmetically to the same final processor-clock edge. Active operations still execute their individual clocks. A stop request does not discard an instruction already fetched before that request.
 
@@ -16,7 +18,7 @@ The engine models a 24-bit accumulator, sixteen general registers, a 48-bit prod
 
 Instructions include arithmetic and flags, comparisons, logical operations, shifts and rotation, multiplication, register transfers, data-ROM and data-RAM access, conditional branches and calls, returns, skips, bus waits, clear, and halt. The data ROM is read-only. The processor has 3 KiB of work RAM; instruction accesses mirror its upper address quarter into physical RAM.
 
-Reset clears registers and restores control defaults. It retains work RAM, data ROM, instruction-cache words, and return-stack storage. Loading another cartridge creates new storage.
+Reset clears registers and restores control defaults. It retains work RAM, data ROM, instruction-cache words, and return-stack storage. Cartridge replacement retains cache words and all eight return-stack entries for that console instance, including when another cartridge type is loaded in between. The new cartridge supplies its data ROM and work RAM. Independent console instances keep separate storage.
 
 ## CPU map and controls
 
@@ -46,6 +48,8 @@ Halting raises the CPU IRQ line when enabled. Writing `$7F5E` acknowledges the i
 ## Validation and limits
 
 Generated tests cover cache-fill clocks, delayed bus completion, register widths and aliases, reset storage, DMA length capture, firmware precedence, fast-ROM detection, ROM ownership, vector overrides, IRQ acknowledgment, physical mapping, and saves. A generated console program waits in WRAM while the processor owns ROM, then uses its reply as a palette color.
+
+Guest interrupt programs cover both execution modes and video regions, including CPU status, ROM, work-RAM and register accesses while cartridge work is pending. Replacement tests seed eight nested calls, load a consumer cartridge and return through every retained entry. They also cover an intervening ordinary cartridge, rejected loads and independent consoles.
 
 A local audit matched 2,097,152 instruction cases across every opcode and 32 flag/operand seeds. It compared complete registers, control state, cache words, data ROM, work RAM, return stack, external memory, and ordered bus/clock events. A board audit matched 1,024 timelines of 512 CPU accesses each, including the physical CPU map, both DSP mapping modes, NTSC/PAL clocks, IRQ lines, and final cache, work RAM, and saves. Save allocations included absent, 8 KiB, 64 KiB, and 96 KiB RAM.
 

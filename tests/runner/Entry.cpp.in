@@ -1,0 +1,11 @@
+#include "@SNES_CHECK_RUNNER_DIR@/Entry.hpp"
+
+#define main snes_fixture_@SNES_CHECK_NAME@
+#include "@SNES_CHECK_SOURCE@"
+#undef main
+
+namespace snes::tests {
+int Run_@SNES_CHECK_NAME@(int argc, char **argv) {
+  return RunEntry<snes_fixture_@SNES_CHECK_NAME@>(argc, argv);
+}
+} // namespace snes::tests

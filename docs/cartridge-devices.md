@@ -24,7 +24,7 @@ Completing a command rewinds the output cursor. Transparency changes, no-op comm
 
 Overlay, reversal, and scaling keep separate length phases. Zero-length headers retain their command's pending phase, which affects a later request for that command. Input cursors wrap within the 512-byte parameter buffer; an active data phase with a zero expected count can require a complete buffer wrap. Console reset clears protocol state while retaining parameter and output RAM. Scaling can observe parameter bytes left by an earlier command or reset.
 
-DSP-1 maintains separate byte phases for status and data accesses. DSP-3 and DSP-4 have separate command engines, described in [original hardware support](original-hardware.md). The [timed competition boards](competition-cartridges.md) combine DSP-1 with selectable ROM chips and a countdown controller.
+DSP-1 maintains separate byte phases for status and data accesses. DSP-3 requires firmware; DSP-4 also has a command model, described in [original hardware support](original-hardware.md). The [timed competition boards](competition-cartridges.md) combine DSP-1 with selectable ROM chips and a countdown controller.
 
 ## OBC1
 
@@ -82,6 +82,6 @@ Local 1,800-frame checks produced visible output and non-silent audio for Super 
 
 [Controllers and cartridge slots](controllers-and-slots.md) describes mouse, multitap, BS slot boards, and combined Sufami Turbo support. [S-DD1, DMA timing, and video output](dma-video-and-sdd1.md) covers streaming decompression, DMA register observation, physical ROM/RAM windows, and video output.
 
-[Original hardware support](original-hardware.md) covers SA-1, Super FX/FX2, DSP-3/4, Cx4, SPC7110 and its RTC, and BS-X. ST011 executes its internal program when firmware is supplied and otherwise retains a limited packet interface. ST018 can execute supplied ARM firmware through its clocked CPU bridge; [ST018 firmware execution](st018.md) describes its memory map and validation limits. [Cx4 processor execution](cx4.md) describes its supplied data ROM, program execution, DMA, and CPU bus ownership. Register and mapper coverage does not establish full system compatibility.
+[Original hardware support](original-hardware.md) covers SA-1, Super FX/FX2, DSP-3/4, Cx4, SPC7110 and its RTC, and BS-X. ST011 requires firmware and executes its internal program through the clocked signal processor. ST018 requires ARM firmware and executes it through its clocked CPU bridge; [ST018 firmware execution](st018.md) describes its memory map and validation limits. [Cx4 processor execution](cx4.md) describes its supplied data ROM, program execution, DMA, and CPU bus ownership. Register and mapper coverage does not establish full system compatibility.
 
 [SPC7110 and cartridge RTC](spc7110.md) covers clocked decompression, arithmetic, data ports, physical board maps, and RTC handshakes.

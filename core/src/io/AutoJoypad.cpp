@@ -4,8 +4,8 @@
 // Called every 128 master clocks by the timing system.
 //
 // State machine:
-//   Counter 0     : Latch controllers (capture button state)
-//   Counter 1     : Release latch
+//   Counter 0     : Raise controller latch
+//   Counter 1     : Release latch and capture gamepad buttons
 //   Counter 2-33  : Read/shift 16 bits (one bit per 256 clocks)
 //     Even counter: read serial data from controller shift register
 //     Odd counter : shift data into joy1-4 registers
@@ -107,7 +107,7 @@ void AutoJoypad::Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256
     counter_++;
   }
 
-  // Counter 0: latch controllers and clear results when polling is enabled.
+  // Counter 0: raise the controller latch and clear enabled polling results.
   if (counter_ == 0) {
     if (autoJoypadPoll_) {
       autoLatch_ = true;

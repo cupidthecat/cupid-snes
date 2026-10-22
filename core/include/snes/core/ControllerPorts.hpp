@@ -47,7 +47,16 @@ public:
     gunLatch_ = std::move(callback);
   }
   void PollLightGuns();
+  /// Capture port-two aim at the display-frame event.
+  void LatchLightGuns();
+  void SetVDisp(uint16_t vdisp) {
+    vdisp_ = vdisp;
+  }
   void FrameBegin();
+  bool NeedsBeamPosition() const noexcept {
+    // A completed rifle hit still needs one edge to release its I/O pulse.
+    return ports_[1].device == ControllerDevice::MacsRifle && (!beamFired_ || beamPulse_);
+  }
   void BeamPosition(uint16_t h, uint16_t v, uint16_t visibleLines);
   uint8_t IoBits() const {
     return beamPulse_ ? 0x7f : 0xff;
@@ -64,14 +73,15 @@ private:
     std::array<int, 4> players{};
     std::array<uint16_t, 4> pads{};
     std::array<unsigned, 2> positions{};
-    uint32_t mousePacket = 0;
+    uint32_t mousePacket = 0x00010000;
     uint8_t sensitivity = 0;
-    int64_t pendingX = 0, pendingY = 0;
     std::array<LightGunState, 2> guns{};
-    uint8_t scopePending = 0, scopePacket = 0;
+    uint8_t scopePacket = 0;
     uint8_t justifierPacket = 0;
     bool selectSecond = false;
-    bool scopeBeamArmed = false;
+    bool scopeTriggerLock = false, scopePauseLock = false;
+    bool scopeTurbo = false, scopeTurboPressed = false;
+    bool scopeOffscreen = false;
   };
   std::array<Port, 2> ports_{{Port{ControllerDevice::Gamepad, {0, -1, -1, -1}},
                               Port{ControllerDevice::Gamepad, {1, -1, -1, -1}}}};
@@ -82,6 +92,7 @@ private:
   bool beamFired_ = false, beamPulse_ = false;
   bool latch_ = false;
   uint8_t pio_ = 0xff;
+  uint16_t vdisp_ = 225;
 };
 
 } // namespace snes::core

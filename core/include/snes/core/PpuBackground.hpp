@@ -6,7 +6,7 @@ namespace snes::core {
 
 class PpuBackground {
 public:
-  using Vram = std::span<const uint16_t, Ppu::VramWords>;
+  using Vram = std::span<const uint16_t>;
   struct Sample {
     uint8_t palette = 0;
     uint8_t group = 0;
@@ -18,9 +18,12 @@ public:
 
   // Reset control and mosaic state while retaining fetched column data.
   void Reset();
-  void BeginLine(uint16_t line, bool field, const Ppu::IO &io);
+  void BeginLine(uint16_t line, bool field, const Ppu::IO &io,
+                 Ppu::RenderModel model = Ppu::RenderModel::Progressive);
   // Consume successive two-master-clock edges. True marks a complete output dot.
   bool Clock(uint16_t clock, const Ppu::IO &io, Vram vram);
+  // Sample a complete row from immutable registers and VRAM.
+  std::array<Output, 256> SampleLine(uint16_t line, bool field, const Ppu::IO &io, Vram vram);
   const Output &Samples() const noexcept {
     return output_;
   }
@@ -46,13 +49,21 @@ private:
                Vram vram);
   void Offset(bool vertical, unsigned clock, const Ppu::IO &io, Vram vram);
   void Shift(bool below, unsigned clock, const Ppu::IO &io, Vram vram);
+  struct Mode7Transform {
+    int a = 0, c = 0, x = 0, y = 0;
+  };
+  static Mode7Transform TransformMode7(uint16_t line, bool mosaic, const Ppu::IO &io);
+  static Sample Mode7At(unsigned layer, unsigned x, const Mode7Transform &row, const Ppu::IO &io,
+                        Vram vram);
   Sample Mode7(unsigned layer, const Ppu::IO &io, Vram vram);
 
   std::array<Layer, 4> layers_{};
   Output output_{};
   uint16_t line_ = 0;
   uint16_t horizontalOffset_ = 0, verticalOffset_ = 0;
+  uint16_t previousHorizontalOffset_ = 0, previousVerticalOffset_ = 0;
   bool field_ = false;
+  Ppu::RenderModel model_ = Ppu::RenderModel::Progressive;
 };
 
 } // namespace snes::core

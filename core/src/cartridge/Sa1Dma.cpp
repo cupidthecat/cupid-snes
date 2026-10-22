@@ -61,9 +61,8 @@ void Sa1::StepDma() {
     }
     uint8_t value = openBus;
     if (device == 0) {
-      uint32_t offset;
-      if (RomOffset(source, offset))
-        value = ReadRom(offset, openBus);
+      // DMA selects the ROM port independently of the processor's address windows.
+      value = ReadRomPort(source, openBus);
     } else if (device == 1) {
       value = ReadBwram(source, openBus);
     } else {

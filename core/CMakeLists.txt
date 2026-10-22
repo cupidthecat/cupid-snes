@@ -1,5 +1,23 @@
 add_library(snes_core
   src/cartridge/Cartridge.cpp
+  src/cartridge/gameboy/Adapter.cpp
+  src/cartridge/gameboy/Audio.cpp
+  src/cartridge/gameboy/AudioMixer.cpp
+  src/cartridge/gameboy/Camera.cpp
+  src/cartridge/gameboy/Cartridge.cpp
+  src/cartridge/gameboy/ClockedIo.cpp
+  src/cartridge/gameboy/Cpu.cpp
+  src/cartridge/gameboy/Huc3Clock.cpp
+  src/cartridge/gameboy/Infrared.cpp
+  src/cartridge/gameboy/Host.cpp
+  src/cartridge/gameboy/Machine.cpp
+  src/cartridge/gameboy/Oam.cpp
+  src/cartridge/gameboy/Peripherals.cpp
+  src/cartridge/gameboy/MotionEeprom.cpp
+  src/cartridge/gameboy/SoundChannels.cpp
+  src/cartridge/gameboy/StartupState.cpp
+  src/cartridge/gameboy/Tpp1.cpp
+  src/cartridge/gameboy/Video.cpp
   src/cartridge/RomHeaderParser.cpp
   src/cartridge/RomBoardProfile.cpp
   src/cartridge/CartridgeFirmware.cpp
@@ -25,6 +43,7 @@ add_library(snes_core
   src/cartridge/SetaProtocol.cpp
   src/cartridge/St018Processor.cpp
   src/cartridge/Bsx.cpp
+  src/io/BroadcastReceiver.cpp
   src/cartridge/Dsp3.cpp
   src/cartridge/Dsp3Decode.cpp
   src/cartridge/Dsp3Path.cpp
@@ -43,8 +62,12 @@ add_library(snes_core
   src/ppu/PpuBackground.cpp
   src/ppu/PpuObject.cpp
   src/ppu/Ppu.cpp
+  src/ppu/PpuPower.cpp
   src/ppu/PpuRender.cpp
+  src/ppu/PpuPixelMixer.cpp
+  src/ppu/PpuScanline.cpp
   src/audio/Dsp.cpp
+  src/audio/StreamMixer.cpp
   src/audio/Dsp1.cpp
   src/audio/Dsp2.cpp
   src/audio/Spc700.cpp
@@ -57,8 +80,10 @@ add_library(snes_core
   src/dma/Dma.cpp
   src/timing/Timing.cpp
   src/system/Emulator.cpp
+  src/system/Compatibility.cpp
   src/system/ExecutionContext.cpp
   src/system/Logging.cpp
+  src/system/PowerOnState.cpp
 )
 
 target_include_directories(snes_core

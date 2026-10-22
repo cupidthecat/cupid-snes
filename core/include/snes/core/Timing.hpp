@@ -69,7 +69,7 @@ public:
   /// HBlank begins at this H counter value (dot 274 × 4 = 1096).
   static constexpr uint16_t kHBlankStart = 1096;
 
-  /// Initial DRAM refresh position; later lines follow the DMA divider.
+  /// Initial revision 2 refresh position; later lines follow the DMA divider.
   static constexpr uint16_t kDramRefreshPos = 538;
 
   /// DRAM refresh penalty in master clocks (40 clocks = 5 × 8-cycle slots).
@@ -86,7 +86,7 @@ public:
 
   // Construction
 
-  explicit Timing(Region region = Region::NTSC);
+  explicit Timing(Region region = Region::NTSC, uint8_t cpuRevision = 2);
 
   // Configuration
 
@@ -98,6 +98,15 @@ public:
     return region_ == Region::PAL ? kMasterClockHzPal : kMasterClockHz;
   }
   void SetRegion(Region r) noexcept;
+
+  uint8_t CpuRevision() const noexcept {
+    return cpuRevision_;
+  }
+
+  void SetRenderCycle(uint16_t clock) noexcept;
+  uint16_t RenderCycle() const noexcept {
+    return renderCycle_;
+  }
 
   /// Interlace timing samples the PPU input when scanline 128 begins.
   bool Interlace() const noexcept {
@@ -217,7 +226,7 @@ public:
   /// This is the actual NMI assertion point.
   std::function<void()> onNmiPoint;
 
-  /// Called when H counter reaches kDramRefreshPos on any scanline.
+  /// Called when H counter reaches the selected revision's refresh position.
   /// The caller should deduct kDramRefreshClocks from the CPU budget.
   std::function<void()> onDramRefresh;
 
@@ -250,9 +259,11 @@ private:
   void updateHPeriod(); // Recompute hperiod_ for the current scanline
 
   Region region_ = Region::NTSC;
+  uint8_t cpuRevision_ = 2;
   bool interlace_ = false;
   bool interlaceInput_ = false;
   uint16_t vdisp_ = 225;
+  uint16_t renderCycle_ = kRenderCycle;
 
   uint16_t hcounter_ = 0; // 0 .. hperiod_-1
   uint16_t vcounter_ = 0; // 0 .. vperiod_-1

@@ -20,7 +20,7 @@ All writes use the low nibble. `$D` selects reading and restarts its cursor. A r
 
 ## Persistence
 
-The existing 24-byte `.rtc` format contains thirteen calendar bytes, the three ASCII bytes `RTC`, and an eight-byte little-endian Unix timestamp. Saving captures calendar storage without moving the serial cursor or advancing time. Loading applies elapsed host time in day, hour, minute, and second groups, then restarts the serial interface and oscillator phase.
+The existing 24-byte `.rtc` format contains thirteen calendar bytes, the three ASCII bytes `RTC`, and an eight-byte little-endian Unix timestamp. Saving captures calendar storage without moving the serial cursor or advancing time. Loading applies elapsed host time in day, hour, minute, and second groups while retaining the serial command, digit cursor, and pending oscillator interval. A running reload therefore waits for the existing next tick. Console reset restarts the serial interface and oscillator phase.
 
 Invalid sizes, signatures, non-nibble calendar bytes, and negative timestamps are rejected. Host clock rollback leaves saved calendar values intact. Elapsed intervals beyond 315,576,000,000 seconds are ignored. These file checks retain the existing save contract.
 
@@ -28,6 +28,6 @@ The loaded cartridge selects the clock format. The [SPC7110 RTC](spc7110.md) als
 
 ## Validation and limits
 
-Generated regressions cover numeric programming, live reads, clock edges in both regions, calendar carries, reset, save loading, CPU mirrors, erased RAM, and slow/fast board detection. Local audits compare complete calendar and port state, oscillator balances, invalid programmed values, and elapsed-time loading.
+Generated regressions cover numeric programming, live reads, clock edges in both regions, calendar carries, reset, save loading during serial transactions, CPU mirrors, erased RAM, and slow/fast board detection. Console integration checks also reload battery data between running frames in both regions. Local audits compare complete calendar and port state, oscillator balances, invalid programmed values, and elapsed-time loading.
 
 These checks cover the exercised behavior. Complete game compatibility and physical RTC measurements remain unverified.

@@ -30,7 +30,7 @@ jobs:
           c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -pthread -Icore/include
           core/src/cpu/Processor65816.cpp core/src/cartridge/Sa1.cpp
           core/src/cartridge/Sa1Arithmetic.cpp core/src/cartridge/Sa1Dma.cpp
-          core/src/cartridge/BsMemory.cpp
+          core/src/cartridge/BsMemory.cpp core/src/system/PowerOnState.cpp
           core/src/system/ExecutionContext.cpp tests/test_sa1.cpp -o sa1-tests
       - name: Test SA-1 core
         run: ./sa1-tests
@@ -65,9 +65,67 @@ jobs:
           core/src/cartridge/SuperFx.cpp tests/test_superfx.cpp -o superfx-tests
       - name: Test Super FX pixel and bus timing
         run: ./superfx-tests
-  windows:
+      - name: Build and test handheld components
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Cpu.cpp tests/test_gameboy_cpu.cpp -o gameboy-cpu-tests
+          ./gameboy-cpu-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Host.cpp tests/test_gameboy_host.cpp -o gameboy-host-tests
+          ./gameboy-host-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/ClockedIo.cpp tests/test_gameboy_clocked_io.cpp -o gameboy-clock-tests
+          ./gameboy-clock-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Tpp1.cpp core/src/cartridge/gameboy/Camera.cpp core/src/cartridge/gameboy/Huc3Clock.cpp core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp core/src/cartridge/gameboy/MotionEeprom.cpp \
+            tests/test_gameboy_cartridge.cpp -o gameboy-cartridge-tests
+          ./gameboy-cartridge-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/{Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom}.cpp \
+            tests/test_gameboy_camera.cpp -o gameboy-camera-tests
+          ./gameboy-camera-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/{Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom}.cpp \
+            tests/test_gameboy_tpp1.cpp -o gameboy-tpp1-tests
+          ./gameboy-tpp1-tests
+          c++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Cpu.cpp core/src/cartridge/gameboy/ClockedIo.cpp \
+            core/src/cartridge/gameboy/Host.cpp core/src/cartridge/gameboy/Tpp1.cpp core/src/cartridge/gameboy/Camera.cpp core/src/cartridge/gameboy/Huc3Clock.cpp core/src/cartridge/gameboy/Infrared.cpp core/src/cartridge/gameboy/Cartridge.cpp \
+            core/src/cartridge/gameboy/MotionEeprom.cpp core/src/cartridge/gameboy/StartupState.cpp core/src/cartridge/gameboy/Machine.cpp \
+            tests/test_gameboy_machine.cpp -o gameboy-machine-tests
+          ./gameboy-machine-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Oam.cpp core/src/cartridge/gameboy/Video.cpp tests/test_gameboy_video.cpp -o gameboy-video-tests
+          ./gameboy-video-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/Oam.cpp tests/test_gameboy_oam.cpp -o gameboy-oam-tests
+          ./gameboy-oam-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/ClockedIo.cpp core/src/cartridge/gameboy/SoundChannels.cpp \
+            tests/test_gameboy_sound_channels.cpp -o gameboy-sound-tests
+          ./gameboy-sound-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/ClockedIo.cpp core/src/cartridge/gameboy/SoundChannels.cpp \
+            core/src/cartridge/gameboy/Audio.cpp tests/test_gameboy_audio.cpp -o gameboy-audio-tests
+          ./gameboy-audio-tests
+          c++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -Icore/include \
+            core/src/cartridge/gameboy/{Cpu,ClockedIo,Host,Tpp1,Camera,Huc3Clock,Infrared,Cartridge,MotionEeprom,StartupState,Machine,Oam,Video,SoundChannels,Audio,Peripherals}.cpp \
+            tests/test_gameboy_peripherals.cpp -o gameboy-peripheral-tests
+          ./gameboy-peripheral-tests
+  windows-build:
+    name: windows (${{ matrix.mode }})
     runs-on: windows-2022
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: regular
+            lto: "OFF"
+            bundle: "OFF"
+          - mode: optimized
+            lto: "ON"
+            bundle: "ON"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cache SDL build
@@ -77,23 +135,28 @@ jobs:
           key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('cmake/SDL3.cmake') }}
           restore-keys: sdl-${{ runner.os }}-vs2022-
       - name: Configure
-        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=OFF
+        run: cmake -S . -B out/build/ci -G "Visual Studio 17 2022" -A x64 -DSNES_ENABLE_TESTS=ON -DSNES_ENABLE_LTO=${{ matrix.lto }} -DSNES_BUNDLE_OPTIMIZED_TESTS=${{ matrix.bundle }}
       - name: Build
+        if: matrix.mode == 'regular'
         run: cmake --build out/build/ci --config Release --parallel 4
       - name: Test
-        run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-      - name: Configure optimized Release
-        run: cmake -S . -B out/build/ci -DSNES_ENABLE_LTO=ON
+        if: matrix.mode == 'regular'
+        run: ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120 --no-tests=error
       - name: Build optimized executables
-        run: >-
-          cmake --build out/build/ci --config Release --parallel 4 --target
-          snes_frontend snes_rom_diagnostic snes_rom_smoke snes_trace_dump
-          snes_frame_execution_tests snes_competition_cartridge_tests
-          snes_sdl_audio_tests snes_sdl_video_tests snes_bsx_tests snes_cartridge_command_tests
-          snes_sdd1_tests snes_processor_startup_tests
-          snes_cartridge_device_tests
-          snes_superfx_tests snes_cartridge_processor_tests snes_cx4_processor_tests snes_sa1_tests
+        if: matrix.mode == 'optimized'
+        run: cmake --build out/build/ci --config Release --parallel 4 --target snes_optimized_checks
       - name: Test optimized console and SDL paths
+        if: matrix.mode == 'optimized'
         run: >-
-          ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120
-          -R "^(snes_(frame_execution|competition_cartridge|bsx|cartridge_command|cartridge_device|cartridge_processor|cx4_processor|sa1|superfx|sdd1|processor_startup|sdl_video)_tests|snes_sdl_audio_(32000|32040|44100|48000))$"
+          ctest --test-dir out/build/ci -C Release --output-on-failure --parallel 4 --timeout 120 --no-tests=error
+          -L optimized
+  windows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: windows-build
+    if: ${{ always() }}
+    steps:
+      - name: Require both Windows configurations
+        env:
+          WINDOWS_RESULT: ${{ needs.windows-build.result }}
+        run: test "$WINDOWS_RESULT" = "success"

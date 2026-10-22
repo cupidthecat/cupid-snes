@@ -1,8 +1,9 @@
+#include "ConsoleConfig.hpp"
 #include "snes/core/Cartridge.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -98,7 +99,7 @@ void FirmwareCatalogAndPartitioning() {
         "Clock partitioning preserves firmware output");
 }
 void MappedFirmwarePorts() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(Image()), "The system loader accepts appended ST018 firmware");
   auto &bus = machine->GetBus();
   Check(bus.Read(0x003804) == 0, "System-bus status starts before the processor boot delay");
@@ -125,7 +126,7 @@ void ConsoleMailboxExchange() {
                           0x00, 0x38, 0x8f, 0x00, 0x00, 0x7e, 0x8d, 0x22, 0x21, 0x9c, 0x22,
                           0x21, 0xa9, 0x0f, 0x8d, 0x00, 0x21, 0xcb, 0x80, 0xfd};
   std::copy(std::begin(console), std::end(console), image.begin());
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The generated console and ARM programs load together");
   machine->StepFrame();
   Check(machine->GetBus().WramData()[0] == 0x3a && machine->GetPpu().CgramData()[0] == 0x3a,
@@ -133,7 +134,7 @@ void ConsoleMailboxExchange() {
   Check(machine->GetBus().Read(0x003804) == 0x80,
         "Both processors consume their mailboxes during the console-driven exchange");
 }
-void WorkRamReset() {
+std::vector<uint8_t> CounterImage() {
   auto image = Image();
   image[0] = 0x80;
   image[1] = 0xfe;
@@ -143,7 +144,11 @@ void WorkRamReset() {
   for (unsigned i = 0; i < std::size(firmware); ++i)
     for (unsigned byte = 0; byte < 4; ++byte)
       image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
-  auto machine = std::make_unique<Emulator>();
+  return image;
+}
+void WorkRamReset() {
+  auto image = CounterImage();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(image), "The work RAM counter firmware loads");
   auto &bus = machine->GetBus();
   machine->StepFrame();
@@ -159,6 +164,103 @@ void WorkRamReset() {
   Check(bus.Read(0x3800) == 1 && bus.Read(0x700123) == 0x63,
         "Console reset clears ST018 work RAM while retaining battery RAM");
 }
+
+void ScanlineExecution() {
+  constexpr uint32_t expected[2][5]{{40138, 99597, 159054, 218511, 277968},
+                                    {40608, 112065, 183522, 254978, 326435}};
+  for (unsigned pal = 0; pal < 2; ++pal) {
+    auto image = Image();
+    image[0x7fd9] = pal ? 2 : 1;
+    const uint8_t console[]{0x78, 0xa9, 0x80, 0x8d, 0x00, 0x21, 0xdb};
+    std::copy(std::begin(console), std::end(console), image.begin());
+    const uint32_t firmware[]{0xe3a0020e, 0xe3a01000, 0xe2811001, 0xe5801000, 0xeafffffc};
+    for (unsigned i = 0; i < std::size(firmware); ++i)
+      for (unsigned byte = 0; byte < 4; ++byte)
+        image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+    for (bool scanline : {false, true}) {
+      auto config = snes::tests::DeterministicConsoleConfig();
+      if (scanline) {
+        config.ppu.model = Ppu::RenderModel::Scanline;
+        config.dspMode = Smp::DspMode::Batch32;
+      }
+      auto machine = std::make_unique<Emulator>(config);
+      Check(machine->LoadCartridge(image), "The continuously running ARM firmware loads");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(machine->Reset(), "The counter cartridge resets");
+        for (auto count : expected[pal]) {
+          machine->StepFrame();
+          const auto ram = machine->LoadedCartridge()->ArmWorkRamData();
+          Check(ram.size() == 16384, "ARM work RAM is available without a bridge access");
+          const uint32_t actual = uint32_t(ram[0]) | (uint32_t(ram[1]) << 8) |
+                                  (uint32_t(ram[2]) << 16) | (uint32_t(ram[3]) << 24);
+          Check(actual == count, "Scanline handoffs complete pending ARM work before each frame");
+        }
+      }
+    }
+  }
+}
+
+void ProcessorHandoffs() {
+  auto image = Image();
+  const uint32_t firmware[]{0xe3a0020e, 0xe3a01000, 0xe2811001, 0xe5801000, 0xeafffffc};
+  for (unsigned i = 0; i < std::size(firmware); ++i)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      image[0x80000 + i * 4 + byte] = uint8_t(firmware[i] >> (byte * 8));
+  for (bool pal : {false, true}) {
+    St018Processor chip{std::span(image).subspan(0x80000)};
+    chip.SetPal(pal);
+    chip.Advance(70000, true);
+    const auto ram = chip.RamData();
+    const auto before = std::array<uint8_t, 4>{ram[0], ram[1], ram[2], ram[3]};
+    chip.Advance(100);
+    Check(std::equal(before.begin(), before.end(), ram.begin()),
+          "Independent ARM work can remain deferred between handoffs");
+    chip.Advance(0, true);
+    Check(!std::equal(before.begin(), before.end(), ram.begin()),
+          "A zero-clock handoff completes work accrued since the preceding handoff");
+    const auto after = std::array<uint8_t, 4>{ram[0], ram[1], ram[2], ram[3]};
+    chip.Advance(0, true);
+    Check(std::equal(after.begin(), after.end(), ram.begin()),
+          "Repeated handoffs do not advance a caught-up processor");
+  }
+}
+
+void WorkRamEntropy() {
+  constexpr uint32_t seeds[]{0, 1, 0x12345678};
+  constexpr uint8_t expected[3][3][2]{{{0, 0}, {0, 0}, {0, 0}},
+                                      {{127, 77}, {242, 244}, {235, 56}},
+                                      {{213, 114}, {72, 61}, {126, 199}}};
+  for (unsigned mode = 0; mode < 3; ++mode)
+    for (unsigned seed = 0; seed < 3; ++seed)
+      for (unsigned bytes : {65536u, 131072u}) {
+        auto config = snes::tests::DeterministicConsoleConfig();
+        config.entropyMode = EntropyMode(mode);
+        config.entropySeed = seeds[seed];
+        config.ppu.revision2 = uint8_t(seed + 1);
+        config.ppu.vramBytes = bytes;
+        auto machine = std::make_unique<Emulator>(config);
+        Check(machine->LoadCartridge(CounterImage()), "The entropy counter firmware loads");
+        auto &bus = machine->GetBus();
+        machine->StepFrame();
+        Check(
+            bus.Read(0x3800) == uint8_t(expected[mode][seed][0] + 1),
+            "Firmware reads cartridge work RAM from the startup stream after video initialization");
+        bus.Write(0x3804, 1);
+        machine->StepFrame();
+        bus.Write(0x3804, 0);
+        machine->StepFrame();
+        Check(bus.Read(0x3800) == uint8_t(expected[mode][seed][0] + 2),
+              "Bridge reset retains initialized work RAM and firmware writes");
+        bus.Write(0x700123, 0x63);
+        Check(machine->Reset(), "The entropy-configured console resets");
+        machine->StepFrame();
+        Check(bus.Read(0x3800) == uint8_t(expected[mode][seed][1] + 1) &&
+                  bus.Read(0x700123) == 0x63,
+              "Console reset reinitializes cartridge work RAM after video while retaining battery "
+              "RAM");
+      }
+}
 } // namespace
 int main() {
   try {
@@ -169,9 +271,13 @@ int main() {
     MappedFirmwarePorts();
     ConsoleMailboxExchange();
     WorkRamReset();
+    ScanlineExecution();
+    ProcessorHandoffs();
+    WorkRamEntropy();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }
   std::puts("ST018 firmware tests passed");
+  return 0;
 }

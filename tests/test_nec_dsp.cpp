@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/NecDsp.hpp"
 
 #include <algorithm>
@@ -181,7 +181,7 @@ void ConsoleIntegration() {
                           Case{0x30, 3, 0, false, false, FirmwareKind::Dsp4},
                           Case{0x30, 0xf6, 0, false, false, FirmwareKind::St010},
                           Case{0x30, 0xf6, 0, true, false, FirmwareKind::St011}}) {
-    Emulator::Config config;
+    auto config = snes::tests::DeterministicConsoleConfig();
     config.cartridgeFirmware = firmware;
     auto machine = std::make_unique<Emulator>(config);
     Check(

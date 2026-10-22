@@ -88,6 +88,7 @@ struct SuperFx::Impl {
   uint8_t backupEnable = 0, color = 0, plotOptions = 0, pipeline = 1;
   unsigned source = 0, destination = 0;
   bool pcWritten = false, r14Written = false;
+  bool irqOutput = false;
   uint32_t romRemaining = 0, romAddress = 0;
   uint8_t romBuffer = 0;
   uint32_t ramRemaining = 0, ramAddress = 0;
@@ -663,8 +664,10 @@ struct SuperFx::Impl {
         switch (opcode) {
         case 0x00:
           status &= uint16_t(~Go);
-          if (!(config & 0x80))
+          if (!(config & 0x80)) {
             status |= Irq;
+            irqOutput = true;
+          }
           pipeline = 1;
           break;
         case 0x01:
@@ -832,7 +835,8 @@ struct SuperFx::Impl {
   }
 
   uint8_t ReadIo(uint16_t address) {
-    if (address >= 0x3100)
+    address = uint16_t(0x3000 | (address & 0x3ff));
+    if (address >= 0x3100 && address <= 0x32ff)
       return cache[(address - 0x3100 + cacheBase) & 511];
     if (address < 0x3020)
       return uint8_t(r[(address >> 1) & 15] >> ((address & 1) * 8));
@@ -842,6 +846,7 @@ struct SuperFx::Impl {
     case 0x3031: {
       const auto value = uint8_t((status & StatusMask) >> 8);
       status &= uint16_t(~Irq);
+      irqOutput = false;
       return value;
     }
     case 0x3034:
@@ -862,7 +867,8 @@ struct SuperFx::Impl {
   }
 
   void WriteIo(uint16_t address, uint8_t value) {
-    if (address >= 0x3100) {
+    address = uint16_t(0x3000 | (address & 0x3ff));
+    if (address >= 0x3100 && address <= 0x32ff) {
       const unsigned offset = (address - 0x3100 + cacheBase) & 511;
       cache[offset] = value;
       if ((offset & 15) == 15)
@@ -973,20 +979,25 @@ void SuperFx::AdvanceMasterClocks(uint32_t clocks) {
   impl_->AdvanceMasterClocks(clocks);
 }
 bool SuperFx::CpuIrqPending() const noexcept {
-  return (impl_->status & Irq) != 0;
+  return impl_->irqOutput;
 }
 
 bool SuperFx::Selects(uint32_t address) noexcept {
   address &= 0xffffff;
   const unsigned low = address & 0xffff, bank = (address >> 16) & 0x7f;
-  return (IoBank(address) && ((low >= 0x3000 && low <= 0x32ff) || low >= 0x6000)) ||
+  return SelectsRegisters(address) || (IoBank(address) && low >= 0x6000) ||
          (bank >= 0x40 && bank <= 0x7d) || address >= 0xc00000;
+}
+
+bool SuperFx::SelectsRegisters(uint32_t address) noexcept {
+  const auto low = uint16_t(address);
+  return IoBank(address) && low >= 0x3000 && low <= 0x34ff;
 }
 
 uint8_t SuperFx::ReadCpu(uint32_t address, uint8_t openBus) {
   address &= 0xffffff;
   const auto low = uint16_t(address);
-  if (IoBank(address) && low >= 0x3000 && low <= 0x32ff)
+  if (SelectsRegisters(address))
     return impl_->ReadIo(low);
   uint32_t offset = 0;
   if (impl_->CpuRamAddress(address, offset)) {
@@ -1008,7 +1019,7 @@ uint8_t SuperFx::ReadCpu(uint32_t address, uint8_t openBus) {
 void SuperFx::WriteCpu(uint32_t address, uint8_t value) {
   address &= 0xffffff;
   const auto low = uint16_t(address);
-  if (IoBank(address) && low >= 0x3000 && low <= 0x32ff) {
+  if (SelectsRegisters(address)) {
     impl_->WriteIo(low, value);
     return;
   }

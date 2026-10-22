@@ -111,6 +111,58 @@ void Persistence() {
   bad[23] = 0x80;
   Check(!restored.Load(bad), "Negative save timestamps are rejected");
 }
+
+void ReloadPhase() {
+  for (bool pal : {false, true}) {
+    int64_t host = 1700000000;
+    Srtc clock([&] { return host; });
+    clock.SetPal(pal);
+    clock.Advance(1);
+    const auto saved = clock.Save();
+    host += 61;
+    Check(clock.Load(saved), "A running clock accepts saved calendar data");
+    const auto resumed = Calendar(clock);
+    Check(resumed[0] == 2 && resumed[2] == 1, "Reloading applies elapsed host time once");
+    clock.Advance((pal ? 21'281'370u : 21'477'272u) - 1);
+    Check(Calendar(clock) == resumed, "Reloading retains the pending oscillator interval");
+    clock.Advance(1);
+    Check(Calendar(clock)[0] == 3, "The retained oscillator reaches its original next tick");
+  }
+}
+
+void ReloadSerialState() {
+  for (unsigned state = 0; state < 4; ++state) {
+    Srtc clock([] { return int64_t(1700000000); });
+    clock.Advance(1);
+    const auto saved = clock.Save();
+    if (state == 0) {
+      clock.Write(13);
+      Check(clock.Read() == 15 && clock.Read() == 1, "Read two nibbles before loading");
+    } else {
+      clock.Write(14);
+      if (state == 1) {
+        clock.Write(0);
+        clock.Write(7);
+      } else if (state == 3) {
+        clock.Write(4);
+      }
+    }
+    Check(clock.Load(saved), "Loading restores calendar data during a serial transaction");
+    if (state == 0) {
+      Check(clock.Read() == 0, "Reloading retains the read cursor");
+    } else if (state == 1) {
+      clock.Write(5);
+      const auto date = Calendar(clock);
+      Check(date[0] == 1 && date[1] == 5, "Reloading retains write mode and its digit cursor");
+    } else if (state == 2) {
+      clock.Write(4);
+      Check(Calendar(clock) == std::array<uint8_t, 13>{}, "Reloading retains command mode");
+    } else {
+      Check(clock.Read() == 0, "Reloading retains the idle serial state");
+      Check(Calendar(clock)[0] == 1, "An idle reload still restores calendar storage");
+    }
+  }
+}
 } // namespace
 int main(int argc, char **argv) {
   try {
@@ -118,6 +170,10 @@ int main(int argc, char **argv) {
       ProgrammedDigits();
     if (argc == 1 || std::string_view(argv[1]) == "cold")
       ColdCalendar();
+    if (argc == 1 || std::string_view(argv[1]) == "reload-phase")
+      ReloadPhase();
+    if (argc == 1 || std::string_view(argv[1]) == "reload-protocol")
+      ReloadSerialState();
     if (argc == 1) {
       OscillatorEdges();
       CalendarCarries();
@@ -128,4 +184,5 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::puts("S-RTC tests passed");
+  return 0;
 }

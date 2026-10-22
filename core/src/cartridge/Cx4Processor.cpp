@@ -18,6 +18,18 @@ Cx4Processor::Cx4Processor(std::span<const uint8_t> rom, std::span<uint8_t> save
 
 Cx4Processor::~Cx4Processor() = default;
 
+Cx4Processor::RetainedStorage Cx4Processor::CaptureStorage() const noexcept {
+  const auto &state = GetState();
+  return {state.program, state.stack};
+}
+
+void Cx4Processor::InitializeStorage(const RetainedStorage &storage) {
+  auto state = GetState();
+  state.program = storage.program;
+  state.stack = storage.stack;
+  SetState(state);
+}
+
 void Cx4Processor::Reset() {
   execution_.reset();
   Hg51b::Reset();
@@ -29,8 +41,10 @@ void Cx4Processor::SetPal(bool pal) {
   masterFrequency_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
 }
 
-void Cx4Processor::Advance(uint32_t masterClocks) {
+void Cx4Processor::Advance(uint32_t masterClocks, bool synchronize) {
   balance_ -= int64_t(masterClocks) * 20'000'000;
+  if (delayedSync_ && !synchronize)
+    return;
   if (balance_ < 0 && CanAdvanceIdle()) {
     // No pending event can change halted state. Retain the same final clock edge
     // without resuming the worker for each otherwise empty processor cycle.
@@ -121,7 +135,8 @@ uint8_t Cx4Processor::ReadRam(uint32_t address) const {
 }
 
 uint8_t Cx4Processor::Read(uint32_t address, uint8_t openBus) {
-  Synchronize();
+  if (!delayedSync_)
+    Synchronize();
   // The CPU board map and DSP external decoder use different address wiring.
   if ((address & 0x408000) == 0x008000) {
     const auto offset = ((address & 0xff0000) >> 1) | (address & 0x7fff);
@@ -138,7 +153,8 @@ uint8_t Cx4Processor::Read(uint32_t address, uint8_t openBus) {
 }
 
 void Cx4Processor::Write(uint32_t address, uint8_t value) {
-  Synchronize();
+  if (!delayedSync_)
+    Synchronize();
   if ((address & 0xf88000) == 0x700000) {
     if (!save_.empty())
       save_[Mirror(address, save_.size())] = value;

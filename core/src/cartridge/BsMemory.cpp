@@ -1,4 +1,5 @@
 #include "snes/core/BsMemory.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/Timing.hpp"
 
 #include <algorithm>
@@ -13,6 +14,14 @@ BsMemory::BsMemory(std::span<uint8_t> image, bool readOnly)
   blockCount_ = unsigned(std::min<size_t>(image_.size() >> 16, blocks_.size()));
   device_ = image_.size() == 0x100000 ? 0x66a8 : 0x6688;
   Reset();
+}
+
+void BsMemory::InitializePageBuffers(PowerOnState &state) {
+  if (readOnly_ || image_.empty())
+    return;
+  for (auto &page : pages_)
+    for (auto &byte : page)
+      byte = uint8_t(state.Value());
 }
 
 void BsMemory::Reset() {
@@ -136,10 +145,12 @@ void BsMemory::RunClock() {
   clock_ += int64_t(masterFrequency_) * 10'000;
 }
 
-void BsMemory::Advance(uint32_t masterClocks) {
+void BsMemory::Advance(uint32_t masterClocks, bool synchronizeProcessor) {
   if (image_.empty())
     return;
   clock_ -= int64_t(masterClocks) * 1'000'000;
+  if (!synchronizeProcessor)
+    return;
   if (readOnly_) {
     if (clock_ < 0) {
       const int64_t period = int64_t(masterFrequency_) * 1'000'000;

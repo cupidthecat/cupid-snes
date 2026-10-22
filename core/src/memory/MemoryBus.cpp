@@ -156,11 +156,8 @@ void MemoryBus::Reset() {
   }
   nextSlot_ = 1;
 
-  // Clear WRAM to 0x55/0xAA pattern (common uninitialized SNES WRAM pattern)
-  // Initialize WRAM deterministically.
-  for (size_t i = 0; i < WramSize; ++i) {
-    wram_[i] = (i & 1) ? 0xAA : 0x55;
-  }
+  // The console applies its startup entropy after mapping the cartridge.
+  wram_.fill(0);
 
   ResetRegisters();
 
@@ -312,7 +309,8 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
   // We map the entire ROM-accessible regions; the Cartridge::Read/Write
   // internally resolves the actual offset and handles mirroring.
   if (cart.MapCompetitionCpu(*this, cartSlot) || cart.MapSignalProcessor(*this, cartSlot) ||
-      cart.MapCx4Processor(*this, cartSlot) || cart.MapSpc7110(*this, cartSlot))
+      cart.MapCx4Processor(*this, cartSlot) || cart.MapSpc7110(*this, cartSlot) ||
+      cart.MapGameBoy(*this, cartSlot))
     return;
   const auto mapping = cart.Header().mapping;
   if (cart.Header().chip == EnhancementChip::Obc1) {
@@ -355,8 +353,8 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
     MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
     break;
   case MappingType::SuperFx:
-    MapRange(0x00, 0x3f, 0x3000, 0x32ff, cartSlot);
-    MapRange(0x80, 0xbf, 0x3000, 0x32ff, cartSlot);
+    MapRange(0x00, 0x3f, 0x3000, 0x34ff, cartSlot);
+    MapRange(0x80, 0xbf, 0x3000, 0x34ff, cartSlot);
     MapRange(0x00, 0x3f, 0x6000, 0xffff, cartSlot);
     MapRange(0x80, 0xbf, 0x6000, 0xffff, cartSlot);
     MapRange(0x40, cart.Header().romSizeShift >= 14 ? 0x6f : 0x5f, 0x0000, 0xffff, cartSlot);
@@ -385,10 +383,8 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
   case MappingType::St010:
     MapRange(0x00, 0x7d, 0x8000, 0xffff, cartSlot);
     MapRange(0x80, 0xff, 0x8000, 0xffff, cartSlot);
-    MapRange(0x60, 0x67, 0x0000, 0x3fff, cartSlot);
     MapRange(0x68, 0x6f, 0x0000, 0x7fff, cartSlot);
-    MapRange(0x70, 0x7d, 0x0000, 0x7fff, cartSlot);
-    MapRange(0xf0, 0xff, 0x0000, 0x7fff, cartSlot);
+    MapRange(0xe8, 0xef, 0x0000, 0x7fff, cartSlot);
     break;
   case MappingType::BroadcastLoRom:
   case MappingType::BroadcastHiRom:
@@ -398,10 +394,10 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
     MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
     break;
   case MappingType::SufamiTurbo:
-    MapRange(0x00, 0x63, 0x8000, 0xffff, cartSlot);
-    MapRange(0x80, 0xe3, 0x8000, 0xffff, cartSlot);
-    MapRange(0x70, 0x73, 0x8000, 0xffff, cartSlot);
-    MapRange(0xf0, 0xf3, 0x8000, 0xffff, cartSlot);
+    MapRange(0x00, 0x3f, 0x8000, 0xffff, cartSlot);
+    MapRange(0x80, 0xbf, 0x8000, 0xffff, cartSlot);
+    MapRange(0x40, 0x7d, 0x0000, 0xffff, cartSlot);
+    MapRange(0xc0, 0xff, 0x0000, 0xffff, cartSlot);
     break;
   case MappingType::ExLoRom:
   case MappingType::LoRomNoMad1:

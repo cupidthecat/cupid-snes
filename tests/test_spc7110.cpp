@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/Spc7110.hpp"
 #include <algorithm>
 #include <array>
@@ -155,7 +155,7 @@ void DecoderVectors() {
 }
 void Mapping() {
   auto rom = Rom();
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(rom), "SPC7110 loads");
   auto &bus = emu->GetBus();
   Check(bus.Read(0x008000) == 0x78 && bus.Read(0xc08000) == 0x78,
@@ -224,7 +224,7 @@ void StreamDma() {
   rom[0x100001] = 0;
   rom[0x100002] = 0x10;
   rom[0x100003] = 0;
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(rom), "The stream DMA image loads");
   auto &bus = emu->GetBus();
   bus.Write(0x4804, 0);
@@ -294,7 +294,7 @@ void Clock() {
         "RTC saves round trip through the legacy 24-byte format");
   save[0] = 0xff;
   Check(!restored.LoadRtc(save), "Malformed RTC saves are rejected");
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(emu->LoadCartridge(rom) && emu->SaveRtc().size() == 24,
         "The RTC connects to frontend saves");
 }

@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,9 +26,7 @@ struct Input final : IInputProvider {
     return pads.at(player);
   }
   MouseState PollMouse(int port, uint64_t) override {
-    const auto state = mice.at(port);
-    mice.at(port).dx = mice.at(port).dy = 0;
-    return state;
+    return mice.at(port);
   }
 };
 
@@ -40,7 +38,7 @@ std::unique_ptr<Emulator> Machine(Input &input) {
   rom[0x7fd7] = 5;
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
-  auto emu = std::make_unique<Emulator>();
+  auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   emu->AttachInputProvider(&input);
   Check(emu->LoadCartridge(rom), "Generated controller test ROM loads");
   return emu;
@@ -119,30 +117,78 @@ void PadsAndPolling() {
         "Legacy single-player providers do not duplicate input on port two");
 }
 
+void GamepadLatchEdges() {
+  Input input;
+  auto emu = Machine(input);
+  auto &bus = emu->GetBus();
+  bus.Write(0x4016, 1);
+  input.pads[0].b = input.pads[1].b = true;
+  Check((bus.Read(0x4016) & 1) && (bus.Read(0x4017) & 1),
+        "Both gamepads report a new B press while latch remains high");
+  input.pads[0].b = false;
+  Check(!(bus.Read(0x4016) & 1) && (bus.Read(0x4017) & 1),
+        "Latch-high B reads follow independent button releases");
+  input.pads[0].y = input.pads[0].a = true;
+  input.pads[1] = {};
+  input.pads[1].start = input.pads[1].r = true;
+  bus.Write(0x4016, 0);
+  input.pads = {};
+  Check(Packet(bus, 0, 16) == 0x4080 && Packet(bus, 1, 16) == 0x1010,
+        "Packets capture buttons on latch falling and retain them after release");
+
+  emu->GetAutoJoypad().Ports().Configure(1, ControllerDevice::Multitap, {1, 2, 3, 4});
+  bus.Write(0x4016, 1);
+  input.pads[1].y = true;
+  bus.Write(0x4016, 0);
+  input.pads[1] = {};
+  Check(Packet(bus, 1, 16) == 0x4000,
+        "Multitap pads capture button changes on the same falling latch edge");
+
+  auto &poller = emu->GetAutoJoypad();
+  poller.Reset();
+  bus.Write(0x4200, 1);
+  poller.Tick128(256, 225, 225, true);
+  input.pads[0].b = input.pads[0].y = true;
+  poller.Tick128(512, 226, 225, true);
+  input.pads[0] = {};
+  for (unsigned phase = 2; phase <= 33; ++phase)
+    poller.Tick128(512, 226, 225, true);
+  Check(poller.Joy1() == 0xc000,
+        "Automatic polling samples button changes during its latch interval");
+}
+
 void Mouse() {
   Input input;
   auto emu = Machine(input);
   auto &bus = emu->GetBus();
   auto &ports = emu->GetAutoJoypad().Ports();
   ports.Configure(0, ControllerDevice::Mouse);
+  Check(Packet(bus, 0, 32) == 0x00010000, "Mouse reports its signature before the first latch");
   input.mice[0] = {300, -260, true, false};
   Latch(bus);
   Check(Packet(bus, 0, 32) == 0x0041ff7f, "Mouse buttons and signed movement packet");
   for (unsigned i = 0; i < 512; ++i)
     Check((bus.Read(0x4016) & 3) == 1, "Mouse exhausted reads stay high");
+  input.mice[0].dx = input.mice[0].dy = 0;
   Latch(bus);
-  Check(Packet(bus, 0, 32) == 0x0041ff7f, "Mouse retains clipped movement");
-  Latch(bus);
-  Check(Packet(bus, 0, 32) == 0x0041862e, "Mouse emits final movement remainder");
-  Latch(bus);
-  Check(Packet(bus, 0, 32) == 0x00410000, "Mouse movement is consumed once");
+  Check(Packet(bus, 0, 32) == 0x00410000, "Mouse discards movement beyond the packet limit");
+  constexpr std::array<uint32_t, 3> movement{0x8704, 0x8a06, 0x8503};
+  unsigned setting = 0;
   for (const auto sensitivity : {1u, 2u, 0u}) {
+    input.mice[0].dx = 3;
+    input.mice[0].dy = -5;
     bus.Write(0x4016, 1);
     Check(!(bus.Read(0x4016) & 1), "Mouse sensitivity command returns zero");
     bus.Write(0x4016, 0);
-    Check(Packet(bus, 0, 32) == (0x00410000 | (sensitivity << 20)),
-          "Mouse cycles three sensitivity settings");
+    Check(Packet(bus, 0, 32) == (0x00410000 | (sensitivity << 20) | movement[setting++]),
+          "Mouse applies each sensitivity to movement and truncates fractional counts");
   }
+  input.mice[0] = {2, 3, true, false};
+  bus.Write(0x4016, 1);
+  input.mice[0] = {-9, 11, false, true};
+  bus.Write(0x4016, 0);
+  Check(Packet(bus, 0, 32) == 0x00810b89,
+        "Mouse falling latch captures changes to movement and buttons");
   input.mice[0] = {-1, 2, false, true};
   Poll(*emu);
   Check(emu->GetAutoJoypad().Joy1() == 0x81, "Auto poll reads mouse signature and buttons");
@@ -150,6 +196,27 @@ void Mouse() {
   ports.Configure(0, ControllerDevice::None);
   Latch(bus);
   Check(Packet(bus, 0, 32) == 0, "Disconnected port drives no serial data");
+}
+
+void MouseLatchSampling() {
+  ControllerPorts ports;
+  ports.Configure(0, ControllerDevice::Mouse);
+  MouseState input{INT32_MIN, INT32_MAX, false, false};
+  unsigned polls = 0;
+  ports.SetMouseCallback([&](int) {
+    ++polls;
+    return input;
+  });
+  ports.SetLatch(true);
+  ports.SetLatch(true);
+  Check(polls == 1, "Mouse samples a rising transition without repeating a held latch");
+  ports.SetLatch(false);
+  ports.SetLatch(false);
+  Check(polls == 2, "Mouse also samples a falling transition");
+  uint32_t packet = 0;
+  for (unsigned bit = 0; bit < 32; ++bit)
+    packet = (packet << 1) | ports.Read(0);
+  Check(packet == 0x00017fff, "Extreme signed host movement clips safely to seven-bit magnitudes");
 }
 
 void Multitap() {
@@ -194,7 +261,9 @@ void Multitap() {
 int main() {
   try {
     PadsAndPolling();
+    GamepadLatchEdges();
     Mouse();
+    MouseLatchSampling();
     Multitap();
     std::printf("%u controller checks passed\n", checks);
     return 0;

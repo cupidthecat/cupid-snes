@@ -24,6 +24,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,6 +32,11 @@
 #include <vector>
 
 namespace snes::core {
+class PowerOnState;
+namespace gameboy {
+class Adapter;
+class StartupState;
+} // namespace gameboy
 
 enum class MappingType {
   Unknown,
@@ -75,7 +81,8 @@ enum class EnhancementChip {
   St010,
   St011,
   St018,
-  Competition
+  Competition,
+  SuperGameBoy
 };
 
 const char *ChipName(EnhancementChip chip) noexcept;
@@ -127,6 +134,11 @@ private:
 
 class Cartridge {
 public:
+  using GameBoyAudioSink = std::function<void(int16_t left, int16_t right, uint32_t sampleRate)>;
+  Cartridge();
+  ~Cartridge();
+  Cartridge(Cartridge &&) noexcept;
+  Cartridge &operator=(Cartridge &&) noexcept;
   static std::optional<Cartridge> FromRomImage(std::span<const uint8_t> romImage,
                                                RomNormalizationInfo *normalization,
                                                const CartridgeDatabase *database,
@@ -137,6 +149,10 @@ public:
                                                   std::span<const uint8_t> slotA,
                                                   std::span<const uint8_t> slotB,
                                                   std::string *error = nullptr);
+  static std::optional<Cartridge> FromSuperGameBoy(std::span<const uint8_t> bios,
+                                                   std::span<const uint8_t> game,
+                                                   std::span<const uint8_t> boot,
+                                                   std::string *error = nullptr);
   static std::optional<Cartridge> FromBroadcastCartridge(std::span<const uint8_t> base,
                                                          std::span<const uint8_t> pack,
                                                          std::string *error = nullptr);
@@ -150,6 +166,9 @@ public:
   // Reset device controls and internal work RAM as required. Retain battery RAM
   // and clock data.
   void Reset();
+  void InitializePowerOnMemory(PowerOnState &state);
+  void InitializeFlashPages(PowerOnState &state);
+  void InitializeGameBoyStartup(std::shared_ptr<gameboy::StartupState> state);
 
   void SetMemselFast(bool enabled) noexcept;
   bool MemselFast() const noexcept;
@@ -160,7 +179,12 @@ public:
   void ObserveDmaWrite(uint32_t address, uint8_t value);
 
   uint32_t AccessCycles(uint32_t cpuAddress) const noexcept;
-  void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
+  void AdvanceHardware(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
+                       bool synchronizeProcessors = true);
+  void SetSa1BusContention(bool enabled);
+  void SetCx4DelayedSync(bool enabled);
+  std::optional<Cx4Processor::RetainedStorage> CaptureCx4Storage() const;
+  void InitializeCx4Storage(const Cx4Processor::RetainedStorage &storage);
   void SetPal(bool pal);
   bool CpuIrqPending() const noexcept;
   bool HasSignalProcessor() const noexcept {
@@ -168,6 +192,9 @@ public:
   }
   bool HasArmProcessor() const noexcept {
     return bool(armDsp_);
+  }
+  std::span<const uint8_t> ArmWorkRamData() const noexcept {
+    return armDsp_ ? armDsp_->RamData() : std::span<const uint8_t>{};
   }
   bool HasCx4Processor() const noexcept {
     return bool(cx4Processor_);
@@ -179,15 +206,25 @@ public:
   bool MapCx4Processor(MemoryBus &bus, uint8_t slot) const;
   bool MapSpc7110(MemoryBus &bus, uint8_t slot) const;
   bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
+  bool MapGameBoy(MemoryBus &bus, uint8_t slot) const;
+  void SetGameBoyAudioOutput(GameBoyAudioSink output);
+  void SetGameBoyMixedAudioOutput(std::function<void(float left, float right)> output);
+  void WriteGameBoyConsoleAudio(int16_t left, int16_t right);
+  void SetGameBoyConsoleAudioRate(uint32_t rate);
+  void SetGameBoyExpansionAudioRate(uint32_t rate);
+  void WriteGameBoyExpansionAudio(float left, float right);
 
   bool BoardConnected() const noexcept {
     return boardConnected_;
   }
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;
+  size_t SramLoadSize() const noexcept;
   void LoadSram(std::span<const uint8_t> data);
   std::span<const uint8_t> SlotSramData(unsigned slot) const noexcept;
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);
+  std::vector<uint8_t> SaveSlotBattery(unsigned slot) const;
+  bool LoadSlotBattery(unsigned slot, std::span<const uint8_t> data);
   std::span<const uint8_t> MemoryPackData() const noexcept;
   bool LoadMemoryPack(std::span<const uint8_t> data);
   std::vector<uint8_t> MemoryPackMetadata() const;
@@ -202,6 +239,7 @@ public:
   }
 
 private:
+  void ApplyBiosCompatibility();
   void InitializeBroadcast(std::span<const uint8_t> pack = {});
 
   static std::vector<uint8_t> RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed);
@@ -222,6 +260,8 @@ private:
   bool boardConnected_ = true;
   size_t slotSize_[2]{};
   size_t slotOffset_[2]{};
+  size_t slotSramSize_[2]{};
+  size_t slotSramOffset_[2]{};
   std::vector<uint8_t> memoryPack_;
   bool memoryPackReadOnly_ = false;
   std::unique_ptr<BsMemory> memoryPackDevice_;
@@ -242,6 +282,7 @@ private:
   std::optional<NecDspBoard> signalBoard_;
   std::unique_ptr<NecDsp> necDsp_;
   std::unique_ptr<CompetitionBoard> competition_;
+  std::unique_ptr<gameboy::Adapter> gameBoy_;
 };
 
 } // namespace snes::core

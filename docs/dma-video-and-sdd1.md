@@ -21,6 +21,8 @@ The decompressor handles all four bitplane layouts and all four context models d
 
 The chip header selects this board independently of ROM size. Images of 8, 12, or 16 MiB retain S-DD1 registers, bank switching, decompression, and populated SRAM. ROM size alone does not select a pre-decompressed layout.
 
+Selections beyond the supplied ROM capacity use bounded address mirroring. In a 6 MiB image, bank 6 mirrors bank 4, while banks 7 and 15 mirror bank 5. A console guest checks all four switchable windows through both register aliases, both regions and renderers, and cold/warm startup. These checks specify the retained mapping policy; physical behavior for unpopulated bank selections remains unmeasured.
+
 ## DMA and field timing
 
 Writing $420B queues DMA. The controller allows one CPU bus cycle before taking the bus, aligns to its eight-clock divider, and charges global and per-channel startup intervals. Each byte has two four-clock read phases followed by the destination write. HDMA table reads and data transfers use the same clock path. WRAM refresh pauses transfers, and HDMA can interrupt general DMA between bytes. HDMA on the same channel cancels that general DMA transfer; another channel's HDMA lets it resume. Source offsets wrap within their original bank.

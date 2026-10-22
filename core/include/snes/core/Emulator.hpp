@@ -22,11 +22,13 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Msu1.hpp"
 #include "snes/core/Platform.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/Ppu.hpp"
 #include "snes/core/Smp.hpp"
 #include "snes/core/Srtc.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/Trace.hpp"
+#include "snes/core/audio/StreamMixer.hpp"
 
 #include <array>
 #include <cstdint>
@@ -57,12 +59,26 @@ struct FrameStepResult {
 
 class Emulator {
 public:
+  enum class ExpansionDevice { None, Satellaview };
   struct Config {
     uint32_t frameRate = 60;
     uint32_t visibleWidth = 256;
     uint32_t visibleHeight = 224;
     uint64_t masterCyclesPerFrame = 357368;
     std::shared_ptr<const CartridgeFirmware> cartridgeFirmware;
+    EntropyMode entropyMode = EntropyMode::Low;
+    std::optional<uint32_t> entropySeed;
+    uint32_t entropySequence = 0;
+    uint8_t cpuRevision = 2;
+    bool sa1BusContention = false;
+    bool superFxDelayedSync = true;
+    bool cx4DelayedSync = true;
+    Smp::DspMode dspMode = Smp::DspMode::Batch32;
+    Ppu::Config ppu{.model = Ppu::RenderModel::Scanline};
+    bool gameCompatibilityFixes = true;
+    ExpansionDevice expansionDevice = ExpansionDevice::None;
+    // Unset selects the cartridge's declared region.
+    std::optional<Region> regionOverride;
   };
 
   explicit Emulator();
@@ -84,6 +100,10 @@ public:
                        std::span<const uint8_t> slotB, std::string *error = nullptr);
   bool LoadSufamiTurboFromFiles(const std::string &bios, const std::string &slotA,
                                 const std::string &slotB, std::string *error = nullptr);
+  bool LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
+                        std::span<const uint8_t> boot, std::string *error = nullptr);
+  bool LoadSuperGameBoyFromFiles(const std::string &bios, const std::string &game,
+                                 const std::string &boot, std::string *error = nullptr);
   bool LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<const uint8_t> pack,
                               std::string *error = nullptr);
   bool LoadBroadcastCartridgeFromFiles(const std::string &base, const std::string &pack,
@@ -101,10 +121,18 @@ public:
     return cartridge_ && cartridge_->LoadMemoryPackMetadata(bytes);
   }
   bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data) {
-    return cartridge_ && cartridge_->LoadBroadcastStream(channel, sequence, data);
+    return config_.expansionDevice == ExpansionDevice::Satellaview &&
+           broadcastReceiver_.LoadStream(channel, sequence, data);
   }
   bool SetBroadcastTimeSource(std::function<BroadcastTime()> source) {
-    return cartridge_ && cartridge_->SetBroadcastTimeSource(std::move(source));
+    if (config_.expansionDevice != ExpansionDevice::Satellaview)
+      return false;
+    broadcastReceiver_.SetTimeSource(std::move(source));
+    return true;
+  }
+  void SetExpansionDevice(ExpansionDevice device);
+  ExpansionDevice GetExpansionDevice() const noexcept {
+    return config_.expansionDevice;
   }
 
   const Cartridge *LoadedCartridge() const noexcept;
@@ -115,6 +143,12 @@ public:
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data) {
     if (cartridge_)
       cartridge_->LoadSlotSram(slot, data);
+  }
+  std::vector<uint8_t> SaveSlotBattery(unsigned slot) const {
+    return cartridge_ ? cartridge_->SaveSlotBattery(slot) : std::vector<uint8_t>{};
+  }
+  bool LoadSlotBattery(unsigned slot, std::span<const uint8_t> data) {
+    return cartridge_ && cartridge_->LoadSlotBattery(slot, data);
   }
   std::vector<uint8_t> SaveRtc() {
     if (!srtc_)
@@ -174,12 +208,16 @@ private:
   /// Wire all subsystem callbacks and map the bus.
   /// Called from LoadCartridge() once the cartridge is ready.
   void InitSubsystems();
+  void ReplaceCartridge(Cartridge &&cartridge);
   bool LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
                                  const CartridgeFirmware *firmware, std::string *error);
   void ResetHardware(bool warm);
   void AdvanceClocks(uint32_t clocks);
-  void SynchronizeDevices();
-  void SynchronizeCoprocessors();
+  void SynchronizeDevices(bool communication = false);
+  void ConfigureAudioStreams();
+  void AttachMsu1(const std::string &path);
+  void SynchronizeExpansionAudio(uint64_t elapsed);
+  void SynchronizeCoprocessors(bool forceExecution = false);
   void StopFrameExecution();
   uint32_t ResumeCpuInstruction();
   void SuspendFrame();
@@ -189,6 +227,7 @@ private:
   void EmitTrace(const TraceEvent &event) const;
 
   Config config_;
+  BroadcastReceiver broadcastReceiver_;
   uint64_t frameIndex_ = 0;
   uint64_t masterCycles_ = 0;
   bool initialized_ = false;
@@ -199,7 +238,11 @@ private:
   std::vector<ITraceSink *> traceSinks_;
 
   CartridgeDatabase cartridgeDatabase_{};
+  std::shared_ptr<gameboy::StartupState> handheldStartup_;
+  std::optional<PowerOnState> startupEntropy_;
   std::optional<Cartridge> cartridge_{};
+  // Cache words and return-stack entries belong to this console across cartridge changes.
+  std::optional<Cx4Processor::RetainedStorage> cx4Storage_;
 
   // Hardware subsystems (construction order matters - bus_ before cpu_)
   Dsp dsp_;
@@ -218,15 +261,16 @@ private:
   std::unique_ptr<Dsp2> dsp2_;
   std::unique_ptr<Srtc> srtc_;
   std::unique_ptr<Msu1> msu1_;
+  audio::StreamMixer audioMixer_;
+  uint64_t msuSamplesClocked_ = 0;
 
   // Audio output buffer (stereo interleaved int16_t, enough for 1+ frames)
   static constexpr int kAudioBufSamples = 2048;
   std::array<int16_t, kAudioBufSamples * 2> audioBuf_{};
-  std::vector<int16_t> audioOverflow_;
   bool collectingAudio_ = false;
-  uint64_t nextSmpMasterClock_ = 0;
   uint64_t coprocessorsSyncedClock_ = 0;
   uint64_t coprocessorClockTarget_ = 0;
+  uint64_t coprocessorCompletedClock_ = 0;
   AudioBuffer audioOutputBuffer_;
   VideoFrame videoOutputFrame_;
 

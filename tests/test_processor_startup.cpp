@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -67,7 +67,7 @@ std::vector<uint8_t> Image(std::initializer_list<uint8_t> program, bool pal = fa
 }
 
 std::unique_ptr<Emulator> Machine(bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(Image({0xdb}, pal), &error), "Startup fixture loads");
   return machine;
@@ -365,7 +365,7 @@ void DecodedDmaLatches() {
   rom[0x7fd6] = 0x45;
   rom[0x7fd7] = 11;
   rom[0x100000] = 0xc0; // Packed zero codewords decode to zero bytes.
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(rom, &error), "The decompression cartridge fixture loads");
   machine->GetCpu()->Step();
@@ -447,10 +447,9 @@ void HardwareStartupAndReload() {
       Check(machine->GetCpu()->Step() == 186 && machine->CurrentMasterCycles() == 186 &&
                 machine->GetTiming().MasterClocksElapsed() == 186,
             "Reset advances the shared hardware clock through its complete bus sequence");
-      Check(machine->GetSmp().CycleCount() == 8 && machine->GetDsp().Phase() == 8 &&
-                machine->GetSmp().GetTimer0().stage0 ==
-                    186 * Smp::kHardwareClockFrequency / machine->GetTiming().MasterClockHz(),
-            "Sound, DSP, and timers advance during CPU reset in both video regions");
+      Check(machine->GetSmp().HardwareClockCount() == 0 && machine->GetDsp().Phase() == 0 &&
+                machine->GetSmp().GetTimer0().stage0 == 0,
+            "CPU reset retains sound clock debt until a communication or scanline handoff");
       Check(machine->GetBus().Read(0x700000) == 0x5a && machine->GetBus().WramData()[0x1fd] == 0x24,
             "Saved cartridge data is installed before startup and the reset stack reaches WRAM");
       machine->StepFrame();
@@ -459,7 +458,7 @@ void HardwareStartupAndReload() {
 }
 
 void FirstInstructionDiagnostic() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   const auto rom = Image({0xad, 0x37, 0x21, // Latch H/V as the first instruction.
                           0xad, 0x3c, 0x21, 0x8f, 0,    1,    0x7e, 0xad, 0x3c, 0x21, 0x29, 1,
                           0x8f, 1,    1,    0x7e, 0xba, 0x8a, 0x8f, 2,    1,    0x7e, 0xdb});
@@ -489,4 +488,5 @@ int main() {
     return 1;
   std::puts(
       "Processor startup, reset bus phases, shared latches, and first-instruction checks passed");
+  return 0;
 }

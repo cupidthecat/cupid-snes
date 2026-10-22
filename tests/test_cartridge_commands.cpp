@@ -1,4 +1,4 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -66,7 +66,7 @@ struct Program {
 };
 
 void Dsp1StatusBytes() {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Program program;
   program.Read(0x20c000, 0);
   program.Read(0xbfc001, 1);
@@ -93,25 +93,32 @@ void Dsp1StatusBytes() {
 }
 
 void CommandBuses() {
-  auto machine = std::make_unique<Emulator>();
+  auto firmware = std::make_shared<CartridgeFirmware>();
+  std::vector<uint8_t> bytes(CartridgeFirmware::Size(FirmwareKind::Dsp3));
+  const uint32_t instructions[]{
+      0xc00000 | (0x400 << 6) | 7,        0xc00000 | (0x34 << 6) | 6,
+      0x800000 | (0xbe << 13) | (2 << 2), 9 << 4 | 3,
+      0xc00000 | (0xa5 << 6) | 6,         0x800000 | (0x100 << 13) | (5 << 2)};
+  for (unsigned i = 0; i < std::size(instructions); ++i)
+    for (unsigned byte = 0; byte < 3; ++byte)
+      bytes[i * 3 + byte] = uint8_t(instructions[i] >> (byte * 8));
+  Check(firmware->Set(FirmwareKind::Dsp3, bytes), "Generated DSP-3 handshake firmware loads");
+  auto config = snes::tests::DeterministicConsoleConfig();
+  config.cartridgeFirmware = firmware;
+  auto machine = std::make_unique<Emulator>(config);
   Program hex;
   hex.Read(0x20c000, 0);
-  hex.Write(0x208000, 6);
-  hex.PortWord(0xa08000, 0x1010);
-  hex.Write(0xbf8000, 3);
-  hex.PortWord(0x208000, 0x0304);
   hex.Read(0xa08000, 1);
-  hex.Read(0x3f8000, 2);
-  hex.Read(0xbfc000, 3);
+  hex.Read(0xbfc000, 2);
+  hex.Read(0x3f8000, 3);
   auto hexBoard = Rom(0x30, 5, 0xb2);
   hexBoard[0x7fd8] = 5;
   hex.Run(*machine, std::move(hexBoard));
   auto &bus = machine->GetBus();
-  Check(bus.Read(0) == 0x84 && bus.Read(1) == 52 && bus.Read(2) == 0 && bus.Read(3) == 0x84,
-        "DSP-3 consumes mirrored command bytes and returns the hex-grid index through the console "
-        "bus");
+  Check(bus.Read(0) == 0x84 && bus.Read(1) == 0x34 && bus.Read(2) == 0x84 && bus.Read(3) == 0xa5,
+        "DSP-3 firmware resumes after CPU acknowledgement across mirrored host ports");
   bus.Write(0x7e1000, 0x5a);
-  Check(bus.Read(0x409000) == 0x5a && bus.Read(0x208000) == 0x80,
+  Check(bus.Read(0x409000) == 0x5a && bus.Read(0x208000) == 0xa5,
         "DSP-3 mapping retains open bus in unused full banks");
 
   Program road;
@@ -198,7 +205,7 @@ void SignalFallbackRegressions() {
     chip.Write(0xff);
     Check(chip.Read() == 0xab, "The 512th input byte completes the wrapped scaling packet");
   }
-  Emulator::Config config;
+  auto config = snes::tests::DeterministicConsoleConfig();
   config.cartridgeFirmware = std::make_shared<CartridgeFirmware>();
   auto machine = std::make_unique<Emulator>(config);
   Check(machine->LoadCartridge(Rom(0x20, 3)), "A DSP-1 fallback board loads");
@@ -236,7 +243,7 @@ void BroadcastControllerCpu() {
   std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
   bios[0x7fda] = 0x33;
   bios[0x7fd8] = 5;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Program program;
   program.Read(0x025000, 0);
   program.Read(0x015fff, 1);
@@ -256,13 +263,177 @@ void BroadcastControllerCpu() {
           "CPU loads observe controller bits, commit gating and packed PSRAM aliases");
 }
 
+void BroadcastBiosLaunch() {
+  struct Scene {
+    std::string_view title;
+    size_t size;
+    bool controller, copierHeader;
+    std::array<uint8_t, 4> branches;
+    uint32_t crc;
+  };
+  constexpr std::array<uint8_t, 4> ordinary{0x10, 0x10, 0x10, 0x10};
+  constexpr Scene scenes[]{
+      {"Satellaview BS-X", 0x100000, true, false, ordinary, 0x2ff4cbf3},
+      {"Satellaview BS-X", 0x200000, false, true, ordinary, 0xb8ebf447},
+      {"Satellaview BS-X", 0x80000, true, false, ordinary, 0x86d18908},
+      {"Satellaview BS-Y", 0x100000, true, false, ordinary, 0x83097b59},
+      {"satellaview BS-X", 0x100000, false, false, ordinary, 0xbb826a48},
+      {"Satellaview BS-X PLUS", 0x100000, false, false, ordinary, 0x2990974a},
+      {"Satellaview BS-X", 0x100000, true, true, {0x10, 0x80, 0x30, 0x90}, 0xdd107ac0},
+  };
+  constexpr std::array<size_t, 4> offsets{0x4a9b, 0x4d6d, 0x4ded, 0x4e9a};
+  for (bool fixes : {false, true})
+    for (const auto &scene : scenes) {
+      auto image = Rom(0x20, 0);
+      image.resize(scene.size, 0xea);
+      std::fill_n(image.begin() + 0x7fc0, 21, ' ');
+      std::copy(scene.title.begin(), scene.title.end(), image.begin() + 0x7fc0);
+      image[0x7fd7] = scene.size == 0x80000 ? 9 : scene.size == 0x100000 ? 10 : 11;
+      if (scene.controller) {
+        std::copy_n("ZBSJ", 4, image.begin() + 0x7fb2);
+        image[0x7fda] = 0x33;
+        image[0x7fd8] = 5;
+      }
+      Program program;
+      program.bytes = {0x78, 0xd8, 0x18};
+      for (unsigned index = 0; index < offsets.size(); ++index) {
+        const auto offset = offsets[index];
+        const std::array<uint8_t, 17> branch{0xa9,
+                                             0x80,
+                                             scene.branches[index],
+                                             7,
+                                             0xa9,
+                                             0x11,
+                                             0x8f,
+                                             uint8_t(index),
+                                             1,
+                                             0x7e,
+                                             0x60,
+                                             0xa9,
+                                             0x22,
+                                             0x8f,
+                                             uint8_t(index),
+                                             1,
+                                             0x7e};
+        std::copy(branch.begin(), branch.end(), image.begin() + offset - 2);
+        image[offset + 15] = 0x60;
+        const auto address = uint16_t(0x8000 + offset - 2);
+        program.bytes.insert(program.bytes.end(), {0x20, uint8_t(address), uint8_t(address >> 8)});
+        program.Read(uint32_t(0x8000 + offset), uint8_t(0x10 + index));
+      }
+      program.bytes.insert(program.bytes.end(), {0xaf, 0, 2, 0x7e, 0x1a, 0x8f, 0, 2, 0x7e, 0xdb});
+      std::copy(program.bytes.begin(), program.bytes.end(), image.begin());
+      if (scene.copierHeader)
+        image.insert(image.begin(), 512, 0x5a);
+      const auto original = image;
+      auto config = snes::tests::DeterministicConsoleConfig();
+      config.gameCompatibilityFixes = fixes;
+      auto machine = std::make_unique<Emulator>(config);
+      Check(machine->LoadCartridge(image),
+            "The BIOS branch program loads through the cartridge API");
+      Check(image == original && machine->LoadedCartridge()->RomCrc32() == scene.crc,
+            "BIOS preparation retains the caller's image and the original normalized checksum");
+      for (unsigned pass = 0; pass < 2; ++pass) {
+        for (unsigned step = 0; step < 1000 && !machine->GetCpu()->regs().stp; ++step)
+          machine->GetCpu()->Step();
+        const auto *ram = machine->GetBus().WramData();
+        Check(machine->GetCpu()->regs().stp && ram[0x200] == pass + 1,
+              "The BIOS branch program completes on cold and warm starts");
+        const bool prepare = scene.title == "Satellaview BS-X" && scene.size >= 0x100000;
+        for (unsigned index = 0; index < offsets.size(); ++index) {
+          const auto opcode =
+              prepare && scene.branches[index] == 0x10 ? 0x80 : scene.branches[index];
+          Check(ram[0x10 + index] == opcode && ram[0x100 + index] == (opcode == 0x10 ? 0x11 : 0x22),
+                "Guest execution bypasses known BIOS lockout branches and retains other opcodes");
+        }
+        if (pass == 0)
+          Check(machine->Reset(), "The prepared BIOS resets normally");
+      }
+    }
+}
+
+void ExpansionDefaults() {
+  for (bool broadcast : {false, true}) {
+    auto image = Rom(0x20, 0);
+    if (broadcast) {
+      std::copy_n("Satellaview BS-X     ", 21, image.begin() + 0x7fc0);
+      std::copy_n("ZBSJ", 4, image.begin() + 0x7fb2);
+      image[0x7fda] = 0x33;
+      image[0x7fd8] = 5;
+    }
+    auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+    Program program;
+    program.Write(0x2189, 0x3c);
+    program.Read(0x802189, 0);
+    program.Read(0xbf2192, 1);
+    program.Read(0x3f2197, 2);
+    program.Run(*machine, std::move(image));
+    const auto *ram = machine->GetBus().WramData();
+    Check(ram[0] == 0x80 && ram[1] == 0xbf && ram[2] == 0x3f,
+          "Disconnected expansion ports preserve the CPU memory data latch");
+  }
+}
+
+void ExpansionAttachment() {
+  for (bool broadcast : {false, true}) {
+    auto image = Rom(0x20, 0);
+    if (broadcast) {
+      std::copy_n("Satellaview BS-X     ", 21, image.begin() + 0x7fc0);
+      std::copy_n("ZBSJ", 4, image.begin() + 0x7fb2);
+      image[0x7fda] = 0x33;
+      image[0x7fd8] = 5;
+    }
+    auto config = snes::tests::DeterministicConsoleConfig();
+    config.expansionDevice = Emulator::ExpansionDevice::Satellaview;
+    auto machine = std::make_unique<Emulator>(config);
+    unsigned samples = 0;
+    Check(machine->SetBroadcastTimeSource([&] {
+      ++samples;
+      return BroadcastTime{2026, 9, 14, 2, 12, 34, 56};
+    }),
+          "An attached receiver accepts a clock provider before cartridge loading");
+    Program program;
+    program.Read(0x802189, 0);
+    program.Write(0x2189, 0x3c);
+    program.Read(0xbf2189, 1);
+    for (unsigned index = 0; index < 18; ++index)
+      program.Read(0x802192, uint8_t(index + 2));
+    program.Run(*machine, image);
+    const auto *ram = machine->GetBus().WramData();
+    constexpr std::array<uint8_t, 18> expected{0, 0,  0,  0,  0, 1, 1, 0, 0,
+                                               0, 56, 34, 12, 0, 0, 0, 0, 0};
+    Check(ram[0] == 0 && ram[1] == 0x3c && std::equal(expected.begin(), expected.end(), ram + 2) &&
+              samples == 1,
+          "Guest reads reach the selected receiver with ordinary and BS-X cartridges");
+    Check(machine->Reset(), "The console resets with its expansion device attached");
+    for (unsigned index = 0; index < 1000 && !machine->GetCpu()->regs().stp; ++index)
+      machine->GetCpu()->Step();
+    Check(machine->GetCpu()->regs().stp && ram[0] == 0 && ram[1] == 0x3c && samples == 2,
+          "Warm reset clears receiver registers while retaining its selection and provider");
+    machine->SetExpansionDevice(Emulator::ExpansionDevice::Satellaview);
+    Check(machine->GetBus().Read(0x2189) == 0,
+          "Reconnecting the same receiver resets its register state");
+    machine->SetExpansionDevice(Emulator::ExpansionDevice::None);
+    Check(machine->GetExpansionDevice() == Emulator::ExpansionDevice::None &&
+              !machine->SetBroadcastTimeSource({}),
+          "Disconnecting the receiver disables its host clock interface");
+    Program disconnected;
+    disconnected.Read(0x802189, 0);
+    disconnected.Read(0xbf2192, 1);
+    disconnected.Run(*machine, image);
+    Check(ram[0] == 0x80 && ram[1] == 0xbf,
+          "Disconnected expansion mirrors return open bus after cartridge replacement");
+  }
+}
+
 void BroadcastBus() {
   auto bios = Rom(0x20, 0);
   std::copy_n("Satellaview BS-X     ", 21, bios.begin() + 0x7fc0);
   std::copy_n("ZBSJ", 4, bios.begin() + 0x7fb2);
   bios[0x7fda] = 0x33;
   bios[0x7fd8] = 5;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+  machine->SetExpansionDevice(Emulator::ExpansionDevice::Satellaview);
   Check(machine->LoadCartridge(bios) &&
             machine->LoadedCartridge()->Header().mapping == MappingType::Bsx,
         "An ordinary BIOS load selects the BS-X memory controller");
@@ -364,10 +535,11 @@ void BroadcastBus() {
   Check(!machine->LoadBroadcastCartridge(bios, std::span<const uint8_t>(pack).first(123)),
         "Invalid pack capacity is rejected without replacing the running cartridge");
   Check(bus.Read(0xd12345) == 0x49, "A rejected reload preserves the installed media");
-  Check(machine->LoadCartridge(Rom(0x20, 0)) && !machine->LoadBroadcastStream(1, 0, payload),
-        "Reloading an ordinary cartridge removes broadcast device APIs");
+  Check(machine->LoadCartridge(Rom(0x20, 0)) && machine->LoadBroadcastStream(1, 0, payload),
+        "Cartridge replacement retains the console expansion device");
+  machine->SetExpansionDevice(Emulator::ExpansionDevice::None);
   bus.SetOpenBus(0x35);
-  Check(bus.Read(0x2188) == 0x35, "Reloading removes the old radio bus handler");
+  Check(bus.Read(0x2188) == 0x35, "Disconnecting restores open bus at the radio ports");
 }
 } // namespace
 
@@ -377,10 +549,14 @@ int main() {
     BroadcastControllerCpu();
     Dsp1StatusBytes();
     CommandBuses();
+    BroadcastBiosLaunch();
+    ExpansionDefaults();
+    ExpansionAttachment();
     BroadcastBus();
   } catch (const std::exception &) {
     return 1;
   }
   std::puts("Native cartridge command, broadcast mapping, flash, clock, stream and "
             "persistence checks passed");
+  return 0;
 }

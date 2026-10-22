@@ -1,4 +1,5 @@
-#include "snes/core/Emulator.hpp"
+#include "ConsoleConfig.hpp"
+#include "audio/SoundClockExpectations.hpp"
 #include "snes/core/SnesCpu.hpp"
 
 #include <algorithm>
@@ -33,7 +34,7 @@ std::vector<uint8_t> Rom(uint8_t chip = 0, bool pal = false) {
 }
 
 std::unique_ptr<Emulator> Machine(uint8_t chip = 0, bool pal = false) {
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   Check(machine->LoadCartridge(Rom(chip, pal)), "Reset fixture loads");
   return machine;
 }
@@ -132,16 +133,19 @@ void RetainedMemoryAndRegisters() {
       machine->StepFrame();
     Check(output.frames == 3 && output.blocks == 3,
           "Reset retains output attachments across repeated fields");
-    const auto clocks = machine->CurrentMasterCycles() * Smp::kHardwareClockFrequency /
-                        machine->GetTiming().MasterClockHz();
-    Check(smp.HardwareClockCount() == clocks && output.samples == (clocks / 2 + 4) / 32,
-          "Sound restarts at the console deadline without sample drift");
+    const auto clocks = smp.HardwareClockCount();
+    Check(output.samples > 0 && output.samples == sound_clock_test::UnityStreamFrames(clocks) &&
+              dsp.Phase() == sound_clock_test::DspClocks(clocks) % 32,
+          "Sound reset restarts stream priming and the DSP half-cycle phase");
     Check(machine->GetTiming().MasterClockHz() ==
               (pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz),
           "Reset retains the cartridge region");
+    std::array<uint8_t, Smp::RamSize> audioRam{};
+    std::copy_n(smp.Ram(), audioRam.size(), audioRam.begin());
     Check(machine->LoadCartridge(Rom()), "A later cartridge load succeeds");
-    Check(ppu.VramData()[0] == 0 && smp.Ram()[0] == 0 && dsp.Read(0) == 0,
-          "Cold cartridge loading still clears volatile audio and video storage");
+    Check(ppu.VramData()[0] == 0 && dsp.Read(0) == 0 &&
+              std::equal(audioRam.begin(), audioRam.end(), smp.Ram()),
+          "Cartridge replacement clears video and DSP registers while retaining all audio RAM");
   }
 }
 
@@ -319,7 +323,7 @@ void ControllerAttachments() {
 
 int main() {
   try {
-    auto empty = std::make_unique<Emulator>();
+    auto empty = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
     Check(!empty->Reset() && !empty->Initialized(), "An empty console has nothing to reset");
     RetainedMemoryAndRegisters();
     CancelSuspendedDma();
@@ -333,4 +337,5 @@ int main() {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }
+  return 0;
 }

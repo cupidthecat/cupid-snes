@@ -21,6 +21,10 @@ bool IramAddress(uint32_t address) noexcept {
   const auto offset = address & 0xffff;
   return !(address & 0x400000) && (offset < 0x800 || (offset >= 0x3000 && offset < 0x3800));
 }
+bool CpuSharedAddress(uint32_t address) noexcept {
+  return (address & 0x40fe00) == 0x002200 || (address & 0x40f800) == 0x003000 ||
+         (address & 0x40e000) == 0x006000 || (address & 0xf00000) == 0x400000;
+}
 } // namespace
 
 Sa1::Sa1(std::span<const uint8_t> rom, std::span<uint8_t> bwram) : rom_(rom), bwram_(bwram) {
@@ -69,10 +73,14 @@ void Sa1::SetPal(bool enabled) noexcept {
 }
 
 uint8_t Sa1::ReadCpu(uint32_t address, uint8_t openBus) {
+  if (CpuSharedAddress(address))
+    RunPending();
   return ReadMemory(address & 0xffffff, openBus, Side::Cpu);
 }
 
 void Sa1::WriteCpu(uint32_t address, uint8_t value) {
+  if (CpuSharedAddress(address))
+    RunPending();
   WriteMemory(address & 0xffffff, value, Side::Cpu);
 }
 
@@ -112,10 +120,8 @@ void Sa1::RaiseSa1Interrupt(uint8_t source) noexcept {
 
 uint8_t Sa1::ReadBitByte(uint32_t address) const {
   address &= 0xffffff;
-  if (RomAddress(address)) {
-    uint32_t offset = 0;
-    return RomOffset(address, offset) ? ReadRom(offset, 0) : 0xff;
-  }
+  if (RomAddress(address))
+    return ReadRomPort(address, 0);
   if (BwramAddress(address, 0x4f))
     return ReadBwram(address, 0);
   if (IramAddress(address))
@@ -123,10 +129,17 @@ uint8_t Sa1::ReadBitByte(uint32_t address) const {
   return 0xff;
 }
 
-void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing) {
+void Sa1::Advance(uint32_t masterClocks, uint32_t cpuAddress, bool cpuRefreshing,
+                  bool synchronize) {
   cpuAddress_ = cpuAddress & 0xffffff;
   cpuRefreshing_ = cpuRefreshing;
   requestedClocks_ += masterClocks;
+  if (!synchronize && !busContention_)
+    return;
+  RunPending();
+}
+
+void Sa1::RunPending() {
   if (executedClocks_ >= requestedClocks_)
     return;
   if (!execution_) {
@@ -204,15 +217,15 @@ void Sa1::InterruptProcessor() {
 }
 
 bool Sa1::CpuRomConflict() const noexcept {
-  return RomAddress(cpuAddress_);
+  return busContention_ && RomAddress(cpuAddress_);
 }
 
 bool Sa1::CpuBwramConflict() const noexcept {
-  return BwramAddress(cpuAddress_, 0x4f);
+  return busContention_ && BwramAddress(cpuAddress_, 0x4f);
 }
 
 bool Sa1::CpuIramConflict() const noexcept {
-  return (cpuAddress_ & 0x40f800) == 0x3000 && !cpuRefreshing_;
+  return busContention_ && (cpuAddress_ & 0x40f800) == 0x3000 && !cpuRefreshing_;
 }
 
 void Sa1::ClockAccess(uint32_t address) {
@@ -324,21 +337,23 @@ size_t Sa1::Mirror(size_t address, size_t size) noexcept {
   return base + address;
 }
 
-bool Sa1::RomOffset(uint32_t address, uint32_t &offset) const noexcept {
-  const uint8_t bank = static_cast<uint8_t>(address >> 16);
-  if (bank >= 0xc0) {
-    const unsigned block = (bank - 0xc0) >> 4;
-    offset = uint32_t(registers_[0x20 + block] & 7) * 0x100000 + (address & 0xfffff);
-    return true;
-  }
-  if (!(bank & 0x40) && (address & 0x8000)) {
-    const unsigned block = ((bank & 0x80) >> 6) | ((bank & 0x20) >> 5);
-    const uint8_t mapping = registers_[0x20 + block];
-    unsigned page = (mapping & 0x80) ? (mapping & 7) : block;
-    offset = page * 0x100000 + uint32_t(bank & 0x1f) * 0x8000 + (address & 0x7fff);
-    return true;
-  }
-  return false;
+uint8_t Sa1::ReadRomPort(uint32_t address, uint8_t openBus) const {
+  const auto bank = uint8_t(address >> 16);
+  uint32_t portAddress = address;
+  if (!(bank & 0x40) && (address & 0x8000))
+    portAddress =
+        uint32_t(bank & 0x3f) * 0x8000 + (address & 0x7fff) + uint32_t(bank >> 7) * 0x200000;
+
+  // Every ROM reader sees the selected native vectors before cartridge page mapping.
+  if ((registers_[0x09] & 0x10) && (portAddress & 0xfffffe) == 0x007fea)
+    return registers_[0x0c + (portAddress & 1)];
+  if ((registers_[0x09] & 0x40) && (portAddress & 0xfffffe) == 0x007fee)
+    return registers_[0x0e + (portAddress & 1)];
+
+  const unsigned block = (portAddress >> 20) & 3;
+  const uint8_t mapping = registers_[0x20 + block];
+  const unsigned page = portAddress < 0x400000 && !(mapping & 0x80) ? block : mapping & 7;
+  return ReadRom((page << 20) | (portAddress & 0xfffff), openBus);
 }
 
 uint8_t Sa1::ReadRom(uint32_t offset, uint8_t openBus) const {
@@ -428,18 +443,8 @@ uint8_t Sa1::ReadMemory(uint32_t address, uint8_t openBus, Side side, bool io) {
       return ReadConverted(address & 0x3ffff);
     return ReadBwram(address & 0x3ffff, openBus);
   }
-  uint32_t romOffset;
-  if (RomOffset(address, romOffset)) {
-    // Vector substitution affects the bank-zero vector table, including
-    // its native and emulation entries, without modifying the ROM image.
-    if (side == Side::Cpu && bank == 0) {
-      if ((registers_[0x09] & 0x10) && ((low & 0xffee) == 0xffea))
-        return registers_[0x0c + (low & 1)];
-      if ((registers_[0x09] & 0x40) && ((low & 0xffee) == 0xffee))
-        return registers_[0x0e + (low & 1)];
-    }
-    return ReadRom(romOffset, openBus);
-  }
+  if (RomAddress(address))
+    return ReadRomPort(address, openBus);
   return openBus;
 }
 

@@ -1,5 +1,6 @@
 // Core integration and baseline emulator checks.
 
+#include "ConsoleConfig.hpp"
 #include "snes/core/ApuScheduler.hpp"
 #include "snes/core/AutoJoypad.hpp"
 #include "snes/core/Cartridge.hpp"
@@ -7,7 +8,6 @@
 #include "snes/core/CpuIoRegisters.hpp"
 #include "snes/core/Dma.hpp"
 #include "snes/core/Dsp.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/IrqController.hpp"
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Ppu.hpp"
@@ -1848,8 +1848,8 @@ int main() {
       assert(io.bg4.mosaicEnable == false);
 
       // BG1SC ($2107)
-      ppu.WriteIO(0x2107, 0xFC); // screenAddress = $7C00, screenSize = 0
-      assert(io.bg1.screenAddress == 0x7C00);
+      ppu.WriteIO(0x2107, 0xFC); // screenAddress = $FC00, screenSize = 0
+      assert(io.bg1.screenAddress == 0xFC00);
       assert(io.bg1.screenSize == 0);
 
       // BG12NBA ($210B)
@@ -2253,24 +2253,23 @@ int main() {
       std::printf("  [14n] VRAM blocked during active display passed\n");
     }
 
-    // Sub-test 14o: BG tiledata address 0x7000 mask
+    // Sub-test 14o: BG tiledata registers retain all four bank bits
     {
       Ppu ppu;
       auto &io = ppu.GetIO();
 
-      // BG12NBA ($210B) with nibble=0xF (would produce 0xF000 without mask)
+      // BG12NBA ($210B) retains the complete bank address.
       ppu.WriteIO(0x210B, 0xFF);
-      // (data << 12) & 0x7000 yields 0x7000 for data 0xFF.
-      // for BG2: (data << 8) & 0x7000 → (0xFF << 8) & 0x7000 = 0x7000
-      assert(io.bg1.tiledataAddress == 0x7000);
-      assert(io.bg2.tiledataAddress == 0x7000);
+      // The memory interface applies the selected physical VRAM capacity.
+      assert(io.bg1.tiledataAddress == 0xF000);
+      assert(io.bg2.tiledataAddress == 0xF000);
 
       // BG34NBA ($210C) same
       ppu.WriteIO(0x210C, 0xFF);
-      assert(io.bg3.tiledataAddress == 0x7000);
-      assert(io.bg4.tiledataAddress == 0x7000);
+      assert(io.bg3.tiledataAddress == 0xF000);
+      assert(io.bg4.tiledataAddress == 0xF000);
 
-      // Low nibble = 3 → 3 << 12 = 0x3000 (& 0x7000 = 0x3000, unchanged)
+      // Low nibble = 3 selects the same $3000 bank at either capacity.
       ppu.WriteIO(0x210B, 0x53);
       assert(io.bg1.tiledataAddress == 0x3000);
       assert(io.bg2.tiledataAddress == 0x5000);
@@ -9766,7 +9765,7 @@ int main() {
 
     // 29a: Emulator initializes after LoadCartridge
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       assert(!emu->Initialized());
 
       auto rom = BuildTestRom();
@@ -9780,7 +9779,7 @@ int main() {
 
     // 29b: StepFrame completes and returns valid result
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9792,7 +9791,7 @@ int main() {
 
     // 29c: Frame timing - masterCycles ≈ 357,368 per frame
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9808,7 +9807,7 @@ int main() {
 
     // 29d: Multiple frames increment correctly
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9823,13 +9822,13 @@ int main() {
 
     // 29e: CPU executes - WRAM is modified
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
-      // Verify WRAM starts at power-on pattern (0x55/0xAA alternating)
-      assert(emu->GetBus().WramData()[0] == 0x55);
-      assert(emu->GetBus().WramData()[1] == 0xAA);
+      // Deterministic console fixtures start with cleared WRAM.
+      assert(emu->GetBus().WramData()[0] == 0);
+      assert(emu->GetBus().WramData()[1] == 0);
 
       emu->StepFrame();
 
@@ -9841,7 +9840,7 @@ int main() {
 
     // 29f: Timing frame count advances
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9855,7 +9854,7 @@ int main() {
 
     // 29g: SMP synchronized (cycle count > 0)
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9869,7 +9868,7 @@ int main() {
 
     // 29h: DRAM refresh occurred - CPU cycles include penalty
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9900,7 +9899,7 @@ int main() {
         }
       };
 
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       TestVideoOutput video;
       emu->AttachVideoOutput(&video);
 
@@ -9928,7 +9927,7 @@ int main() {
         }
       };
 
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       TestAudioOutput audio;
       emu->AttachAudioOutput(&audio);
 
@@ -9945,7 +9944,7 @@ int main() {
 
     // 29k: NMI fires when enabled (CPU writes NMITIMEN=$81)
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -9958,7 +9957,7 @@ int main() {
 
     // 29l: Stub path still works without cartridge
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       assert(!emu->Initialized());
 
       auto r1 = emu->StepFrame();
@@ -9981,7 +9980,7 @@ int main() {
         }
       };
 
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       TestInput input;
       emu->AttachInputProvider(&input);
 
@@ -9996,7 +9995,7 @@ int main() {
 
     // 29n: CpuIoRegisters wired - MEMSEL changes bus speed
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -10009,7 +10008,7 @@ int main() {
     // 29o: Timing callbacks fire during frame
     {
       // The first display event ends the initial partial field.
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 
@@ -10022,7 +10021,7 @@ int main() {
 
     // 29p: Second frame also completes
     {
-      auto emu = std::make_unique<Emulator>();
+      auto emu = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
       auto rom = BuildTestRom();
       emu->LoadCartridge(rom);
 

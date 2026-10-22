@@ -15,6 +15,7 @@ namespace snes::core {
 class Msu1 {
 public:
   using StereoSample = std::array<int16_t, 2>;
+  using OutputFrame = std::array<float, 2>;
   static constexpr uint32_t SampleRate = 44100;
 
   // A ROM named game.sfc uses game.msu and game-<track>.pcm beside it.
@@ -32,11 +33,9 @@ public:
   uint8_t Read(uint32_t address, uint8_t openBus = 0xff);
   void Write(uint32_t address, uint8_t value);
 
-  // Advance one output frame, even when the host is not collecting audio.
-  // Samples are averaged over its exact 44,100/outputRate PCM interval.
-  // Fractional frames persist across calls; zero rate does not advance time.
-  // Mix the returned sample with the DSP at the same emulated instant.
-  StereoSample NextSample(uint32_t outputRate = 32000);
+  // Advance one 44.1 kHz input tick. Muting still consumes the PCM frame.
+  // Feed every result, including silence, through the continuous audio stream.
+  OutputFrame Clock(bool dspMuted = false);
 
 private:
   // Each file has a fixed cache. Neither file size nor seek distance changes
@@ -64,14 +63,11 @@ private:
   struct ResumePoint {
     bool valid = false;
     uint16_t track = 0;
-    uint64_t nextFrame = 0;
-    StereoSample sample{};
-    uint32_t ticksLeft = 0;
-    uint32_t outputRate = 0;
+    uint32_t offset = 0;
   };
 
   void SelectTrack();
-  bool ReadFrame();
+  void OpenAudio();
 
   static constexpr uint8_t AudioError = 0x08;
   static constexpr uint8_t Playing = 0x10;
@@ -82,16 +78,12 @@ private:
   std::filesystem::path basePath_;
   uint32_t dataSeek_ = 0;
   uint64_t dataOffset_ = 0;
-  uint16_t trackSeek_ = 0;
   uint16_t track_ = 0;
   uint8_t status_ = 0;
   uint8_t volume_ = 0;
-  uint64_t frameCount_ = 0;
-  uint64_t nextFrame_ = 0;
-  uint64_t loopFrame_ = 0;
-  StereoSample sample_{};
-  uint32_t ticksLeft_ = 0;
-  uint32_t outputRate_ = 0;
+  uint64_t audioPosition_ = 0;
+  uint32_t playOffset_ = 0;
+  uint32_t loopOffset_ = 0;
   ResumePoint resume_{};
 };
 

@@ -190,6 +190,42 @@ void VramGateAndPrefetch() {
   VramAddress(*ppu, 0x9234);
   Check(VramWord(*ppu) == 0xbeef, "Forced blank permits VRAM reads through the physical mirror");
 }
+void HardwareProfiles() {
+  constexpr std::array<unsigned, 4> mapped{0x9234, 0x92a1, 0x93a0, 0x91a4};
+  for (uint8_t revision : {1, 2, 3})
+    for (uint32_t bytes : {65536u, 131072u}) {
+      auto ppu = std::make_unique<Ppu>(Ppu::Config{revision, bytes});
+      Check((ppu->ReadIO(0x213f, 0) & 15) == revision,
+            "The selected PPU2 revision appears in its status register");
+      for (unsigned mapping = 0; mapping < mapped.size(); ++mapping) {
+        ppu->Reset();
+        ppu->WriteIO(0x2115, uint8_t(0x80 | (mapping << 2)));
+        VramAddress(*ppu, 0x9234);
+        ppu->WriteIO(0x2118, 0xa5);
+        ppu->WriteIO(0x2119, 0x5a);
+        const unsigned physical = mapped[mapping] & (bytes / 2 - 1);
+        Check(ppu->VramData()[physical] == 0x5aa5,
+              "All VRAM translation modes preserve the configured upper address bit");
+        VramAddress(*ppu, 0x9234);
+        Check(VramWord(*ppu) == 0x5aa5, "VRAM prefetch reads the same translated physical bank");
+      }
+      ppu->Reset();
+      ppu->WriteIO(0x2115, 0x80);
+      VramAddress(*ppu, 0);
+      ppu->WriteIO(0x2118, 0x34);
+      ppu->WriteIO(0x2119, 0x12);
+      VramAddress(*ppu, 0x8000);
+      ppu->WriteIO(0x2118, 0x78);
+      ppu->WriteIO(0x2119, 0x56);
+      Check(ppu->VramData()[0] == (bytes == 65536 ? 0x5678 : 0x1234) &&
+                ppu->VramData()[0x8000] == (bytes == 65536 ? 0 : 0x5678),
+            "The two VRAM banks alias at 64 KiB and remain separate at 128 KiB");
+      ppu->Reset(true);
+      Check((ppu->ReadIO(0x213f, 0) & 15) == revision &&
+                ppu->VramData()[0] == (bytes == 65536 ? 0x5678 : 0x1234),
+            "Warm reset retains the video hardware profile and memory mapping");
+    }
+}
 } // namespace
 int main() {
   unsigned failures = 0;
@@ -209,6 +245,7 @@ int main() {
   run("WindowPaletteReads", WindowPaletteReads);
   run("ObjectPaletteReads", ObjectPaletteReads);
   run("VramGateAndPrefetch", VramGateAndPrefetch);
+  run("HardwareProfiles", HardwareProfiles);
   if (!failures)
     std::puts("PPU memory port tests passed");
   return failures ? 1 : 0;

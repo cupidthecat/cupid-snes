@@ -91,12 +91,13 @@ bool Msu1::Open(const std::filesystem::path &romPath, std::string *error) {
     basePath_.clear();
     return false;
   }
+  Reset();
   return true;
 }
 
 void Msu1::Close() {
-  Reset();
   data_.Close();
+  Reset();
   basePath_.clear();
 }
 
@@ -104,17 +105,15 @@ void Msu1::Reset() {
   pcm_.Close();
   dataSeek_ = 0;
   dataOffset_ = 0;
-  trackSeek_ = 0;
   track_ = 0;
   status_ = 0;
   volume_ = 0;
-  frameCount_ = 0;
-  nextFrame_ = 0;
-  loopFrame_ = 0;
-  sample_ = {};
-  ticksLeft_ = 0;
-  outputRate_ = 0;
+  audioPosition_ = 0;
+  playOffset_ = 0;
+  loopOffset_ = 0;
   resume_ = {};
+  if (IsOpen())
+    OpenAudio();
 }
 
 uint8_t Msu1::Read(uint32_t address, uint8_t openBus) {
@@ -146,115 +145,79 @@ void Msu1::Write(uint32_t address, uint8_t value) {
     return;
   }
   if (port == 4) {
-    trackSeek_ = static_cast<uint16_t>((trackSeek_ & 0xff00) | value);
+    track_ = static_cast<uint16_t>((track_ & 0xff00) | value);
   } else if (port == 5) {
-    trackSeek_ = static_cast<uint16_t>((trackSeek_ & 0x00ff) | (uint16_t{value} << 8));
+    track_ = static_cast<uint16_t>((track_ & 0x00ff) | (uint16_t{value} << 8));
     SelectTrack();
   } else if (port == 6) {
     volume_ = value;
   } else if ((status_ & AudioError) == 0) {
     status_ = static_cast<uint8_t>((status_ & ~(Playing | Repeating)) | ((value & 3) << 4));
-    if ((value & 5) == 4 && pcm_.IsOpen()) {
-      resume_ = {true, track_, nextFrame_, sample_, ticksLeft_, outputRate_};
-    }
+    if ((value & 5) == 4)
+      resume_ = {true, track_, playOffset_};
   }
 }
 
 void Msu1::SelectTrack() {
-  track_ = trackSeek_;
-  status_ = static_cast<uint8_t>((status_ & ~(Playing | Repeating)) | AudioError);
-  pcm_.Close();
-  frameCount_ = 0;
-  nextFrame_ = 0;
-  loopFrame_ = 0;
-  sample_ = {};
-  ticksLeft_ = 0;
+  status_ &= static_cast<uint8_t>(~(Playing | Repeating));
+  playOffset_ = 8;
+  if (resume_.valid && resume_.track == track_) {
+    playOffset_ = resume_.offset;
+    resume_ = {};
+  }
+  OpenAudio();
+}
 
+void Msu1::OpenAudio() {
+  pcm_.Close();
+  status_ |= AudioError;
   auto path = basePath_;
   path += "-" + std::to_string(track_) + ".pcm";
   if (!pcm_.Open(path))
     return;
   std::array<uint8_t, 8> header{};
   if (!pcm_.Read(0, header) || header[0] != 'M' || header[1] != 'S' || header[2] != 'U' ||
-      header[3] != '1' || pcm_.Size() < 12 || (pcm_.Size() - 8) % 4 != 0) {
+      header[3] != '1') {
     pcm_.Close();
     return;
   }
-  frameCount_ = (pcm_.Size() - 8) / 4;
-  loopFrame_ = Little32(header.data() + 4);
-  if (loopFrame_ >= frameCount_)
-    loopFrame_ = 0;
+  loopOffset_ = 8u + Little32(header.data() + 4) * 4u;
+  if (loopOffset_ > pcm_.Size())
+    loopOffset_ = 8;
+  audioPosition_ = playOffset_;
   status_ &= static_cast<uint8_t>(~AudioError);
-
-  if (resume_.valid && resume_.track == track_) {
-    if (resume_.nextFrame <= frameCount_) {
-      nextFrame_ = resume_.nextFrame;
-      sample_ = resume_.sample;
-      ticksLeft_ = resume_.ticksLeft;
-      outputRate_ = resume_.outputRate;
-    }
-    resume_.valid = false;
-  }
 }
 
-bool Msu1::ReadFrame() {
-  if (nextFrame_ >= frameCount_) {
-    if ((status_ & Repeating) != 0) {
-      nextFrame_ = loopFrame_;
+Msu1::OutputFrame Msu1::Clock(bool dspMuted) {
+  if (!IsOpen() || !(status_ & Playing))
+    return {};
+  if (!pcm_.IsOpen()) {
+    status_ &= static_cast<uint8_t>(~Playing);
+    return {};
+  }
+  if (audioPosition_ >= pcm_.Size()) {
+    if (status_ & Repeating) {
+      playOffset_ = loopOffset_;
     } else {
-      status_ &= static_cast<uint8_t>(~(Playing | Repeating));
-      nextFrame_ = 0;
-      sample_ = {};
-      return false;
+      playOffset_ = 8;
+      status_ &= static_cast<uint8_t>(~Playing);
     }
+    audioPosition_ = playOffset_;
+    return {}; // Seeking consumes a silent input tick.
   }
   std::array<uint8_t, 4> bytes{};
-  if (!pcm_.Read(8 + nextFrame_ * 4, bytes)) {
-    status_ = static_cast<uint8_t>((status_ & ~(Playing | Repeating)) | AudioError);
-    sample_ = {};
-    pcm_.Close();
-    return false;
-  }
-  sample_ = {SignedLittle16(bytes.data()), SignedLittle16(bytes.data() + 2)};
-  ++nextFrame_;
-  return true;
-}
-
-Msu1::StereoSample Msu1::NextSample(uint32_t outputRate) {
-  if (outputRate == 0 || !IsOpen())
+  const auto available =
+      static_cast<size_t>(std::min<uint64_t>(bytes.size(), pcm_.Size() - audioPosition_));
+  pcm_.Read(audioPosition_, std::span(bytes).first(available));
+  audioPosition_ += available;
+  playOffset_ += 4;
+  if (dspMuted)
     return {};
-  if ((status_ & Playing) == 0 || !pcm_.IsOpen()) {
-    status_ &= static_cast<uint8_t>(~(Playing | Repeating));
-    return {};
-  }
-  if (outputRate_ != outputRate) {
-    if (ticksLeft_ != 0 && outputRate_ != 0) {
-      ticksLeft_ = static_cast<uint32_t>((uint64_t{ticksLeft_} * outputRate + outputRate_ - 1) /
-                                         outputRate_);
-    }
-    outputRate_ = outputRate;
-  }
-
-  // A PCM frame lasts outputRate integer ticks, and each output frame lasts
-  // 44,100 ticks. Integrate their overlaps without reading a frame ahead.
-  // Even at an output rate of one Hz, this loop takes at most 44,101 steps.
-  uint32_t remaining = SampleRate;
-  std::array<int64_t, 2> sum{};
-  while (remaining != 0) {
-    if (ticksLeft_ == 0) {
-      if (!ReadFrame())
-        break;
-      ticksLeft_ = outputRate;
-    }
-    const auto covered = std::min(remaining, ticksLeft_);
-    sum[0] += int64_t{sample_[0]} * covered;
-    sum[1] += int64_t{sample_[1]} * covered;
-    ticksLeft_ -= covered;
-    remaining -= covered;
-  }
-  constexpr int64_t divisor = int64_t{SampleRate} * 255;
-  return {static_cast<int16_t>(sum[0] * volume_ / divisor),
-          static_cast<int16_t>(sum[1] * volume_ / divisor)};
+  OutputFrame result{};
+  for (unsigned side = 0; side < 2; ++side)
+    result[side] =
+        float(double(SignedLittle16(bytes.data() + side * 2)) / 32768.0 * volume_ / 255.0);
+  return result;
 }
 
 } // namespace snes::core

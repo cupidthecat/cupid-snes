@@ -1,5 +1,6 @@
+#include "ConsoleConfig.hpp"
+#include "audio/SoundClockExpectations.hpp"
 #include "audio/SoundUploadFixture.hpp"
-#include "snes/core/Emulator.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/Spc700.hpp"
 
@@ -28,7 +29,7 @@ std::unique_ptr<Emulator> Machine(bool pal) {
   rom[0x7fdc] = rom[0x7fdd] = 0xff;
   rom[0x7ffd] = 0x80;
   rom[0] = 0xdb;
-  auto machine = std::make_unique<Emulator>();
+  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
   std::string error;
   Check(machine->LoadCartridge(rom, &error), "The sound-clock fixture loads");
   return machine;
@@ -46,11 +47,12 @@ void PortSamplingEdges() {
           smp.Power();
           smp.IoState().iplRomEnable = false;
           smp.r.pc = 0x200;
-          // Four NOPs occupy eight complete cycles during console reset.
+          // Advance four NOPs explicitly before selecting the stretched I/O divider.
           smp.Ram()[0x204] = 0xe4;
           smp.Ram()[0x205] = uint8_t(0xf4 + port); // MOV A,port
           smp.PortWrite(port, 0x11);
           cpu.Step();
+          smp.RunUntilHardwareClock(16);
           smp.IoState().internalWaitStates = uint8_t(setting);
           constexpr uint64_t hardwareHz = Smp::kHardwareClockFrequency;
           const uint64_t sampleClock = 20 + waits[setting] / 2;
@@ -76,38 +78,56 @@ void PortSamplingEdges() {
   }
 }
 
+void CommunicationHandoffs() {
+  constexpr std::array<unsigned, 4> waits{2, 4, 10, 20};
+  for (unsigned setting = 0; setting < waits.size(); ++setting) {
+    Smp smp;
+    smp.IoState().iplRomEnable = false;
+    smp.IoState().internalWaitStates = uint8_t(setting);
+    smp.r.pc = 0x200;
+    const std::array<uint8_t, 6> program{0xe4, 0xf4, 0xc4, 0xf5, 0x2f, 0xfa};
+    std::copy(program.begin(), program.end(), smp.Ram() + 0x200);
+    smp.PortWrite(0, 0x11);
+    const auto inputClock = 4 + waits[setting] / 2;
+    const auto dummyClock = 8 + waits[setting] + waits[setting] / 2;
+    const auto outputClock = 8 + 3 * waits[setting];
+    const auto synchronize = [&](uint64_t clock) {
+      smp.SynchronizeCpu(clock, uint32_t(Smp::kHardwareClockFrequency));
+    };
+    synchronize(1);
+    Check(smp.HardwareClockCount() == inputClock && smp.r.a == 0,
+          "The sound processor yields before sampling a stretched input port");
+    smp.PortWrite(0, 0x77);
+    synchronize(inputClock + 1);
+    Check(smp.HardwareClockCount() == dummyClock && smp.r.a == 0x77 && smp.CpuOutput(1) == 0,
+          "The resumed input sees the console write before the next communication handoff");
+    synchronize(dummyClock + 1);
+    Check(smp.HardwareClockCount() == outputClock && smp.CpuOutput(1) == 0,
+          "A completed output write yields before changing the console-visible latch");
+    synchronize(outputClock + 1);
+    Check(smp.CpuOutput(1) == 0x77,
+          "The next console handoff commits the pending output without another bus clock");
+  }
+}
+
 void HardwareClockPhase() {
-  for (bool pal : {false, true}) {
-    auto machine = Machine(pal);
-    auto &smp = machine->GetSmp();
-    auto &cpu = *machine->GetCpu();
-    smp.Power();
+  for (uint32_t rate : {32000u, 32040u}) {
+    Smp smp;
+    Dsp dsp;
+    smp.SetDsp(dsp);
+    smp.SetSampleRate(rate);
     smp.IoState().iplRomEnable = false;
     smp.r.pc = 0x200; // NOPs in zero-initialized sound RAM.
-    cpu.Step();
+    Check(smp.SampleRate() == rate && smp.HardwareClockFrequency() == uint64_t(rate) * 64,
+          "The selected oscillator controls hardware-clock conversion");
     for (unsigned interval = 0; interval < 256; ++interval) {
-      switch (interval & 3) {
-      case 0:
-        cpu.idle();
-        break;
-      case 1:
-        cpu.read(0x7e0000);
-        break;
-      case 2:
-        cpu.write(0x2100, 0x80);
-        break;
-      case 3:
-        cpu.read(0x4016);
-        break;
-      }
-      const auto elapsed = machine->GetTiming().MasterClocksElapsed();
-      const auto clocks =
-          elapsed * Smp::kHardwareClockFrequency / machine->GetTiming().MasterClockHz();
+      const uint64_t clocks = 1 + 7 * interval;
+      smp.RunUntilHardwareClock(clocks);
       const auto timerPhase = smp.GetTimer0().stage0 + 128u * smp.GetTimer0().stage1;
       Check(timerPhase == clocks % 256,
-            "Sound timer dividers retain every hardware-clock edge between CPU phases");
-      Check(smp.CycleCount() == clocks / 2 && machine->GetDsp().Phase() == clocks / 2 % 32,
-            "Complete-cycle accounting and DSP cadence follow the hardware clock");
+            "Timer dividers retain every requested hardware-clock edge");
+      Check(smp.CycleCount() == clocks / 2 && dsp.Phase() == ((clocks + 1) / 2) % 32,
+            "Processor cycles and the first-edge DSP phase retain separate half-cycle accounting");
     }
   }
 }
@@ -164,8 +184,7 @@ void ConsoleAudioRate() {
   struct Audio final : IAudioOutput {
     uint64_t frames = 0;
     void Submit(const AudioBuffer &buffer) override {
-      Check(buffer.sampleRate == 32'040,
-            "Audio buffers report the oscillator's native sample rate");
+      Check(buffer.sampleRate == 32'040, "Audio buffers report the fixed stream output rate");
       frames += buffer.interleavedStereo.size() / 2;
     }
   };
@@ -175,11 +194,10 @@ void ConsoleAudioRate() {
     machine->AttachAudioOutput(&audio);
     for (unsigned frame = 0; frame < 6; ++frame) {
       machine->StepFrame();
-      const auto clocks =
-          machine->CurrentMasterCycles() * 2'050'560 / machine->GetTiming().MasterClockHz();
-      Check(machine->GetSmp().HardwareClockCount() == clocks &&
-                audio.frames == (clocks / 2 + 4) / 32,
-            "Both video regions generate samples at the native oscillator rate without drift");
+      const auto clocks = machine->GetSmp().HardwareClockCount();
+      Check(audio.frames > 0 && audio.frames == sound_clock_test::UnityStreamFrames(clocks) &&
+                machine->GetDsp().Phase() == sound_clock_test::DspClocks(clocks) % 32,
+            "Both video regions retain every generated frame and the DSP half-cycle phase");
     }
   }
 }
@@ -191,7 +209,7 @@ void UploadedPortEdges() {
     const auto &edges = pal ? palEdges : ntscEdges;
     for (unsigned setting = 0; setting < 4; ++setting) {
       for (unsigned delay = edges[setting] - 1; delay <= edges[setting] + 1; ++delay) {
-        auto machine = std::make_unique<Emulator>();
+        auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
         std::string error;
         Check(machine->LoadCartridge(sound_upload_test::PortProgram(setting, delay, pal), &error),
               "The console-to-sound upload fixture loads");
@@ -336,9 +354,9 @@ void ControlTransitions() {
 
 int main() {
   unsigned failures = 0;
-  for (auto test :
-       {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset, ConsoleAudioRate,
-        UploadedPortEdges, HaltedBusSequence, HaltedWaitClasses, ControlTransitions}) {
+  for (auto test : {PortSamplingEdges, HardwareClockPhase, HalfCycleDeadlinesAndReset,
+                    ConsoleAudioRate, UploadedPortEdges, HaltedBusSequence, HaltedWaitClasses,
+                    ControlTransitions, CommunicationHandoffs}) {
     try {
       test();
     } catch (const std::exception &error) {
@@ -350,4 +368,5 @@ int main() {
     return 1;
   std::puts(
       "Sound hardware-clock edges, port holds, halted cycles, and CONTROL transitions passed");
+  return 0;
 }

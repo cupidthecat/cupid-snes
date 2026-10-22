@@ -44,9 +44,7 @@ SdlVideoOutput::SdlVideoOutput(const Config &config)
     throw std::runtime_error(std::string("SDL_CreateWindowAndRenderer failed: ") + SDL_GetError());
   }
 
-  if (config.vsync) {
-    SDL_SetRenderVSync(renderer_, 1);
-  }
+  SDL_SetRenderVSync(renderer_, config.vsync ? 1 : 0);
 
   // Clear to black initially
   SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);

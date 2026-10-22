@@ -7,6 +7,7 @@
 // Register state controls memory access and the rendering pipeline.
 
 #include "snes/core/Ppu.hpp"
+#include "snes/core/PowerOnState.hpp"
 #include "snes/core/PpuBackground.hpp"
 #include "snes/core/PpuObject.hpp"
 #include <algorithm>
@@ -31,11 +32,15 @@ bool PpuDebugEnabled() {
 } // namespace
 
 // Constructor / Reset
-Ppu::Ppu()
-    : background_(std::make_unique<PpuBackground>()), object_(std::make_unique<PpuObject>()),
-      vram_(std::make_unique<uint16_t[]>(VramWords)),
+Ppu::Ppu() : Ppu(Config{}) {}
+
+Ppu::Ppu(Config config)
+    : config_(config), background_(std::make_unique<PpuBackground>()),
+      object_(std::make_unique<PpuObject>()), vram_(std::make_unique<uint16_t[]>(VramStorageWords)),
       lines_(std::make_unique<Line[]>(MaxVisibleLines)),
-      output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)) {
+      output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)),
+      progressiveOutput_(std::make_unique<uint16_t[]>(OutputWidth * OutputHeight)),
+      displayFeedback_(std::make_unique<std::array<uint16_t, 8192>>()) {
   BuildLightTable();
   Reset();
 }
@@ -43,27 +48,38 @@ Ppu::Ppu()
 Ppu::~Ppu() = default;
 
 void Ppu::Reset(bool retainVram) {
+  PowerOnState state(EntropyMode::None, 0);
+  Power(state, retainVram);
+}
+
+void Ppu::Power(PowerOnState &state, bool retainVram) {
+  Power(state, config_, retainVram);
+}
+
+void Ppu::Power(PowerOnState &state, Config config, bool retainVram) {
+  config_ = config;
+  config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
+  config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
+  config_.renderCycle = std::clamp<uint16_t>(config_.renderCycle, 2, 1360);
   background_->Reset();
   object_->Reset();
   pipelineClock_ = 0;
-  // Clear memory
-  if (!retainVram)
-    std::memset(vram_.get(), 0, VramWords * sizeof(uint16_t));
-  oam_.fill(0);
-  cgram_.fill(0);
-
-  // Reset IO to power-on defaults
-  io_ = IO{};
-  latch_ = Latch{};
+  pipelineMath_ = {};
+  InitializePowerOnState(state, retainVram);
   object_->BeginLine(0, io_.obj);
 
   // Clear rendering state
   lineStart_ = 0;
   lineCount_ = 0;
+  pendingScanline_ = 0;
+  scanlineHires_ = false;
   for (auto &events : rasterEvents_)
     events.clear();
   mosaicCounterLine_ = 0xffff;
   std::memset(output_.get(), 0, static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
+  if (!ScanlineModel())
+    std::fill_n(progressiveOutput_.get(), OutputWidth * OutputHeight, 0);
+  LatchProgressiveDisplay();
 
   currentLine_ = 0;
   currentHClock_ = 0;
@@ -85,11 +101,13 @@ void Ppu::FrameBegin() {
     SetCurrentLine(0);
   // Toggle interlace field each frame
   fieldId_ = !fieldId_;
+  LatchProgressiveDisplay();
   frameOverscan_ = io_.overscan;
   displayInterlace_ = io_.interlace;
   background_->BeginLine(0, fieldId_, io_);
   object_->BeginLine(0, io_.obj);
   pipelineClock_ = 0;
+  pipelineMath_ = {};
   latch_.cgramAddress = 0;
 
   io_.obj.rangeOver = false;
@@ -98,9 +116,23 @@ void Ppu::FrameBegin() {
   // Reset scanline cache for new frame
   lineStart_ = 0;
   lineCount_ = 0;
+  pendingScanline_ = 0;
+  scanlineHires_ = false;
   for (auto &events : rasterEvents_)
     events.clear();
   mosaicCounterLine_ = 0xffff;
+}
+
+void Ppu::LatchProgressiveDisplay() {
+  if (ScanlineModel())
+    return;
+  if (feedbackOverscan_ && !io_.overscan) {
+    std::fill_n(displayFeedback_->begin(), 1024, 0);
+    for (unsigned row = 1; row < 240; ++row)
+      if (row < 8 || row > 231)
+        std::fill_n(progressiveOutput_.get() + row * 1024, 1024, 0);
+  }
+  feedbackOverscan_ = io_.overscan;
 }
 
 void Ppu::AdvanceMosaicCounter(uint16_t line) noexcept {
@@ -124,19 +156,29 @@ void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
     currentLine_ = vcounter;
     currentHClock_ = 0;
     pipelineClock_ = 0;
-    AdvanceMosaicCounter(vcounter);
+    pipelineMath_ = {};
+    if (!ScanlineModel())
+      AdvanceMosaicCounter(vcounter);
     background_->BeginLine(vcounter, fieldId_, io_);
     object_->BeginLine(vcounter, io_.obj);
     latch_.cgramAddress = 0;
     if (vcounter == VDisp() && !io_.displayDisable)
       OamAddressReset();
-    if (vcounter > 0 && vcounter < MaxVisibleLines)
+    if (vcounter > 0 && vcounter < MaxVisibleLines) {
       lines_[vcounter].sampledHires = false;
+    }
   }
-  AdvanceMosaicCounter(vcounter);
+  if (ScanlineModel()) {
+    if (vcounter > 0 && vcounter < VDisp())
+      scanlineHires_ |= io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
+  } else {
+    AdvanceMosaicCounter(vcounter);
+  }
 }
 
 void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO &before) {
+  if (ScanlineModel())
+    return;
   if (currentLine_ == 0 || currentLine_ >= VDisp())
     return;
   if (currentHClock_ < 58 || currentHClock_ >= 1082)
@@ -273,7 +315,16 @@ void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
 void Ppu::ScanlineBegin(uint16_t line) {
   if (currentLine_ != line)
     SetCurrentLine(line);
+  if (ScanlineModel()) {
+    // Writes at the sampling clock complete before the paused video work resumes.
+    pendingScanline_ = line;
+    return;
+  }
   SynchronizePipeline(512);
+  CacheScanline(line);
+}
+
+void Ppu::CacheScanline(uint16_t line) {
   AdvanceMosaicCounter(line);
 
   // Retain screen registers for final composition.
@@ -282,6 +333,8 @@ void Ppu::ScanlineBegin(uint16_t line) {
     cache.y = line;
     cache.fieldID = fieldId_;
     cache.io = io_;
+    if (ScanlineModel())
+      cache.palette = cgram_;
 
     if (line >= VDisp()) {
       cache.io.displayDisable = true;
@@ -307,16 +360,18 @@ uint16_t Ppu::TranslatedVramAddress() const {
   uint16_t address = io_.vramAddress;
   switch (io_.vramMapping) {
   case 0:
-    return address & 0x7FFF;
+    break;
   case 1:
-    return (address & 0x7F00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
+    address = (address & 0xFF00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
+    break;
   case 2:
-    return (address & 0x7E00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
+    address = (address & 0xFE00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
+    break;
   case 3:
-    return (address & 0x7C00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
-  default:
-    return address & 0x7FFF;
+    address = (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
+    break;
   }
+  return address & (ScanlineModel() ? 0x7fff : config_.vramBytes / 2 - 1);
 }
 
 uint16_t Ppu::ReadVram() {
@@ -332,6 +387,8 @@ void Ppu::WriteVram(bool highByte, uint8_t data) {
   if (!io_.displayDisable && currentLine_ < VDisp()) {
     return;
   }
+  if (ScanlineModel())
+    FlushCachedLines();
   uint16_t addr = TranslatedVramAddress();
   if (!highByte) {
     vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
@@ -354,10 +411,12 @@ uint8_t Ppu::ReadOam(uint16_t address) {
 }
 
 void Ppu::WriteOam(uint16_t address, uint8_t data) {
+  if (ScanlineModel())
+    FlushCachedLines();
   address &= 0x03FF;
   // The object pipeline owns the OAM address during active display.
   if (!io_.displayDisable && currentLine_ < VDisp()) {
-    address = latch_.oamAddress & 0x03FF;
+    address = ScanlineModel() ? 0x0218 : latch_.oamAddress & 0x03FF;
   }
   if (address & 0x200)
     address &= 0x21F;
@@ -535,7 +594,8 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
   // $213E - STAT77 (PPU1 status: version + OBJ overflow flags)
   case 0x213E: {
-    latch_.ppu1.mdr = (latch_.ppu1.mdr & 0x10) | 0x01; // bit 4 is open bus
+    // Progressive status retains open-bus bit 4; scanline status clears it.
+    latch_.ppu1.mdr = (ScanlineModel() ? 0 : latch_.ppu1.mdr & 0x10) | 0x01;
     latch_.ppu1.mdr |= (io_.obj.rangeOver ? 1 : 0) << 6;
     latch_.ppu1.mdr |= (io_.obj.timeOver ? 1 : 0) << 7;
     return latch_.ppu1.mdr;
@@ -549,7 +609,7 @@ uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
 
     // Preserve bit 5 (open bus)
     latch_.ppu2.mdr &= (1 << 5);
-    latch_.ppu2.mdr |= 0x03; // PPU2 version = 3
+    latch_.ppu2.mdr |= ScanlineModel() ? 3 : config_.revision2;
     latch_.ppu2.mdr |= (isPal_ ? 1 : 0) << 4;
     // Bit 6: counter latch flag
     // When PIO bit 7 is clear, bit 6 always reads high.
@@ -593,7 +653,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2101 - OBSEL (object size + base address)
   case 0x2101: {
     uint8_t oldBaseSize = io_.obj.baseSize;
-    io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0x6000);
+    io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0xE000);
     io_.obj.nameselect = (data >> 3) & 3;
     io_.obj.baseSize = (data >> 5) & 7;
     if (PpuDebugEnabled() && oldBaseSize != io_.obj.baseSize) {
@@ -673,7 +733,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2107 - BG1SC (BG1 tilemap address + size)
   case 0x2107: {
     io_.bg1.screenSize = data & 3;
-    io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG1SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg1.screenSize, io_.bg1.screenAddress);
@@ -684,7 +744,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2108 - BG2SC
   case 0x2108: {
     io_.bg2.screenSize = data & 3;
-    io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG2SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg2.screenSize, io_.bg2.screenAddress);
@@ -695,7 +755,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $2109 - BG3SC
   case 0x2109: {
     io_.bg3.screenSize = data & 3;
-    io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG3SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg3.screenSize, io_.bg3.screenAddress);
@@ -706,7 +766,7 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
   // $210A - BG4SC
   case 0x210A: {
     io_.bg4.screenSize = data & 3;
-    io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0x7C00);
+    io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG4SC size=%u addr=$%04X\n", currentLine_,
                    io_.bg4.screenSize, io_.bg4.screenAddress);
@@ -716,8 +776,8 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
   // $210B - BG12NBA (BG1/BG2 character data address)
   case 0x210B: {
-    io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
-    io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0x7000);
+    io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+    io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG12NBA bg1=$%04X bg2=$%04X\n", currentLine_,
                    io_.bg1.tiledataAddress, io_.bg2.tiledataAddress);
@@ -727,8 +787,8 @@ void Ppu::WriteIO(uint32_t addr, uint8_t data) {
 
   // $210C - BG34NBA (BG3/BG4 character data address)
   case 0x210C: {
-    io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0x7000);
-    io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0x7000);
+    io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+    io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
     if (PpuDebugEnabled()) {
       std::fprintf(stderr, "[PPU-DBG l=%u] BG34NBA bg3=$%04X bg4=$%04X\n", currentLine_,
                    io_.bg3.tiledataAddress, io_.bg4.tiledataAddress);

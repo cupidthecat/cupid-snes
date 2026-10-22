@@ -29,9 +29,14 @@ public:
   void WriteCpu(uint32_t address, uint8_t value);
   // The console address latch determines contention with cartridge memory.
   // After the first Advance, advancement, Reset and destruction use that thread.
-  void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false);
+  // Deferred calls without contention retain work until shared access or a handoff.
+  void Advance(uint32_t masterClocks, uint32_t cpuAddress = 0, bool cpuRefreshing = false,
+               bool synchronize = true);
   bool CpuIrqPending() const noexcept;
   void SetPal(bool enabled) noexcept;
+  void SetBusContention(bool enabled) noexcept {
+    busContention_ = enabled;
+  }
   // Populated memory slots supply ROM pages 4-7. An empty slot retains
   // program-ROM mirroring. Reset() preserves the attached storage.
   void SetExpansionRom(std::span<const uint8_t> bytes, const BsMemory *device = nullptr) noexcept {
@@ -54,6 +59,7 @@ public:
   }
 
 private:
+  void RunPending();
   enum class Side { Cpu, Sa1 };
   static constexpr uint64_t AccumulatorMask = (uint64_t{1} << 40) - 1;
 
@@ -72,6 +78,7 @@ private:
   uint64_t executedClocks_ = 0;
   uint32_t cpuAddress_ = 0;
   bool cpuRefreshing_ = false;
+  bool busContention_ = true;
   uint16_t hClocks_ = 0;
   uint16_t vCounter_ = 0;
   uint16_t latchedH_ = 0;
@@ -121,8 +128,8 @@ private:
   uint16_t RegisterWord(uint8_t offset) const noexcept;
   uint32_t RegisterAddress(uint8_t offset) const noexcept;
   void StoreAddress(uint8_t offset, uint32_t address) noexcept;
-  bool RomOffset(uint32_t address, uint32_t &offset) const noexcept;
   uint8_t ReadRom(uint32_t offset, uint8_t openBus) const;
+  uint8_t ReadRomPort(uint32_t address, uint8_t openBus) const;
   static size_t Mirror(size_t address, size_t size) noexcept;
   uint8_t ReadBwram(uint32_t offset, uint8_t openBus = 0) const;
   void WriteBwram(uint32_t offset, uint8_t value, Side side, bool dma = false);

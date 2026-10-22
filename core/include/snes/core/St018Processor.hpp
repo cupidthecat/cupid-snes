@@ -7,6 +7,7 @@
 #include <span>
 
 namespace snes::core {
+class PowerOnState;
 namespace detail {
 class ExecutionContext;
 }
@@ -16,10 +17,14 @@ public:
   explicit St018Processor(std::span<const uint8_t> firmware);
   ~St018Processor();
   void Reset();
+  void Power(PowerOnState &state);
   void SetPal(bool pal);
-  void Advance(uint32_t masterClocks);
+  void Advance(uint32_t masterClocks, bool synchronize = false);
   uint8_t Read(uint32_t address);
   void Write(uint32_t address, uint8_t value);
+  std::span<const uint8_t> RamData() const noexcept {
+    return ram_;
+  }
   static bool Selects(uint32_t address) noexcept {
     return (address & 0x40ff00) == 0x003800;
   }

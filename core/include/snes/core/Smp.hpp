@@ -19,6 +19,7 @@
 #include "snes/core/Spc700.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 
 namespace snes::core {
 
@@ -26,6 +27,8 @@ class Dsp; // Forward declaration
 
 class Smp : public Spc700 {
 public:
+  enum class DspMode { PerCycle, Batch32 };
+
   // Timer - 4-stage pipeline.
   //
   // Template parameter Frequency: number of SMP clocks per stage0 overflow.
@@ -67,6 +70,9 @@ public:
   // portWrite: CPU writes $2140+n → sets data for SMP to read from $F4+n
   uint8_t PortRead(uint8_t port) const;
   void PortWrite(uint8_t port, uint8_t data);
+  void SetCpuSynchronizationCallback(std::function<void()> callback) {
+    synchronizeCpu_ = std::move(callback);
+  }
 
   // Timer stepping - call after each SMP bus cycle to advance timers
   // 'clocks' is the number of ideal timer ticks for this bus operation.
@@ -77,11 +83,31 @@ public:
   void SetDsp(Dsp &dsp) {
     dsp_ = &dsp;
   }
+  // Select before power or reset. Batched execution retains its clock lead
+  // across bus operations and synchronizes at memory-access boundaries.
+  void SetDspMode(DspMode mode) noexcept {
+    dspMode_ = mode;
+  }
+  DspMode GetDspMode() const noexcept {
+    return dspMode_;
+  }
 
   // DSP pipeline clocks and SMP hardware clocks share the audio oscillator.
   static constexpr uint64_t kClockFrequency = AudioTiming::DspClockRate;
   static constexpr uint64_t kHardwareClockFrequency = AudioTiming::SmpClockRate;
   static constexpr int kDspSampleInterval = AudioTiming::DspClocksPerSample;
+
+  // Select the audio oscillator before power or reset. DSP phase still uses
+  // 32 complete-cycle clocks per stereo frame.
+  void SetSampleRate(uint32_t rate) noexcept {
+    sampleRate_ = rate ? rate : AudioTiming::SampleRate;
+  }
+  uint32_t SampleRate() const noexcept {
+    return sampleRate_;
+  }
+  uint64_t HardwareClockFrequency() const noexcept {
+    return uint64_t(sampleRate_) * kDspSampleInterval * 2;
+  }
 
   // Batch execution - run SMP through exactly targetCycles.
   // Instructions may pause within stretched bus cycles at the deadline; Step()
@@ -91,6 +117,8 @@ public:
 
   // A bus cycle can pause at its midpoint to sample the CPU input ports.
   void RunUntilHardwareClock(uint64_t targetClocks);
+  // Resume through the next communication handoff after this console clock.
+  void SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency);
   uint64_t HardwareClockCount() const noexcept {
     return hardwareClocks_;
   }
@@ -175,14 +203,23 @@ private:
     uint8_t timerTicks = 0;
     uint8_t readData = 0;
     bool sampled = false;
+    bool deferred = false;
+    bool wroteRam = false;
   } busWait_{};
 
   uint64_t hardwareClocks_ = 0;
+  DspMode dspMode_ = DspMode::PerCycle;
+  int64_t dspClockBalance_ = 0;
+  uint32_t sampleRate_ = AudioTiming::SampleRate;
+  uint64_t synchronizationTarget_ = 0;
+  uint32_t synchronizationPhase_ = 0, synchronizationFrequency_ = 1;
+  bool synchronizingCpu_ = false, yieldedCpu_ = false;
+  std::function<void()> synchronizeCpu_;
+  int64_t CpuClockLead() const;
 
   bool ExecuteBusCycle(const PendingCycle &cycle) override;
   bool ClockBusCycle(const PendingCycle &cycle, BusWait &wait);
   uint8_t ReadBus(uint16_t address);
-  void WriteBus(uint16_t address, uint8_t data);
 
   // Internal I/O dispatch
   uint8_t readIO(uint16_t address);
@@ -209,7 +246,7 @@ private:
   std::array<uint8_t, 4> apuInput_{};  // written by CPU portWrite()
   std::array<uint8_t, 4> cpuOutput_{}; // written by SMP writeIO($F4-$F7)
 
-  // Each elapsed complete-cycle clock advances one DSP pipeline phase.
+  // Advance one DSP phase, including each phase within a scheduled batch.
   void tickDsp();
 
   // DSP pointer (set via SetDsp)
