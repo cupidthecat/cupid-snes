@@ -38,6 +38,9 @@ public:
   }
 
   void SetBindings(const InputBindings &bindings);
+  void AdvanceFrame() noexcept {
+    turboPhase_ = (turboPhase_ + 1) % (2 * unsigned(bindings_.turboFrequency));
+  }
   void SetEnabled(bool enabled) noexcept {
     if (enabled_ == enabled)
       return;
@@ -48,7 +51,8 @@ public:
     SDL_GetRelativeMouseState(nullptr, nullptr);
     mouseState_ = {};
     mouseFractionX_ = mouseFractionY_ = 0;
-    lastMouseFrame_ = lastGunFrame_ = lastDeviceFrame_ = uint64_t(-1);
+    lastMouseFrame_ = lastMotionFrame_ = lastDeviceFrame_ = uint64_t(-1);
+    lastGunFrame_.fill(uint64_t(-1));
   }
   void SetUiCapture(bool keyboard, bool pointer) noexcept {
     if (captureKeyboard_ == keyboard && capturePointer_ == pointer)
@@ -92,14 +96,24 @@ private:
   std::vector<SDL_Gamepad *> gamepads_{8};
   std::vector<std::string> gamepadKeys_{8};
   void RefreshGamepads(uint64_t frameIndex);
+  SDL_Gamepad *ResolveGamepad(const std::string &device, int automatic);
+  bool Pressed(const InputBinding &binding, SDL_Gamepad *pad, int threshold) const;
+  bool Pressed(const InputAlternatives &bindings, SDL_Gamepad *pad, int threshold) const;
+  bool MappedButton(const InputAlternatives &normal, const InputAlternatives &turbo,
+                    SDL_Gamepad *pad, int threshold) const;
+  float ReadAxis(const AxisAlternatives &bindings, SDL_Gamepad *pad, int threshold, uint64_t frame);
+  void SampleMotion(uint64_t frame);
   uint64_t lastDeviceFrame_ = uint64_t(-1);
+  unsigned turboPhase_ = 0;
+  std::array<float, 2> motion_{};
+  uint64_t lastMotionFrame_ = uint64_t(-1);
   float mouseFractionX_ = 0, mouseFractionY_ = 0;
   snes::core::MouseState mouseState_;
   uint64_t lastMouseFrame_ = uint64_t(-1);
   VideoViewport gunViewport_;
   bool gunFocused_ = false;
-  int secondGunX_ = 128, secondGunY_ = 112;
-  uint64_t lastGunFrame_ = uint64_t(-1);
+  std::array<std::array<float, 2>, 2> gunPosition_{{{128, 112}, {128, 112}}};
+  std::array<uint64_t, 2> lastGunFrame_{uint64_t(-1), uint64_t(-1)};
 };
 
 } // namespace snes::frontend

@@ -41,7 +41,7 @@ These files contain battery storage, clocks, and pack identity. They do not capt
 
 ## Preferences
 
-Open File > Preferences or press Ctrl+, to change video, audio, focus, keyboard bindings, paths, connected devices, and hotkeys. Apply saves and activates the changes. OK also closes the editor. Cancel or Escape discards changes made since the last Apply. Opening the editor pauses emulation; closing it restores the previous pause setting. A rejected change leaves the editor open with an error and retains the previous settings.
+Open File > Preferences or press Ctrl+, to change video, audio, focus, input bindings, paths, connected devices, and hotkeys. Apply saves and activates the changes. OK also closes the editor. Cancel or Escape discards changes made since the last Apply. Opening the editor pauses emulation; closing it restores the previous pause setting. A rejected change leaves the editor open with an error and retains the previous settings.
 
 Preferences use a UTF-8 `preferences.cfg` in the SDL preference directory, normally `%APPDATA%\Cupid\Cupid-SNES` on Windows and `$XDG_DATA_HOME/Cupid/Cupid-SNES` on Linux (`~/.local/share` when unset). Use `--preferences=<file>` to choose a separate configuration for portable setups or different controller layouts. You can also edit the file while the application is closed.
 
@@ -70,7 +70,17 @@ Focus mode 0 pauses while the window is unfocused, hidden, or minimized. Mode 1 
 
 The Input page selects one of eight players and one of four alternative bindings per console button. Click a binding, then press a key, gamepad button, signed axis, or mouse button. Escape cancels capture. Clear removes that alternative; Restore player defaults resets the selected player. The Gamepad selector chooses an automatic player slot, a specific connected device, or Disabled. Refresh updates the device list. An unavailable saved selection stays released until it reconnects. Keyboard and mouse alternatives still work when the gamepad is disabled. Only player one has keyboard bindings by default.
 
+Check Turbo to edit separate rapid-fire controls for buttons other than the directional pad. Holding a turbo control takes precedence over the button's normal bindings. The General page's Turbo period sets the number of fields released, then the number held, from 1 through 8 (default 4). All turbo controls share this cycle. It advances with emulated fields, including frame advance, and stops while paused. Reset, power cycle, and changes to other input settings retain the cycle; changing its period restarts it. No turbo controls are assigned by default.
+
 Input records use `player.<1..8>.device` (`auto`, `none`, or a saved host identity) and `.threshold` (1 through 32767, default 16000). Each `player.<1..8>.<button>.<0..3>` record has `.type` and `.control`. Types are 0 for unassigned, 1 for an SDL keyboard scancode, 2 for an SDL gamepad button, 3 for the positive half of an SDL gamepad axis, 4 for its negative half, and 5 for a mouse button numbered 1 through 5. Unassigned controls store 0. Button names are `up`, `down`, `left`, `right`, `a`, `b`, `x`, `y`, `l`, `r`, `start`, and `select`. Legacy `key.<button>` entries supply player one's first alternative when no new record overrides it; saves retain those entries for keyboard bindings in that slot.
+
+Turbo bindings use `player.<1..8>.turbo.<button>.<0..3>.type` and `.control`. The period is stored as `input.turbo-frequency`.
+
+The Peripherals page remaps the mouse and each light gun. Buttons have four normal alternatives and four turbo alternatives; offscreen aim has normal alternatives only. The first gun uses the host pointer by default. Turn off Use pointer aim to control it with relative axes. Automatic gamepad selection uses the first host slot for the mouse and first gun, and the second slot for the second gun.
+
+Each horizontal or vertical axis has four sources that add together. A source can use mouse X/Y movement, a full gamepad axis, or a digital control. Gain accepts 1 through 400 percent; Reverse changes its sign. Mouse sources use relative host motion. A gamepad axis supplies its signed value divided by 256, rounded down. A held digital control supplies one unit. Relative gun movement advances once per emulated field and stays within the picture's aim range. Pointer capture by the UI blocks mouse sources while gamepad sources remain available. Absolute pointer aim requires window focus, including when background controller input is allowed.
+
+Peripheral records start with `peripheral.mouse.`, `peripheral.gun1.`, or `peripheral.gun2.`. Each stores `device` and `threshold`; guns also use `pointer` (0 or 1). Mouse button names are `left` and `right`. Gun button names are `trigger`, `cursor`, `turbo`, `pause`, `start`, and `offscreen`. Normal and turbo alternatives use the same suffixes as player bindings. Axis records use `x.<0..3>.` or `y.<0..3>.`, followed by `type`, `axis`, `scale`, `invert`, `digital.type`, and `digital.control`. Axis types are 0 for unassigned, 1 for mouse X, 2 for mouse Y, 3 for a gamepad axis, and 4 for a digital control. Only gamepad sources set `axis`; only digital sources assign `digital.type` and `digital.control`.
 
 The Devices page connects gamepads, mice, multitaps, light guns, and the console expansion device. Applying a change retains the loaded game, execution position, work RAM, and cartridge saves. Reapplying the same configuration keeps current controller polling state. Port 2 moves to player 5 when port 1 has a multitap. One mouse or empty port reserves one player slot. The frontend supports one host pointer, so a relative mouse cannot be paired with another mouse or a light gun. Light guns connect to port 2.
 
@@ -78,9 +88,13 @@ The Devices page connects gamepads, mice, multitaps, light guns, and the console
 
 The Hotkeys page provides four alternative keyboard bindings for each desktop action. Select a binding number, find the action, and click its shortcut to capture a key with optional Ctrl, Alt, Shift, or Super modifiers. Escape cancels capture; Use Escape assigns an unmodified Escape key. Clear removes one binding, and Restore hotkey defaults resets all actions. Modifier keys alone trigger on release and are cancelled when used as part of another chord or mouse click. A chord assigned to two different actions is rejected. Menus show the active shortcuts.
 
+Check Gamepad to edit four additional alternatives per action. Each shortcut accepts up to four buttons or signed axes held on the same gamepad. Choose Any gamepad or a specific host device, then capture each control and select Done. Shortcuts trigger once when the full chord becomes held. Releasing and pressing it again rearms it. Gamepad shortcuts work while paused or idle and require window focus. Controls held during UI capture stay disarmed until released. Conflicting chords, including one action's chord contained in another's, are rejected. No gamepad shortcuts are assigned by default.
+
 Each binding uses `hotkey.<action>.<0..3>.key` for its SDL scancode and `.modifiers` for a bit mask: Shift = 1, Ctrl = 2, Alt = 4, Super = 8. Add modifier values to combine them. Caps Lock and Num Lock state are ignored. In a chord, left and right versions of a modifier are equivalent. For example, these records assign Ctrl+Shift+F8 to pause:
 
 ```text
 hotkey.pause.0.key "65"
 hotkey.pause.0.modifiers "3"
 ```
+
+A gamepad alternative uses `hotkey.<action>.<0..3>.pad.device` (`any` or a saved host identity), `.pad.threshold`, and `.pad.<0..3>.type`/`.control`. The four inner controls form a chord and use input types 0, 2, 3, or 4. Thresholds use the same range as player inputs.

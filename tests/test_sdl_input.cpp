@@ -97,6 +97,127 @@ struct VirtualPad {
   }
 };
 
+void PeripheralAndTurboMappings() {
+  using namespace snes::frontend;
+  using Kind = InputBinding::Kind;
+  VirtualPad pad;
+  std::string device;
+  for (const auto &connected : SdlInputProvider::ConnectedGamepads())
+    if (connected.id == pad.id)
+      device = connected.key;
+  Check(!device.empty(), "Peripheral test pad has a host identity");
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, true);
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_NORTH, true);
+  SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_LEFTX, 25088);
+  SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_RIGHTX, 1024);
+  SDL_UpdateJoysticks();
+  SDL_PumpEvents();
+  InputBindings mappings;
+  auto &mouse = mappings.mouse;
+  mouse.device = device;
+  mouse.axes = {};
+  mouse.buttons = {};
+  mouse.buttons[0][3] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH};
+  mouse.axes[0][0].kind = AxisBinding::Kind::GamepadAxis;
+  mouse.axes[0][0].axis = SDL_GAMEPAD_AXIS_LEFTX;
+  mouse.axes[0][0].scale = 25;
+  mouse.axes[1][0].kind = AxisBinding::Kind::Digital;
+  mouse.axes[1][0].digital = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_DPAD_UP};
+  mouse.axes[1][0].scale = 200;
+  mouse.axes[1][0].inverted = true;
+  auto &gun = mappings.guns[0];
+  gun.device = device;
+  gun.pointerAim = false;
+  gun.buttons = {};
+  gun.buttons[0][0] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH};
+  gun.buttons[3][3] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_NORTH};
+  gun.buttons[5][0] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_BACK};
+  gun.axes[0][0].kind = AxisBinding::Kind::GamepadAxis;
+  gun.axes[0][0].axis = SDL_GAMEPAD_AXIS_RIGHTX;
+  gun.axes[0][0].scale = 25;
+  gun.axes[1][0].kind = AxisBinding::Kind::Digital;
+  gun.axes[1][0].digital = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_DPAD_DOWN};
+  gun.axes[1][0].scale = 300;
+  SdlInputProvider input(mappings);
+  input.SetGunViewport(MakeVideoViewport(768, 672, 224), false);
+  auto motion = input.PollMouse(0, 0);
+  Check(motion.dx == 24 && motion.dy == -2 && motion.left && !motion.right,
+        "Mapped mouse axes, gain, inversion and fourth button alternatives are sampled");
+  Check(input.PollMouse(0, 0).dx == 24 && input.PollMouse(1, 1).dx == 25,
+        "Mouse polling shares a field snapshot and retains fractional movement");
+  snes::core::ControllerPorts ports;
+  uint64_t frame = 2;
+  ports.Configure(0, snes::core::ControllerDevice::Mouse);
+  ports.SetMouseCallback([&](int port) { return input.PollMouse(port, frame); });
+  const auto packet = [&](unsigned port, unsigned count) {
+    ports.SetLatch(true);
+    ports.SetLatch(false);
+    uint32_t value = 0;
+    for (unsigned bit = 0; bit < count; ++bit)
+      value = (value << 1) | (ports.Read(port) & 1);
+    return value;
+  };
+  Check(packet(0, 32) == 0x00418218, "Mapped host input reaches the hardware mouse packet");
+  auto aim = input.PollLightGun(1, 0, frame);
+  Check(aim.x == 129 && aim.y == 115 && aim.trigger && aim.pause && !aim.offscreen,
+        "Relative gun axes and buttons remain independent of pointer focus");
+  Check(input.PollLightGun(1, 0, frame).x == 129,
+        "Repeated gun reads in a field do not move the aim twice");
+  ports.Configure(1, snes::core::ControllerDevice::SuperScope);
+  ports.SetGunCallback([&](int port, int gun) { return input.PollLightGun(port, gun, frame); });
+  ports.LatchLightGuns();
+  Check(packet(1, 8) == 0x90 && packet(1, 8) == 0,
+        "Mapped trigger and pause reach the Scope packet with their hardware press locks");
+  input.SetUiCapture(true, true);
+  ++frame;
+  Check(input.PollMouse(0, frame).left && input.PollLightGun(1, 0, frame).trigger,
+        "UI keyboard and pointer capture retain independent gamepad peripheral controls");
+  input.SetEnabled(false);
+  Check(!input.PollMouse(0, frame).left && input.PollLightGun(1, 0, frame).offscreen,
+        "Focus blocking neutralizes mapped peripherals");
+  input.SetEnabled(true);
+  input.SetUiCapture(false, false);
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_BACK, true);
+  SDL_UpdateJoysticks();
+  ports.LatchLightGuns();
+  Check(packet(1, 8) == 2, "Mapped offscreen control reaches the Scope status bit");
+  Check(InputBindings{}.guns[0].buttons[3][0] == InputBinding{Kind::Keyboard, SDL_SCANCODE_SPACE},
+        "The default Scope pause control is independent of the desktop P shortcut");
+
+  mappings.players[0].device = device;
+  mappings.players[0].buttons = {};
+  mappings.players[0].buttons[5][0] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH};
+  mappings.players[0].turbo[5][3] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_EAST};
+  mappings.turboFrequency = 2;
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_EAST, true);
+  SDL_UpdateJoysticks();
+  input.SetBindings(mappings);
+  for (unsigned phase = 0; phase < 8; ++phase) {
+    GuestBackgroundInput(input, 0, phase % 4 >= 2 ? 0x8000 : 0);
+    input.AdvanceFrame();
+  }
+  input.AdvanceFrame();
+  input.AdvanceFrame();
+  input.ResetSampling();
+  input.SetBindings(mappings);
+  Check(
+      input.PollController(0, 0).b && input.PollController(0, 1000).b,
+      "Turbo phase survives focus resampling, unchanged settings and machine frame index changes");
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_EAST, false);
+  SDL_UpdateJoysticks();
+  input.AdvanceFrame();
+  input.AdvanceFrame();
+  Check(input.PollController(0, 0).b,
+        "Releasing turbo restores a held normal binding during the off phase");
+  SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_EAST, true);
+  SDL_UpdateJoysticks();
+  mappings.turboFrequency = 3;
+  input.SetBindings(mappings);
+  Check(!input.PollController(0, 0).b, "Changing the turbo period resets the shared phase");
+}
+
 void Remapping(snes::frontend::SdlInputProvider &input, const VirtualPad &first,
                const VirtualPad &second) {
   using namespace snes::frontend;
@@ -255,6 +376,7 @@ int main() {
     Check(changed.x && changed.l && changed.start && changed.select && !changed.b,
           "SDL face, shoulder, start and select buttons update");
     Remapping(input, first, second);
+    PeripheralAndTurboMappings();
     const auto beforeDisconnect = snes::frontend::SdlInputProvider::ConnectedGamepads();
     first.Disconnect();
     SDL_PumpEvents();

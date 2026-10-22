@@ -41,12 +41,30 @@ void RoundTrip(const fs::path &directory) {
   preferences.input.players[7].axisThreshold = 12000;
   preferences.input.players[7].buttons[5][3] = {snes::frontend::InputBinding::Kind::AxisNegative,
                                                 SDL_GAMEPAD_AXIS_RIGHTY};
+  preferences.input.turboFrequency = 7;
+  preferences.input.players[7].turbo[5][2] = {snes::frontend::InputBinding::Kind::GamepadButton,
+                                              SDL_GAMEPAD_BUTTON_LEFT_SHOULDER};
+  preferences.input.guns[0].pointerAim = false;
+  preferences.input.guns[0].axes[0][3].kind = snes::frontend::AxisBinding::Kind::GamepadAxis;
+  preferences.input.guns[0].axes[0][3].axis = SDL_GAMEPAD_AXIS_RIGHTX;
+  preferences.input.guns[0].axes[0][3].inverted = true;
+  preferences.input.guns[0].axes[0][3].scale = 137;
+  preferences.input.mouse.turbo[0][1] = {snes::frontend::InputBinding::Kind::Keyboard,
+                                         SDL_SCANCODE_C};
   preferences.console.ports[0] = snes::core::ControllerDevice::Multitap;
   preferences.console.expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
   preferences.hotkeys.bindings[size_t(snes::frontend::DesktopCommand::Pause)][0] = {
       SDL_SCANCODE_F8, snes::frontend::KeyChord::Control | snes::frontend::KeyChord::Shift};
   preferences.hotkeys.bindings[size_t(snes::frontend::DesktopCommand::Pause)][3] = {
       SDL_SCANCODE_F8, snes::frontend::KeyChord::Gui};
+  auto &padShortcut =
+      preferences.hotkeys.gamepads[size_t(snes::frontend::DesktopCommand::Pause)][3];
+  padShortcut.device = "saved shortcut host";
+  padShortcut.axisThreshold = 20000;
+  padShortcut.controls[0] = {snes::frontend::InputBinding::Kind::GamepadButton,
+                             SDL_GAMEPAD_BUTTON_GUIDE};
+  padShortcut.controls[3] = {snes::frontend::InputBinding::Kind::AxisPositive,
+                             SDL_GAMEPAD_AXIS_LEFT_TRIGGER};
   preferences.audioDevice = "Headphones \\\"USB\\\"";
   preferences.screenshotDirectory = snes::core::PathText(directory / fs::path(u8"\u753b\u50cf"));
   preferences.firmwareDirectory = "spaces, \\slashes and\nnewlines";
@@ -93,6 +111,20 @@ void BadInput(const fs::path &directory) {
         "Cupid-SNES preferences 1\naudio.mute \"2\"\n",
         "Cupid-SNES preferences 1\nkey.a \"9999\"\n",
         "Cupid-SNES preferences 1\nplayer.8.threshold \"0\"\n",
+        "Cupid-SNES preferences 1\ninput.turbo-frequency \"0\"\n",
+        "Cupid-SNES preferences 1\ninput.turbo-frequency \"9\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.turbo.up.0.type \"2\"\n",
+        "Cupid-SNES preferences 1\nperipheral.mouse.device \"\"\n",
+        "Cupid-SNES preferences 1\nperipheral.mouse.pointer \"1\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.pointer \"2\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.turbo.offscreen.0.type \"2\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.x.0.type \"5\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.x.0.type \"3\"\nperipheral.gun1.x.0.axis "
+        "\"6\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.x.0.scale \"0\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.x.0.scale \"401\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun1.x.0.invert \"2\"\n",
+        "Cupid-SNES preferences 1\nperipheral.gun2.x.0.type \"1\"\n",
         "Cupid-SNES preferences 1\nplayer.2.device \"\"\n",
         "Cupid-SNES preferences 1\nplayer.1.up.0.type \"6\"\n",
         "Cupid-SNES preferences 1\nplayer.1.up.0.type \"0\"\n",
@@ -105,6 +137,12 @@ void BadInput(const fs::path &directory) {
         "Cupid-SNES preferences 1\ninput.expansion \"2\"\n",
         "Cupid-SNES preferences 1\nhotkey.pause.0.key \"9999\"\n",
         "Cupid-SNES preferences 1\nhotkey.pause.0.modifiers \"16\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.pad.device \"\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.pad.threshold \"0\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.pad.0.type \"1\"\nhotkey.pause.0.pad.0.control "
+        "\"19\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.pad.0.type \"2\"\nhotkey.pause.0.pad.1.type "
+        "\"2\"\n",
         "Cupid-SNES preferences 1\nhotkey.pause.0.key \"0\"\nhotkey.pause.0.modifiers \"2\"\n",
         "Cupid-SNES preferences 1\nhotkey.open.0.key \"19\"\nhotkey.open.0.modifiers \"0\"\n",
         "Cupid-SNES preferences 1\nrecent.count \"11\"\n",

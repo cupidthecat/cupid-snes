@@ -26,6 +26,44 @@ unsigned OwnModifier(SDL_Scancode key) {
   }
 }
 } // namespace
+bool GamepadChord::Assigned() const {
+  return std::any_of(controls.begin(), controls.end(),
+                     [](const auto &control) { return control.kind != InputBinding::Kind::None; });
+}
+std::string GamepadChord::Label() const {
+  std::string result;
+  for (const auto &control : controls) {
+    if (control.kind == InputBinding::Kind::None)
+      continue;
+    if (!result.empty())
+      result += " + ";
+    result += control.Label();
+  }
+  return result;
+}
+void GamepadChord::Validate() const {
+  if (device.empty() || device.size() > 4096 || device.find('\0') != std::string::npos ||
+      axisThreshold < 1 || axisThreshold > 32767)
+    throw std::invalid_argument("Gamepad shortcut contains an invalid host or threshold");
+  for (size_t index = 0; index < controls.size(); ++index) {
+    const auto &control = controls[index];
+    control.Validate();
+    using Kind = InputBinding::Kind;
+    if (control.kind == Kind::None)
+      continue;
+    if (control.kind != Kind::GamepadButton && control.kind != Kind::AxisPositive &&
+        control.kind != Kind::AxisNegative)
+      throw std::invalid_argument("Gamepad shortcuts accept gamepad buttons and signed axes");
+    for (size_t prior = 0; prior < index; ++prior) {
+      const auto &other = controls[prior];
+      if (other == control ||
+          (other.control == control.control &&
+           ((other.kind == Kind::AxisPositive && control.kind == Kind::AxisNegative) ||
+            (other.kind == Kind::AxisNegative && control.kind == Kind::AxisPositive))))
+        throw std::invalid_argument("Gamepad shortcut contains a repeated or opposing control");
+    }
+  }
+}
 KeyChord KeyChord::From(const SDL_KeyboardEvent &key) {
   unsigned modifiers = 0;
   if (key.mod & SDL_KMOD_SHIFT)
@@ -88,11 +126,21 @@ std::string Hotkeys::Label(DesktopCommand command) const {
       label += " / ";
     label += text;
   }
+  for (const auto &chord : gamepads.at(size_t(command))) {
+    const auto text = chord.Label();
+    if (text.empty())
+      continue;
+    if (!label.empty())
+      label += " / ";
+    label += text;
+  }
   return label;
 }
 void Hotkeys::Validate() const {
   std::map<std::pair<int, unsigned>, size_t> assigned;
   for (size_t command = 0; command < bindings.size(); ++command) {
+    for (const auto &chord : gamepads[command])
+      chord.Validate();
     for (const auto &chord : bindings[command]) {
       if (chord.scancode < SDL_SCANCODE_UNKNOWN || chord.scancode >= SDL_SCANCODE_COUNT ||
           chord.modifiers > 15 || (chord.modifiers & OwnModifier(chord.scancode)) ||
@@ -108,6 +156,91 @@ void Hotkeys::Validate() const {
                                     desktopCommands[command].label);
     }
   }
+  const auto subset = [](const GamepadChord &a, const GamepadChord &b) {
+    return std::all_of(a.controls.begin(), a.controls.end(), [&](const auto &control) {
+      return control.kind == InputBinding::Kind::None ||
+             std::find(b.controls.begin(), b.controls.end(), control) != b.controls.end();
+    });
+  };
+  for (size_t command = 0; command < gamepads.size(); ++command) {
+    for (const auto &chord : gamepads[command]) {
+      if (!chord.Assigned())
+        continue;
+      for (size_t other = 0; other < command; ++other) {
+        for (const auto &prior : gamepads[other]) {
+          if (!prior.Assigned() ||
+              (chord.device != "any" && prior.device != "any" && chord.device != prior.device))
+            continue;
+          if (subset(chord, prior) || subset(prior, chord))
+            throw std::invalid_argument("Gamepad shortcuts overlap between " +
+                                        std::string(desktopCommands[other].label) + " and " +
+                                        desktopCommands[command].label);
+        }
+      }
+    }
+  }
+}
+void GamepadHotkeyDispatcher::Synchronize(const Hotkeys &hotkeys) noexcept {
+  down_ = Active(hotkeys);
+}
+std::vector<DesktopCommand> GamepadHotkeyDispatcher::Process(const Hotkeys &hotkeys,
+                                                             const SDL_Event &event,
+                                                             const std::string &device,
+                                                             bool enabled) {
+  if (event.type == SDL_EVENT_GAMEPAD_REMOVED)
+    states_.erase(event.gdevice.which);
+  else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+           event.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+    if (event.gbutton.button >= SDL_GAMEPAD_BUTTON_COUNT || device.empty())
+      return {};
+    auto &state = states_[event.gbutton.which];
+    state.device = device;
+    state.buttons[event.gbutton.button] = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+  } else if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+    if (event.gaxis.axis >= SDL_GAMEPAD_AXIS_COUNT || device.empty())
+      return {};
+    auto &state = states_[event.gaxis.which];
+    state.device = device;
+    state.axes[event.gaxis.axis] = event.gaxis.value;
+  } else
+    return {};
+  std::vector<DesktopCommand> commands;
+  const auto active = Active(hotkeys);
+  for (size_t command = 0; command < active.size(); ++command)
+    if (enabled && active[command] && !down_[command])
+      commands.push_back(DesktopCommand(command));
+  down_ = active;
+  return commands;
+}
+std::array<bool, desktopCommands.size()>
+GamepadHotkeyDispatcher::Active(const Hotkeys &hotkeys) const noexcept {
+  std::array<bool, desktopCommands.size()> active{};
+  for (size_t command = 0; command < hotkeys.gamepads.size(); ++command) {
+    bool down = false;
+    for (const auto &chord : hotkeys.gamepads[command]) {
+      if (!chord.Assigned())
+        continue;
+      for (const auto &[id, state] : states_) {
+        if (chord.device != "any" && chord.device != state.device)
+          continue;
+        down |= std::all_of(chord.controls.begin(), chord.controls.end(), [&](const auto &control) {
+          using Kind = InputBinding::Kind;
+          switch (control.kind) {
+          case Kind::GamepadButton:
+            return state.buttons[control.control];
+          case Kind::AxisPositive:
+            return state.axes[control.control] > chord.axisThreshold;
+          case Kind::AxisNegative:
+            return state.axes[control.control] < -chord.axisThreshold;
+          default:
+            return true;
+          }
+        });
+      }
+    }
+    active[command] = down;
+  }
+  return active;
 }
 std::optional<DesktopCommand> HotkeyDispatcher::Process(const Hotkeys &hotkeys,
                                                         const SDL_KeyboardEvent &key) {

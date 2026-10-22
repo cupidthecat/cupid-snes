@@ -1,3 +1,4 @@
+#include "SdlInputProvider.hpp"
 #include "desktop/DesktopApplication.hpp"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 void Check(bool condition, const char *message) {
@@ -181,6 +183,241 @@ void RecoverAutosave(const std::filesystem::path &directory) {
   Check(result == 0 && Read(save).size() == 8192 && uint8_t(Read(save)[0]) == 0x5a,
         "After repairing the destination, quit saves the original guest battery byte normally");
 }
+
+struct DrivenGamepad {
+  SDL_Joystick *joystick = nullptr;
+  std::atomic<Uint32> buttons{0};
+  std::atomic<Uint32> sampledButtons{0};
+  std::atomic<SDL_WindowID> window{0};
+  std::atomic<bool> focused{false}, paused{false};
+  std::atomic<int> visibility{-1};
+  DrivenGamepad() {
+    SDL_VirtualJoystickDesc description;
+    SDL_INIT_INTERFACE(&description);
+    description.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    description.naxes = SDL_GAMEPAD_AXIS_COUNT;
+    description.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    description.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+    description.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+    description.name = "Desktop shortcut test gamepad";
+    description.userdata = this;
+    description.Update = [](void *userdata) {
+      auto &self = *static_cast<DrivenGamepad *>(userdata);
+      if (!self.joystick)
+        return;
+      const auto down = self.buttons.load();
+      for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
+        SDL_SetJoystickVirtualButton(self.joystick, button, (down & (1u << button)) != 0);
+      self.sampledButtons = down;
+      if (self.window.load()) {
+        const auto visibility = self.visibility.exchange(-1);
+        if (auto *window = SDL_GetWindowFromID(self.window)) {
+          if (visibility == 0)
+            SDL_HideWindow(window);
+          else if (visibility == 1)
+            SDL_ShowWindow(window);
+        }
+      }
+      if (auto *window = SDL_GetKeyboardFocus()) {
+        self.window = SDL_GetWindowID(window);
+        self.focused =
+            (SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) == 0;
+        self.paused =
+            std::string_view(SDL_GetWindowTitle(window)).find("(Paused)") != std::string_view::npos;
+      } else
+        self.focused = false;
+    };
+    const auto id = SDL_AttachVirtualJoystick(&description);
+    Check(id != 0, "Attach application shortcut gamepad");
+    joystick = SDL_OpenJoystick(id);
+    Check(joystick != nullptr, "Open application shortcut gamepad");
+  }
+  void Hold(Uint32 value) {
+    buttons = value;
+    Wait([&] { return sampledButtons.load() == value; },
+         "The application samples its virtual controller state");
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  }
+  void Press(Uint32 value) {
+    const auto previous = buttons.load();
+    Hold(previous | value);
+    Hold(previous);
+  }
+};
+
+unsigned BackdropColor(const std::string &picture) {
+  const auto number = [&](size_t offset, size_t bytes) {
+    Check(offset + bytes <= picture.size(), "The captured bitmap has its expected header");
+    unsigned value = 0;
+    for (size_t byte = 0; byte < bytes; ++byte)
+      value |= unsigned(uint8_t(picture[offset + byte])) << (8 * byte);
+    return value;
+  };
+  const auto width = number(18, 4), rawHeight = number(22, 4), depth = number(28, 2);
+  const auto height = int32_t(rawHeight) < 0 ? unsigned(-int32_t(rawHeight)) : rawHeight;
+  Check(width == 256 && height == 224 && (depth == 24 || depth == 32),
+        "The shortcut screenshot keeps the generated picture dimensions");
+  const auto stride = ((width * depth + 31) / 32) * 4;
+  const auto center = number(10, 4) + height / 2 * stride + width / 2 * (depth / 8);
+  const auto b = number(center, 1), g = number(center + 1, 1), r = number(center + 2, 1);
+  return (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10);
+}
+
+void GamepadApplication(const std::filesystem::path &directory, bool idle) {
+  using namespace snes::frontend;
+  ConfigureSdl();
+  Check(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD), SDL_GetError());
+  DrivenGamepad pad;
+  const auto mask = [](SDL_GamepadButton button) { return 1u << unsigned(button); };
+  const auto pause = mask(SDL_GAMEPAD_BUTTON_GUIDE) | mask(SDL_GAMEPAD_BUTTON_START);
+  const auto quit = mask(SDL_GAMEPAD_BUTTON_GUIDE) | mask(SDL_GAMEPAD_BUTTON_BACK);
+  const auto step = mask(SDL_GAMEPAD_BUTTON_SOUTH), shot = mask(SDL_GAMEPAD_BUTTON_WEST);
+  const auto editor = mask(SDL_GAMEPAD_BUTTON_NORTH);
+  PreferencesFile file(directory / (idle ? "idle-gamepad.cfg" : "gamepad.cfg"));
+  auto preferences = file.Load();
+  preferences.screenshotDirectory = "gamepad-pictures";
+  preferences.focus = FocusBehavior::AllowInput;
+  std::string device;
+  for (const auto &connected : SdlInputProvider::ConnectedGamepads())
+    if (connected.name == "Desktop shortcut test gamepad")
+      device = connected.key;
+  Check(!device.empty(), "Application shortcut gamepad has a persistent selection");
+  const auto shortcut = [&](DesktopCommand command,
+                            std::initializer_list<SDL_GamepadButton> buttons) {
+    auto &chord = preferences.hotkeys.gamepads[size_t(command)][3];
+    chord.device = device;
+    size_t index = 0;
+    for (const auto button : buttons)
+      chord.controls[index++] = {InputBinding::Kind::GamepadButton, button};
+  };
+  shortcut(DesktopCommand::Pause, {SDL_GAMEPAD_BUTTON_GUIDE, SDL_GAMEPAD_BUTTON_START});
+  shortcut(DesktopCommand::Quit, {SDL_GAMEPAD_BUTTON_GUIDE, SDL_GAMEPAD_BUTTON_BACK});
+  shortcut(DesktopCommand::FrameAdvance, {SDL_GAMEPAD_BUTTON_SOUTH});
+  shortcut(DesktopCommand::Screenshot, {SDL_GAMEPAD_BUTTON_WEST});
+  shortcut(DesktopCommand::Preferences, {SDL_GAMEPAD_BUTTON_NORTH});
+  file.Save(preferences);
+  std::optional<LaunchRequest> request;
+  if (!idle) {
+    std::vector<uint8_t> image(32768);
+    // Increment the backdrop color once per vertical blank.
+    const uint8_t code[] = {0x78, 0xd8, 0xa9, 0x80, 0x8d, 0,    0x21, 0x64, 0,    0x64, 1,    0xa9,
+                            0x0f, 0x8d, 0,    0x21, 0xad, 0x12, 0x42, 0x10, 0xfb, 0xe6, 0,    0xd0,
+                            2,    0xe6, 1,    0x9c, 0x21, 0x21, 0xa5, 0,    0x8d, 0x22, 0x21, 0xa5,
+                            1,    0x8d, 0x22, 0x21, 0xad, 0x12, 0x42, 0x30, 0xfb, 0x80, 0xe1};
+    std::copy(std::begin(code), std::end(code), image.begin());
+    image[0x7fd5] = 0x20;
+    image[0x7fd7] = 5;
+    image[0x7fdc] = image[0x7fdd] = 0xff;
+    image[0x7ffd] = 0x80;
+    const auto rom = directory / "gamepad.sfc";
+    std::ofstream output(rom, std::ios::binary);
+    output.write(reinterpret_cast<const char *>(image.data()), image.size());
+    Check(bool(output), "Write the application shortcut cartridge");
+    request.emplace();
+    request->paths[0] = snes::core::PathText(rom);
+  }
+  std::atomic<bool> returned{false};
+  std::exception_ptr failure;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return pad.focused.load() || returned.load(); },
+           "The owned native application receives focus");
+      Check(!returned, "The application stays open before gamepad input");
+      if (!idle) {
+        Wait([&] { return Read(file.Path()).find("recent.count \"1\"") != std::string::npos; },
+             "The shortcut cartridge reaches the running application");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        pad.Hold(pause);
+        Wait([&] { return pad.paused.load() || returned.load(); },
+             "A gamepad chord pauses playback");
+        Check(!returned, "Pausing keeps the application open");
+        pad.Hold(0);
+        const auto pictures = directory / "gamepad-pictures";
+        const auto capture = [&] {
+          std::vector<std::filesystem::path> before;
+          if (std::filesystem::exists(pictures))
+            for (const auto &entry : std::filesystem::directory_iterator(pictures))
+              before.push_back(entry.path());
+          pad.Press(shot);
+          std::filesystem::path path;
+          Wait(
+              [&] {
+                if (!std::filesystem::exists(pictures))
+                  return false;
+                for (const auto &entry : std::filesystem::directory_iterator(pictures))
+                  if (std::find(before.begin(), before.end(), entry.path()) == before.end()) {
+                    path = entry.path();
+                    return std::filesystem::file_size(path) >= 256 * 224 * 4;
+                  }
+                return false;
+              },
+              "A gamepad shortcut saves the paused native picture");
+          return Read(path);
+        };
+        const auto first = capture();
+        pad.Hold(pause);
+        Wait([&] { return !pad.paused.load() || returned.load(); },
+             "A rearmed gamepad chord resumes playback");
+        pad.Hold(0);
+        pad.Press(pause);
+        Wait([&] { return pad.paused.load() || returned.load(); }, "A gamepad chord pauses again");
+        const auto second = capture();
+        Check(first != second, "Resuming advances the guest backdrop counter");
+        pad.Hold(step);
+        const auto advanced = capture();
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        Check(((BackdropColor(advanced) - BackdropColor(second)) & 0x7fff) == 1 &&
+                  capture() == advanced,
+              "Holding frame advance runs one field and leaves subsequent pictures unchanged");
+        pad.Hold(0);
+        pad.Press(step);
+        Check(((BackdropColor(capture()) - BackdropColor(advanced)) & 0x7fff) == 1,
+              "Releasing and pressing frame advance runs another field");
+        pad.visibility = 0;
+        Wait([&] { return !pad.focused.load() || returned.load(); },
+             "The test hides its own application window");
+        pad.Hold(quit);
+        Check(!returned, "Background gameplay input does not enable hidden-window shortcuts");
+        pad.visibility = 1;
+        Wait([&] { return pad.focused.load() || returned.load(); },
+             "The owned application window regains focus");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        Check(!returned, "A shortcut held while unfocused stays disarmed when focus returns");
+        pad.Hold(0);
+        pad.Press(pause);
+        Wait([&] { return !pad.paused.load() || returned.load(); },
+             "Gamepad resume works after frame advance");
+        pad.Press(editor);
+        Wait([&] { return pad.paused.load() || returned.load(); },
+             "A gamepad shortcut opens preferences and pauses");
+        pad.Hold(quit);
+        Check(!returned, "Preferences capture the gamepad quit shortcut");
+        Key(pad.window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+        Wait([&] { return !pad.paused.load() || returned.load(); },
+             "Closing preferences restores running playback");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        Check(!returned, "A shortcut held during preferences stays disarmed after closing them");
+        pad.Hold(0);
+      }
+      pad.Hold(quit);
+      Wait([&] { return returned.load(); }, "The gamepad quit chord closes the application");
+    } catch (...) {
+      failure = std::current_exception();
+      if (!returned) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&event);
+      }
+    }
+  });
+  const auto result = RunDesktop({}, {}, request, file.Path());
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0, "The application exits normally after gamepad shortcuts");
+  std::printf("Gamepad shortcuts passed in the %s application\n", idle ? "idle" : "running");
+}
 } // namespace
 
 int main() {
@@ -255,6 +492,10 @@ int main() {
       std::rethrow_exception(failure);
     Check(result == 0, "The application exits normally after the destination is fixed");
     RecoverAutosave(directory);
+    if (SDL_getenv("SNES_TEST_WINDOW")) {
+      GamepadApplication(directory, false);
+      GamepadApplication(directory, true);
+    }
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

@@ -74,6 +74,8 @@ SdlInputProvider::SdlInputProvider(const InputBindings &bindings)
 void SdlInputProvider::SetBindings(const InputBindings &bindings) {
   bindings.Validate();
   auto next = bindings;
+  if (next.turboFrequency != bindings_.turboFrequency)
+    turboPhase_ = 0;
   std::swap(bindings_, next);
   ResetSampling();
 }
@@ -126,61 +128,109 @@ void SdlInputProvider::RefreshGamepads(uint64_t frameIndex) {
   }
 }
 
+SDL_Gamepad *SdlInputProvider::ResolveGamepad(const std::string &device, int automatic) {
+  if (device == "auto")
+    return gamepads_[automatic];
+  if (device != "none")
+    for (size_t slot = 0; slot < gamepads_.size(); ++slot)
+      if (gamepadKeys_[slot] == device)
+        return gamepads_[slot];
+  return nullptr;
+}
+bool SdlInputProvider::Pressed(const InputBinding &binding, SDL_Gamepad *pad, int threshold) const {
+  using Kind = InputBinding::Kind;
+  const auto control = binding.control;
+  switch (binding.kind) {
+  case Kind::Keyboard: {
+    int count = 0;
+    const auto *keys = SDL_GetKeyboardState(&count);
+    return !captureKeyboard_ && keys && control < count && keys[control];
+  }
+  case Kind::MouseButton:
+    return !capturePointer_ &&
+           (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_MASK(control)) != 0;
+  case Kind::GamepadButton:
+    return pad && SDL_GetGamepadButton(pad, SDL_GamepadButton(control));
+  case Kind::AxisPositive:
+    return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) > threshold;
+  case Kind::AxisNegative:
+    return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) < -threshold;
+  default:
+    return false;
+  }
+}
+bool SdlInputProvider::Pressed(const InputAlternatives &bindings, SDL_Gamepad *pad,
+                               int threshold) const {
+  return std::any_of(bindings.begin(), bindings.end(),
+                     [&](const auto &binding) { return Pressed(binding, pad, threshold); });
+}
+bool SdlInputProvider::MappedButton(const InputAlternatives &normal, const InputAlternatives &turbo,
+                                    SDL_Gamepad *pad, int threshold) const {
+  if (Pressed(turbo, pad, threshold))
+    return turboPhase_ >= unsigned(bindings_.turboFrequency);
+  return Pressed(normal, pad, threshold);
+}
+void SdlInputProvider::SampleMotion(uint64_t frame) {
+  if (lastMotionFrame_ == frame)
+    return;
+  lastMotionFrame_ = frame;
+  SDL_GetRelativeMouseState(&motion_[0], &motion_[1]);
+  for (auto &value : motion_)
+    if (capturePointer_ || !std::isfinite(value))
+      value = 0;
+}
+float SdlInputProvider::ReadAxis(const AxisAlternatives &bindings, SDL_Gamepad *pad, int threshold,
+                                 uint64_t frame) {
+  float result = 0;
+  for (const auto &binding : bindings) {
+    float value = 0;
+    using Kind = AxisBinding::Kind;
+    switch (binding.kind) {
+    case Kind::MouseX:
+    case Kind::MouseY:
+      SampleMotion(frame);
+      value = motion_[binding.kind == Kind::MouseX ? 0 : 1];
+      break;
+    case Kind::GamepadAxis:
+      value = pad ? (SDL_GetGamepadAxis(pad, SDL_GamepadAxis(binding.axis)) >> 8) : 0;
+      break;
+    case Kind::Digital:
+      value = Pressed(binding.digital, pad, threshold) ? 1 : 0;
+      break;
+    default:
+      break;
+    }
+    result += value * (float(binding.scale) / 100) * (binding.inverted ? -1 : 1);
+  }
+  return std::clamp(result, -1000000.0f, 1000000.0f);
+}
 snes::core::InputState SdlInputProvider::PollController(int player, uint64_t frameIndex) {
-  if (!enabled_)
-    return {};
-  if (player < 0 || player >= static_cast<int>(bindings_.players.size()))
+  if (!enabled_ || player < 0 || player >= static_cast<int>(bindings_.players.size()))
     return {};
   RefreshGamepads(frameIndex);
   const auto &mapping = bindings_.players[player];
-  SDL_Gamepad *pad = nullptr;
-  if (mapping.device == "auto")
-    pad = gamepads_[player];
-  else if (mapping.device != "none")
-    for (size_t slot = 0; slot < gamepads_.size(); ++slot)
-      if (gamepadKeys_[slot] == mapping.device)
-        pad = gamepads_[slot];
-  int keyCount = 0;
-  const auto *keys = SDL_GetKeyboardState(&keyCount);
-  const auto mouse = capturePointer_ ? 0 : SDL_GetMouseState(nullptr, nullptr);
-  const auto pressed = [&](const InputBinding &binding) {
-    using Kind = InputBinding::Kind;
-    const auto control = binding.control;
-    switch (binding.kind) {
-    case Kind::Keyboard:
-      return !captureKeyboard_ && keys && control < keyCount && keys[control];
-    case Kind::MouseButton:
-      return (mouse & SDL_BUTTON_MASK(control)) != 0;
-    case Kind::GamepadButton:
-      return pad && SDL_GetGamepadButton(pad, SDL_GamepadButton(control));
-    case Kind::AxisPositive:
-      return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) > mapping.axisThreshold;
-    case Kind::AxisNegative:
-      return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) < -mapping.axisThreshold;
-    default:
-      return false;
-    }
-  };
+  auto *pad = ResolveGamepad(mapping.device, player);
   snes::core::InputState state;
   for (size_t button = 0; button < controllerButtons.size(); ++button)
     state.*controllerButtons[button].state =
-        std::any_of(mapping.buttons[button].begin(), mapping.buttons[button].end(), pressed) ||
+        MappedButton(mapping.buttons[button], mapping.turbo[button], pad, mapping.axisThreshold) ||
         (player == 0 && !captureKeyboard_ && ScriptPressed(Button(button), frameIndex));
   return state;
 }
 
-snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameIndex) {
-  if (!enabled_ || capturePointer_) {
+snes::core::MouseState SdlInputProvider::PollMouse(int port, uint64_t frameIndex) {
+  if (!enabled_ || port < 0 || port > 1) {
     SDL_GetRelativeMouseState(nullptr, nullptr);
     return {};
   }
   if (lastMouseFrame_ == frameIndex)
     return mouseState_;
   lastMouseFrame_ = frameIndex;
-  float x = 0, y = 0;
-  const auto buttons = SDL_GetRelativeMouseState(&x, &y);
-  mouseFractionX_ += x;
-  mouseFractionY_ += y;
+  RefreshGamepads(frameIndex);
+  const auto &mapping = bindings_.mouse;
+  auto *pad = ResolveGamepad(mapping.device, 0);
+  mouseFractionX_ += ReadAxis(mapping.axes[0], pad, mapping.axisThreshold, frameIndex);
+  mouseFractionY_ += ReadAxis(mapping.axes[1], pad, mapping.axisThreshold, frameIndex);
   // Bound conversions even if a backend reports an extreme motion event.
   const auto dx =
       static_cast<int32_t>(std::clamp(std::trunc(mouseFractionX_), -1000000.0f, 1000000.0f));
@@ -188,7 +238,9 @@ snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameI
       static_cast<int32_t>(std::clamp(std::trunc(mouseFractionY_), -1000000.0f, 1000000.0f));
   mouseFractionX_ -= dx;
   mouseFractionY_ -= dy;
-  mouseState_ = {dx, dy, (buttons & SDL_BUTTON_LMASK) != 0, (buttons & SDL_BUTTON_RMASK) != 0};
+  mouseState_ = {dx, dy,
+                 MappedButton(mapping.buttons[0], mapping.turbo[0], pad, mapping.axisThreshold),
+                 MappedButton(mapping.buttons[1], mapping.turbo[1], pad, mapping.axisThreshold)};
   return mouseState_;
 }
 
@@ -199,39 +251,37 @@ snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
 snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint64_t frameIndex) {
   if (!enabled_)
     return {};
-  if (port < 0 || port > 1 || gun < 0 || gun > 1 || !gunFocused_)
+  if (port < 0 || port > 1 || gun < 0 || gun > 1)
     return {};
-  int count = 0;
-  const auto *keys = SDL_GetKeyboardState(&count);
-  const auto pressed = [&](SDL_Scancode key) {
-    return !captureKeyboard_ && keys && int(key) >= 0 && int(key) < count && keys[key];
-  };
-  if (lastGunFrame_ != frameIndex) {
-    lastGunFrame_ = frameIndex;
-    secondGunX_ = std::clamp(
-        secondGunX_ + 3 * (int(pressed(SDL_SCANCODE_L)) - int(pressed(SDL_SCANCODE_J))), 0, 255);
-    secondGunY_ =
-        std::clamp(secondGunY_ + 3 * (int(pressed(SDL_SCANCODE_K)) - int(pressed(SDL_SCANCODE_I))),
-                   0, int(std::max(1u, gunViewport_.visibleLines)) - 1);
-  }
+  RefreshGamepads(frameIndex);
+  const auto &mapping = bindings_.guns[gun];
+  auto *pad = ResolveGamepad(mapping.device, gun);
   snes::core::LightGunState state;
-  if (gun == 0) {
+  if (mapping.pointerAim) {
     float x = 0, y = 0;
-    const auto buttons = SDL_GetMouseState(&x, &y);
-    state = capturePointer_ ? snes::core::LightGunState{} : gunViewport_.Aim(x, y);
-    state.trigger = !capturePointer_ && (buttons & SDL_BUTTON_LMASK) != 0;
-    state.cursor = !capturePointer_ && (buttons & SDL_BUTTON_RMASK) != 0;
-    state.start = pressed(SDL_SCANCODE_RETURN);
-    state.pause = pressed(SDL_SCANCODE_P);
-    state.turbo = pressed(SDL_SCANCODE_T);
-    state.offscreen |= pressed(SDL_SCANCODE_O);
+    SDL_GetMouseState(&x, &y);
+    state = capturePointer_ || !gunFocused_ ? snes::core::LightGunState{} : gunViewport_.Aim(x, y);
   } else {
-    state.x = secondGunX_;
-    state.y = secondGunY_;
-    state.trigger = pressed(SDL_SCANCODE_RCTRL);
-    state.start = pressed(SDL_SCANCODE_BACKSPACE);
-    state.offscreen = pressed(SDL_SCANCODE_U);
+    if (lastGunFrame_[gun] != frameIndex) {
+      lastGunFrame_[gun] = frameIndex;
+      for (size_t axis = 0; axis < 2; ++axis)
+        gunPosition_[gun][axis] = std::clamp(
+            gunPosition_[gun][axis] +
+                ReadAxis(mapping.axes[axis], pad, mapping.axisThreshold, frameIndex),
+            0.0f, axis == 0 ? 255.0f : float(std::max(1u, gunViewport_.visibleLines) - 1));
+    }
+    state.x = int(gunPosition_[gun][0]);
+    state.y = int(gunPosition_[gun][1]);
+    state.offscreen = gunViewport_.width <= 0 || gunViewport_.height <= 0;
   }
+  constexpr std::array members{&snes::core::LightGunState::trigger,
+                               &snes::core::LightGunState::cursor,
+                               &snes::core::LightGunState::turbo, &snes::core::LightGunState::pause,
+                               &snes::core::LightGunState::start};
+  for (size_t button = 0; button < members.size(); ++button)
+    state.*members[button] =
+        MappedButton(mapping.buttons[button], mapping.turbo[button], pad, mapping.axisThreshold);
+  state.offscreen |= Pressed(mapping.buttons[5], pad, mapping.axisThreshold);
   return state;
 }
 

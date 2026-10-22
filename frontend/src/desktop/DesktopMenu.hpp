@@ -18,6 +18,7 @@ public:
   std::optional<DesktopCommand> TakeCommand();
   void SetHotkeys(const Hotkeys &hotkeys);
   std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent &key);
+  std::vector<DesktopCommand> GamepadCommands(const SDL_Event &event, bool enabled);
   void ResetHotkeys() noexcept;
 
 private:

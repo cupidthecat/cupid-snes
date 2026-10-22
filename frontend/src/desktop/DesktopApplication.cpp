@@ -354,6 +354,15 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
               execute(*command);
           if (capturedKeyboard || ui.WantsKeyboard())
             menu.ResetHotkeys();
+        } else if (event.type == SDL_EVENT_GAMEPAD_ADDED ||
+                   event.type == SDL_EVENT_GAMEPAD_REMOVED ||
+                   event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                   event.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                   event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+          const bool enabled = WindowFocused(video.Window()) && !dialogs.Active() &&
+                               !capturedKeyboard && !ui.WantsKeyboard();
+          for (const auto command : menu.GamepadCommands(event, enabled))
+            execute(command);
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                    !ui.PreferencesEditor().Active() && !ui.ErrorOpen()) {
           try {
@@ -467,8 +476,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         continue;
       }
       if (core::IsLightGun(devices[1])) {
-        input.SetGunViewport(video.InputViewport(),
-                             (SDL_GetWindowFlags(video.Window()) & SDL_WINDOW_INPUT_FOCUS) != 0);
+        input.SetGunViewport(video.InputViewport(), focused);
         const unsigned count = devices[1] == core::ControllerDevice::Justifiers ? 2 : 1;
         std::array<core::LightGunState, 2> aim;
         for (unsigned gun = 0; gun < count; ++gun)
@@ -477,6 +485,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       }
       const auto before = emulator->CurrentMasterCycles();
       const auto result = emulator->StepFrame();
+      input.AdvanceFrame();
       if (paused || focusPaused) {
         --steps;
         video.PresentPending();

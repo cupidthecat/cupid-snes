@@ -138,6 +138,101 @@ void ModifierShortcuts() {
   Check(!send(SDL_SCANCODE_LCTRL, 0, SDL_EVENT_KEY_UP),
         "UI capture and focus changes discard pending modifier shortcuts");
 }
+void GamepadShortcuts() {
+  using namespace snes::frontend;
+  using Kind = InputBinding::Kind;
+  Hotkeys hotkeys;
+  auto &pause = hotkeys.gamepads[size_t(DesktopCommand::Pause)][3];
+  pause.controls[0] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_GUIDE};
+  pause.controls[1] = {Kind::GamepadButton, SDL_GAMEPAD_BUTTON_START};
+  hotkeys.Validate();
+  GamepadHotkeyDispatcher dispatcher;
+  const auto button = [&](SDL_JoystickID id, const std::string &device, int control, bool pressed,
+                          bool enabled = true) {
+    SDL_Event event{};
+    event.type = pressed ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+    event.gbutton.which = id;
+    event.gbutton.button = Uint8(control);
+    return dispatcher.Process(hotkeys, event, device, enabled);
+  };
+  const auto axis = [&](int control, Sint16 value, bool enabled = true) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    event.gaxis.which = 101;
+    event.gaxis.axis = Uint8(control);
+    event.gaxis.value = value;
+    return dispatcher.Process(hotkeys, event, "pad-A", enabled);
+  };
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_GUIDE, true).empty() &&
+            button(202, "pad-B", SDL_GAMEPAD_BUTTON_START, true).empty(),
+        "Gamepad chord controls must be held on one host device");
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true) == std::vector{DesktopCommand::Pause},
+        "A fourth gamepad alternative triggers a complete chord");
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true).empty(),
+        "A held gamepad shortcut does not repeat");
+  button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, false);
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true, false).empty() &&
+            axis(SDL_GAMEPAD_AXIS_LEFTX, 1).empty(),
+        "UI and focus suppression retain held state without firing on return");
+  button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, false);
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true) == std::vector{DesktopCommand::Pause},
+        "A suppressed shortcut requires release and a fresh press");
+  const auto saved = pause;
+  pause = {};
+  hotkeys.gamepads[size_t(DesktopCommand::Reset)][0] = saved;
+  hotkeys.Validate();
+  dispatcher.Synchronize(hotkeys);
+  Check(axis(SDL_GAMEPAD_AXIS_LEFTX, 2).empty(),
+        "Applying a new action to a held chord does not execute it");
+  button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, false);
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true) == std::vector{DesktopCommand::Reset},
+        "Live gamepad remapping uses the new action after release");
+  auto &shot = hotkeys.gamepads[size_t(DesktopCommand::Screenshot)][0];
+  shot.device = "pad-A";
+  shot.axisThreshold = 20000;
+  shot.controls[2] = {Kind::AxisPositive, SDL_GAMEPAD_AXIS_LEFT_TRIGGER};
+  hotkeys.Validate();
+  Check(axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 20000).empty() &&
+            axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 20001) == std::vector{DesktopCommand::Screenshot} &&
+            axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 30000).empty(),
+        "Signed-axis shortcuts cross their configured threshold once");
+  axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 0);
+  Check(axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 20001) == std::vector{DesktopCommand::Screenshot},
+        "Returning an axis to neutral arms its next shortcut press");
+  auto &full = hotkeys.gamepads[size_t(DesktopCommand::Fullscreen)][1];
+  full.controls[0] = {Kind::AxisNegative, SDL_GAMEPAD_AXIS_RIGHTX};
+  hotkeys.Validate();
+  Check(axis(SDL_GAMEPAD_AXIS_RIGHTX, -16001) == std::vector{DesktopCommand::Fullscreen},
+        "Negative axes can invoke desktop shortcuts");
+  hotkeys.gamepads[size_t(DesktopCommand::Reset)][0].device = "pad-A";
+  button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, false);
+  Check(button(202, "pad-B", SDL_GAMEPAD_BUTTON_GUIDE, true).empty(),
+        "An explicit shortcut host does not fall back to another gamepad");
+  SDL_Event removed{};
+  removed.type = SDL_EVENT_GAMEPAD_REMOVED;
+  removed.gdevice.which = 101;
+  Check(dispatcher.Process(hotkeys, removed, {}).empty(), "Disconnect releases shortcut state");
+  Check(button(101, "pad-A", SDL_GAMEPAD_BUTTON_START, true).empty(),
+        "Disconnected chord controls do not survive into a new host state");
+  hotkeys.gamepads[size_t(DesktopCommand::Quit)][0].controls[0] = {Kind::GamepadButton,
+                                                                   SDL_GAMEPAD_BUTTON_GUIDE};
+  bool rejected = false;
+  try {
+    hotkeys.Validate();
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected, "A single-button action cannot overlap another action's longer chord");
+  hotkeys.gamepads[size_t(DesktopCommand::Quit)][0] = {};
+  shot.controls[1] = shot.controls[2];
+  rejected = false;
+  try {
+    hotkeys.Validate();
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected, "A shortcut rejects repeated chord controls");
+}
 
 void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   using snes::frontend::DesktopUi;
@@ -377,6 +472,21 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
         "Clearing one input alternative preserves other bindings");
   editor.Applied();
   frame();
+  click(left + 465, top + 172);
+  click(left + 300, top + 364);
+  key(SDL_SCANCODE_V, SDLK_V);
+  key(SDL_SCANCODE_V, SDLK_V, 0, SDL_EVENT_KEY_UP);
+  capture(".player8-turbo.bmp");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->input.players[7].turbo[5][3] ==
+                InputBinding{InputBinding::Kind::Keyboard, SDL_SCANCODE_V} &&
+            changes->input.players[7].buttons[5][1] ==
+                InputBinding{InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH},
+        "The Input editor captures turbo separately from the selected player's normal button");
+  editor.Applied();
+  frame();
   key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
   key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE, 0, SDL_EVENT_KEY_UP);
 
@@ -452,6 +562,155 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
         "The Devices page submits controller and expansion choices using keyboard navigation");
   editor.Applied();
   frame();
+
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 360, top + 44);
+  frame();
+  frame();
+  chooseLast(172);
+  click(left + 300, top + 260);
+  padEvent = {};
+  padEvent.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+  padEvent.gbutton.which = padId;
+  padEvent.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+  ui.ProcessEvent(padEvent);
+  frame();
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->input.mouse.buttons[0][3] ==
+                InputBinding{InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH} &&
+            changes->input.mouse.buttons[0][0].kind == InputBinding::Kind::MouseButton,
+        "The peripheral editor captures a fourth mouse-button alternative without replacing its "
+        "defaults");
+  editor.Applied();
+  frame();
+  capture(".peripherals.bmp");
+  click(left + 90, top + 204);
+  frame();
+  chooseLast(268);
+  click(left + 300, top + 300);
+  key(SDL_SCANCODE_C, SDLK_C);
+  key(SDL_SCANCODE_C, SDLK_C, 0, SDL_EVENT_KEY_UP);
+  click(left + 20, top + 364);
+  capture(".peripheral-axes.bmp");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->input.mouse.axes[0][3].kind == snes::frontend::AxisBinding::Kind::Digital &&
+            changes->input.mouse.axes[0][3].digital ==
+                InputBinding{InputBinding::Kind::Keyboard, SDL_SCANCODE_C} &&
+            changes->input.mouse.axes[0][3].inverted,
+        "The axes editor captures and reverses a digital movement alternative");
+  editor.Applied();
+  frame();
+  click(left + 100, top + 76);
+  key(SDL_SCANCODE_HOME, SDLK_HOME);
+  key(SDL_SCANCODE_HOME, SDLK_HOME, 0, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  click(left + 20, top + 200);
+  click(left + 100, top + 292);
+  key(SDL_SCANCODE_HOME, SDLK_HOME);
+  key(SDL_SCANCODE_HOME, SDLK_HOME, 0, SDL_EVENT_KEY_UP);
+  for (int step = 0; step < 3; ++step) {
+    key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+    key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  }
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  click(left + 100, top + 324);
+  key(SDL_SCANCODE_HOME, SDLK_HOME);
+  key(SDL_SCANCODE_HOME, SDLK_HOME, 0, SDL_EVENT_KEY_UP);
+  for (int step = 0; step < 2; ++step) {
+    key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+    key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  }
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  click(left + 20, top + 388);
+  capture(".gun-axes.bmp");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && !changes->input.guns[0].pointerAim &&
+            changes->input.guns[0].axes[0][3].kind ==
+                snes::frontend::AxisBinding::Kind::GamepadAxis &&
+            changes->input.guns[0].axes[0][3].axis == SDL_GAMEPAD_AXIS_RIGHTX &&
+            changes->input.guns[0].axes[0][3].inverted,
+        "The gun editor replaces pointer aim with a selected signed gamepad axis");
+  editor.Applied();
+  frame();
+  click(left + 30, top + 228);
+  click(left + 300, top + 372);
+  key(SDL_SCANCODE_F9, SDLK_F9);
+  key(SDL_SCANCODE_F9, SDLK_F9, 0, SDL_EVENT_KEY_UP);
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->input.guns[0].buttons[3][3] ==
+                InputBinding{InputBinding::Kind::Keyboard, SDL_SCANCODE_F9} &&
+            changes->input.guns[0].buttons[3][0].control == SDL_SCANCODE_SPACE,
+        "The gun editor maps pause independently while retaining the default Space alternative");
+  editor.Applied();
+  frame();
+  click(left + 184, top + 540);
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 280, top + 44);
+  click(left + 500, top + 100);
+  chooseLast(100);
+  click(left + 300, top + 164);
+  frame();
+  frame();
+  chooseLast(200);
+  const float middleX = float(actualWidth) / 2, middleY = float(actualHeight) / 2;
+  click(middleX, middleY + 12);
+  padEvent = {};
+  padEvent.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+  padEvent.gbutton.which = padId;
+  padEvent.gbutton.button = SDL_GAMEPAD_BUTTON_GUIDE;
+  ui.ProcessEvent(padEvent);
+  frame();
+  click(middleX, middleY + 40);
+  padEvent.gbutton.button = SDL_GAMEPAD_BUTTON_START;
+  ui.ProcessEvent(padEvent);
+  frame();
+  click(middleX, middleY + 96);
+  padEvent = {};
+  padEvent.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+  padEvent.gaxis.which = padId;
+  padEvent.gaxis.axis = SDL_GAMEPAD_AXIS_RIGHTY;
+  padEvent.gaxis.value = -25000;
+  ui.ProcessEvent(padEvent);
+  frame();
+  capture(".pad-shortcut.bmp");
+  click(middleX - 230, middleY + 128);
+  frame();
+  frame();
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->hotkeys.gamepads[size_t(DesktopCommand::Pause)][3].device == padKey &&
+            changes->hotkeys.gamepads[size_t(DesktopCommand::Pause)][3].controls[0] ==
+                InputBinding{InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_GUIDE} &&
+            changes->hotkeys.gamepads[size_t(DesktopCommand::Pause)][3].controls[1] ==
+                InputBinding{InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_START} &&
+            changes->hotkeys.gamepads[size_t(DesktopCommand::Pause)][3].controls[3] ==
+                InputBinding{InputBinding::Kind::AxisNegative, SDL_GAMEPAD_AXIS_RIGHTY},
+        "The gamepad shortcut editor captures a specific host and a fourth alternative chord");
+  changes->Validate();
+  editor.Applied();
+  frame();
+  click(left + 184, top + 540);
+  Check(!editor.Active(), "Closing a gamepad shortcut editor returns to cancellable preferences");
+  for (unsigned frameIndex = 0; frameIndex < 12; ++frameIndex) {
+    SDL_Delay(16);
+    frame();
+  }
 
   snes::core::VideoFrame picture;
   picture.pixels.assign(picture.width * picture.height, 0xff0000ff);
@@ -583,6 +842,7 @@ int main(int argc, char **argv) {
     Shortcuts();
     CustomShortcuts();
     ModifierShortcuts();
+    GamepadShortcuts();
     SdlVideoOutput::Config config;
     config.hidden = true;
     config.vsync = false;

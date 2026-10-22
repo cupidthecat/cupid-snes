@@ -1,8 +1,21 @@
 #include "InputBindings.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace snes::frontend {
+namespace {
+void ValidateHost(const std::string &device, int threshold) {
+  if (device.empty() || device.size() > 4096 || device.find('\0') != std::string::npos ||
+      threshold < 1 || threshold > 32767)
+    throw std::invalid_argument(
+        "Input preferences contain an invalid gamepad selection or threshold");
+}
+bool Assigned(const InputAlternatives &alternatives) {
+  return std::any_of(alternatives.begin(), alternatives.end(),
+                     [](const auto &binding) { return binding.kind != InputBinding::Kind::None; });
+}
+} // namespace
 void InputBinding::Validate() const {
   const bool valid =
       (kind == Kind::None && control == 0) ||
@@ -76,16 +89,82 @@ InputBindings::InputBindings() {
     players[player] = PlayerBindings::Defaults(player);
 }
 void InputBindings::Validate() const {
+  if (turboFrequency < 1 || turboFrequency > 8)
+    throw std::invalid_argument("Turbo period must be between one and eight fields");
+  mouse.Validate(true);
+  for (const auto &gun : guns)
+    gun.Validate(false);
   for (const auto &player : players) {
-    if (player.device.empty() || player.device.size() > 4096 ||
-        player.device.find('\0') != std::string::npos || player.axisThreshold < 1 ||
-        player.axisThreshold > 32767)
-      throw std::invalid_argument(
-          "Input preferences contain an invalid gamepad selection or threshold");
-    for (const auto &button : player.buttons)
-      for (const auto &binding : button)
-        binding.Validate();
+    ValidateHost(player.device, player.axisThreshold);
+    for (size_t button = 0; button < controllerButtons.size(); ++button) {
+      for (const auto *alternatives : {&player.buttons[button], &player.turbo[button]})
+        for (const auto &binding : *alternatives)
+          binding.Validate();
+      if (!controllerButtons[button].turbo && Assigned(player.turbo[button]))
+        throw std::invalid_argument("Directional controls do not have turbo bindings");
+    }
   }
+}
+void AxisBinding::Validate() const {
+  digital.Validate();
+  if (int(kind) < 0 || kind > Kind::Digital || scale < 1 || scale > 400 ||
+      (kind == Kind::GamepadAxis && (axis < 0 || axis >= SDL_GAMEPAD_AXIS_COUNT)) ||
+      (kind != Kind::GamepadAxis && axis != 0) ||
+      (kind != Kind::Digital && digital.kind != InputBinding::Kind::None))
+    throw std::invalid_argument("Analog input contains an invalid source or scale");
+}
+void PeripheralBindings::Validate(bool mouse) const {
+  ValidateHost(device, axisThreshold);
+  if (mouse && pointerAim)
+    throw std::invalid_argument("Relative mouse movement cannot use absolute pointer aim");
+  for (size_t button = 0; button < buttons.size(); ++button) {
+    for (const auto *alternatives : {&buttons[button], &turbo[button]})
+      for (const auto &binding : *alternatives)
+        binding.Validate();
+    if ((mouse && button >= mouseButtonKeys.size()) || (!mouse && button == 5)) {
+      if ((mouse && Assigned(buttons[button])) || Assigned(turbo[button]))
+        throw std::invalid_argument("Peripheral contains an unsupported button or turbo binding");
+    }
+  }
+  for (const auto &axis : axes)
+    for (const auto &binding : axis)
+      binding.Validate();
+}
+PeripheralBindings PeripheralBindings::Mouse() {
+  PeripheralBindings result;
+  result.buttons[0][0] = {InputBinding::Kind::MouseButton, SDL_BUTTON_LEFT};
+  result.buttons[1][0] = {InputBinding::Kind::MouseButton, SDL_BUTTON_RIGHT};
+  result.axes[0][0].kind = AxisBinding::Kind::MouseX;
+  result.axes[1][0].kind = AxisBinding::Kind::MouseY;
+  return result;
+}
+PeripheralBindings PeripheralBindings::Gun(size_t gun) {
+  PeripheralBindings result;
+  result.pointerAim = gun == 0;
+  const auto key = [&](size_t button, SDL_Scancode key) {
+    result.buttons[button][0] = {InputBinding::Kind::Keyboard, key};
+  };
+  if (gun == 0) {
+    result.buttons[0][0] = {InputBinding::Kind::MouseButton, SDL_BUTTON_LEFT};
+    result.buttons[1][0] = {InputBinding::Kind::MouseButton, SDL_BUTTON_RIGHT};
+    key(2, SDL_SCANCODE_T);
+    key(3, SDL_SCANCODE_SPACE);
+    key(4, SDL_SCANCODE_RETURN);
+    key(5, SDL_SCANCODE_O);
+  } else {
+    key(0, SDL_SCANCODE_RCTRL);
+    key(4, SDL_SCANCODE_BACKSPACE);
+    key(5, SDL_SCANCODE_U);
+    constexpr std::array keys{SDL_SCANCODE_J, SDL_SCANCODE_L, SDL_SCANCODE_I, SDL_SCANCODE_K};
+    for (size_t index = 0; index < keys.size(); ++index) {
+      auto &axis = result.axes[index / 2][index % 2];
+      axis.kind = AxisBinding::Kind::Digital;
+      axis.scale = 300;
+      axis.inverted = index % 2 == 0;
+      axis.digital = {InputBinding::Kind::Keyboard, keys[index]};
+    }
+  }
+  return result;
 }
 void InputBindings::SetKeyboard(const KeyboardMap &keyboard) {
   for (size_t button = 0; button < controllerButtons.size(); ++button) {

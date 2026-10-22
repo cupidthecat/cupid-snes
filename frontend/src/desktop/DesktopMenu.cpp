@@ -1,4 +1,5 @@
 #include "DesktopMenu.hpp"
+#include "SdlInputProvider.hpp"
 
 #include "imgui.h"
 #include "snes/core/FilePath.hpp"
@@ -13,6 +14,8 @@ struct DesktopMenu::Impl {
   std::vector<std::string> recent;
   Hotkeys hotkeys;
   HotkeyDispatcher dispatcher;
+  GamepadHotkeyDispatcher gamepadDispatcher;
+  std::map<SDL_JoystickID, std::string> gamepadKeys;
   bool loaded = false, paused = false;
 
   void Item(const char *label, DesktopCommand command, bool enabled = true, bool selected = false) {
@@ -144,6 +147,58 @@ std::optional<DesktopCommand> DesktopMenu::KeyCommand(const SDL_KeyboardEvent &k
 }
 void DesktopMenu::ResetHotkeys() noexcept {
   impl_->dispatcher.Reset();
+  impl_->gamepadDispatcher.Synchronize(impl_->hotkeys);
+}
+std::vector<DesktopCommand> DesktopMenu::GamepadCommands(const SDL_Event &event, bool enabled) {
+  auto &self = *impl_;
+  const auto type = event.type;
+  SDL_JoystickID id = 0;
+  if (type == SDL_EVENT_GAMEPAD_ADDED || type == SDL_EVENT_GAMEPAD_REMOVED)
+    id = event.gdevice.which;
+  else if (type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+    id = event.gbutton.which;
+    if (type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
+      self.dispatcher.Reset();
+  } else if (type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+    id = event.gaxis.which;
+    if (event.gaxis.value > 16000 || event.gaxis.value < -16000)
+      self.dispatcher.Reset();
+  } else
+    return {};
+  if (type == SDL_EVENT_GAMEPAD_REMOVED) {
+    self.gamepadKeys.erase(id);
+    return self.gamepadDispatcher.Process(self.hotkeys, event, {}, false);
+  }
+  if (!self.gamepadKeys.contains(id))
+    for (const auto &pad : SdlInputProvider::ConnectedGamepads())
+      self.gamepadKeys[pad.id] = pad.key;
+  const auto found = self.gamepadKeys.find(id);
+  if (found == self.gamepadKeys.end())
+    return {};
+  if (type == SDL_EVENT_GAMEPAD_ADDED) {
+    if (auto *pad = SDL_OpenGamepad(id)) {
+      SDL_Event snapshot{};
+      snapshot.gbutton.which = id;
+      for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button) {
+        snapshot.type = SDL_GetGamepadButton(pad, SDL_GamepadButton(button))
+                            ? SDL_EVENT_GAMEPAD_BUTTON_DOWN
+                            : SDL_EVENT_GAMEPAD_BUTTON_UP;
+        snapshot.gbutton.button = Uint8(button);
+        self.gamepadDispatcher.Process(self.hotkeys, snapshot, found->second, false);
+      }
+      snapshot = {};
+      snapshot.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+      snapshot.gaxis.which = id;
+      for (int axis = 0; axis < SDL_GAMEPAD_AXIS_COUNT; ++axis) {
+        snapshot.gaxis.axis = Uint8(axis);
+        snapshot.gaxis.value = SDL_GetGamepadAxis(pad, SDL_GamepadAxis(axis));
+        self.gamepadDispatcher.Process(self.hotkeys, snapshot, found->second, false);
+      }
+      SDL_CloseGamepad(pad);
+    }
+    return {};
+  }
+  return self.gamepadDispatcher.Process(self.hotkeys, event, found->second, enabled);
 }
 
 } // namespace snes::frontend

@@ -15,7 +15,7 @@ A multitap takes four consecutive player slots. With a pad on port one and a mul
 
 Each player can use its automatic gamepad slot, disable gamepad input, or select a particular connected gamepad. Explicit selections use the device GUID and its serial number or system path when available. Devices with neither use an ordinal; identical devices without a unique identity may need reselection after an application restart. A missing selected gamepad leaves its controls released. Keyboard and mouse alternatives remain independent of gamepad selection. Axis thresholds accept 1 through 32767; a control activates only when its magnitude exceeds the selected threshold.
 
-Mouse mode captures relative movement in the window. Escape exits. The frontend supports one host mouse on either console port; the core can receive separate mouse input for both ports.
+Mouse mode captures relative movement in the window. Escape exits. The frontend supports one host mouse on either console port; the core can receive separate mouse input for both ports. File > Preferences > Peripherals remaps mouse buttons and movement axes, including gamepad or digital sources, gain, and reversal. The Input page also provides separate turbo bindings for each player's non-directional buttons; see [desktop preferences](desktop.md#preferences).
 
 ## Serial behavior
 

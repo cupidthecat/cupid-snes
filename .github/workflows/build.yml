@@ -159,7 +159,7 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           ninja-build libasound2-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev
-          libxi-dev libxfixes-dev libxss-dev xvfb
+          libxi-dev libxfixes-dev libxss-dev xvfb xdotool
       - name: Cache desktop dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -178,6 +178,8 @@ jobs:
           -R '^snes_(desktop_tests|desktop_application_tests|preferences_tests|session_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
       - name: Test X11 desktop integration
         run: xvfb-run -a env SDL_VIDEODRIVER=x11 SNES_TEST_WINDOW=1 out/build/linux/tests/snes_desktop_tests
+      - name: Test native application gamepad shortcuts
+        run: xvfb-run -a python3 tests/run_x11_application.py out/build/linux/tests/snes_desktop_application_tests
   windows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
