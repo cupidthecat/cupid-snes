@@ -1,18 +1,10 @@
 // SDL3 input provider interface.
 
 #pragma once
-// Reads the SDL keyboard state array each frame and maps scancodes to
-// SNES controller buttons.  Default layout (easily reconfigurable):
-//
-//   D-pad    → Arrow keys
-//   A        → X          B → Z
-//   X        → S          Y → A
-//   L        → Q          R → W
-//   Start    → Enter      Select → Right Shift
-//
-// Call SDL_PumpEvents() before Poll() so the keyboard state is current.
+// Maps host controls to console devices. Pump SDL events before polling.
 
 #include "VideoGeometry.hpp"
+#include "input/InputBindings.hpp"
 #include "snes/core/Platform.hpp"
 
 #include <SDL3/SDL.h>
@@ -23,24 +15,16 @@ namespace snes::frontend {
 
 class SdlInputProvider final : public snes::core::IInputProvider {
 public:
-  /// Per-button scancode bindings (all configurable).
-  struct KeyMap {
-    SDL_Scancode up = SDL_SCANCODE_UP;
-    SDL_Scancode down = SDL_SCANCODE_DOWN;
-    SDL_Scancode left = SDL_SCANCODE_LEFT;
-    SDL_Scancode right = SDL_SCANCODE_RIGHT;
-    SDL_Scancode a = SDL_SCANCODE_X;
-    SDL_Scancode b = SDL_SCANCODE_Z;
-    SDL_Scancode x = SDL_SCANCODE_S;
-    SDL_Scancode y = SDL_SCANCODE_A;
-    SDL_Scancode l = SDL_SCANCODE_Q;
-    SDL_Scancode r = SDL_SCANCODE_W;
-    SDL_Scancode start = SDL_SCANCODE_RETURN;
-    SDL_Scancode select = SDL_SCANCODE_RSHIFT;
+  using KeyMap = KeyboardMap;
+  struct Gamepad {
+    SDL_JoystickID id = 0;
+    std::string name, key;
   };
+  static std::vector<Gamepad> ConnectedGamepads();
 
   explicit SdlInputProvider();
   explicit SdlInputProvider(const KeyMap &keyMap);
+  explicit SdlInputProvider(const InputBindings &bindings);
   ~SdlInputProvider() override;
 
   // IInputProvider
@@ -53,15 +37,7 @@ public:
     gunFocused_ = focused;
   }
 
-  /// Replace the current key mapping at runtime.
-  void SetKeyMap(const KeyMap &keyMap) noexcept {
-    keyMap_ = keyMap;
-  }
-
-  /// Access the current key mapping.
-  const KeyMap &GetKeyMap() const noexcept {
-    return keyMap_;
-  }
+  void SetBindings(const InputBindings &bindings);
   void SetEnabled(bool enabled) noexcept {
     if (enabled_ == enabled)
       return;
@@ -109,11 +85,12 @@ private:
   static ScriptRanges ParseScript();
   bool ScriptPressed(Button button, uint64_t frameIndex) const noexcept;
 
-  KeyMap keyMap_;
+  InputBindings bindings_;
   bool enabled_ = true;
   bool captureKeyboard_ = false, capturePointer_ = false;
   ScriptRanges scriptedRanges_;
-  std::array<SDL_Gamepad *, 8> gamepads_{};
+  std::vector<SDL_Gamepad *> gamepads_{8};
+  std::vector<std::string> gamepadKeys_{8};
   void RefreshGamepads(uint64_t frameIndex);
   uint64_t lastDeviceFrame_ = uint64_t(-1);
   float mouseFractionX_ = 0, mouseFractionY_ = 0;

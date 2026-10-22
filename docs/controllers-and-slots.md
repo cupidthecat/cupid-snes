@@ -9,9 +9,11 @@ Each console port accepts `pad`, `mouse`, `multitap`, or `none`. Both default to
 .\out\build\release\frontend\snes_frontend.exe --port2=multitap "C:\games\game.sfc"
 ```
 
-The keyboard and first host gamepad control player one. Additional host gamepads control subsequent players in connection order. The keyboard uses arrow keys, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start, and Right Shift for Select. Host gamepad face buttons map by position: south/east/west/north become B/A/Y/X. The left stick also controls the directional pad.
+By default, the keyboard and first host gamepad control player one. Additional host gamepads control subsequent players in connection order. The keyboard uses arrow keys, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start, and Right Shift for Select. Host gamepad face buttons map by position: south/east/west/north become B/A/Y/X. The left stick also controls the directional pad. File > Preferences > Input remaps all eight players, with four alternative controls per button. Each alternative accepts a key, gamepad button, signed gamepad axis, or mouse button.
 
 A multitap takes four consecutive player slots. With a pad on port one and a multitap on port two, players two through five use the multitap. Two multitaps expose eight players. A mouse or empty port reserves one player slot. Disconnecting a host gamepad releases its buttons and preserves the other assignments; a new device takes the first vacant slot.
+
+Each player can use its automatic gamepad slot, disable gamepad input, or select a particular connected gamepad. Explicit selections use the device GUID and its serial number or system path when available. Devices with neither use an ordinal; identical devices without a unique identity may need reselection after an application restart. A missing selected gamepad leaves its controls released. Keyboard and mouse alternatives remain independent of gamepad selection. Axis thresholds accept 1 through 32767; a control activates only when its magnitude exceeds the selected threshold.
 
 Mouse mode captures relative movement in the window. Escape exits. The frontend supports one host mouse on either console port; the core can receive separate mouse input for both ports.
 

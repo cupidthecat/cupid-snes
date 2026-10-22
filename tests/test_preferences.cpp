@@ -35,7 +35,12 @@ void RoundTrip(const fs::path &directory) {
   preferences.scale = 5;
   preferences.mute = true;
   preferences.aspectCorrection = true;
-  preferences.keyboard.a = SDL_SCANCODE_C;
+  preferences.input.players[0].buttons[4][0] = {snes::frontend::InputBinding::Kind::Keyboard,
+                                                SDL_SCANCODE_C};
+  preferences.input.players[7].device = "saved device with spaces and \\\"quotes\\\"";
+  preferences.input.players[7].axisThreshold = 12000;
+  preferences.input.players[7].buttons[5][3] = {snes::frontend::InputBinding::Kind::AxisNegative,
+                                                SDL_GAMEPAD_AXIS_RIGHTY};
   preferences.console.ports[0] = snes::core::ControllerDevice::Multitap;
   preferences.console.expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
   preferences.hotkeys.bindings[size_t(snes::frontend::DesktopCommand::Pause)][0] = {
@@ -55,7 +60,7 @@ void RoundTrip(const fs::path &directory) {
   PreferencesFile fresh(path);
   const auto loaded = fresh.Load();
   Check(loaded.volume == 73 && loaded.scale == 5 && loaded.mute && loaded.aspectCorrection &&
-            loaded.keyboard.a == SDL_SCANCODE_C && loaded.audioDevice == preferences.audioDevice &&
+            loaded.input == preferences.input && loaded.audioDevice == preferences.audioDevice &&
             loaded.firmwareDirectory == preferences.firmwareDirectory &&
             loaded.screenshotDirectory == preferences.screenshotDirectory &&
             loaded.recent == normalized,
@@ -82,10 +87,19 @@ void RoundTrip(const fs::path &directory) {
 void BadInput(const fs::path &directory) {
   const auto path = directory / "bad.cfg";
   for (const std::string text :
-       {"Cupid-SNES preferences 2\n", "Cupid-SNES preferences 1\naudio.volume \"201\"\n",
+       {"Cupid-SNES preferences 2\n",
+        "Cupid-SNES preferences 1\naudio.volume \"201\"\n",
         "Cupid-SNES preferences 1\nvideo.scale \"0\"\n",
         "Cupid-SNES preferences 1\naudio.mute \"2\"\n",
         "Cupid-SNES preferences 1\nkey.a \"9999\"\n",
+        "Cupid-SNES preferences 1\nplayer.8.threshold \"0\"\n",
+        "Cupid-SNES preferences 1\nplayer.2.device \"\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"6\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"0\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"1\"\nplayer.1.up.0.control \"0\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"2\"\nplayer.1.up.0.control \"999\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"3\"\nplayer.1.up.0.control \"9\"\n",
+        "Cupid-SNES preferences 1\nplayer.1.up.0.type \"5\"\nplayer.1.up.0.control \"6\"\n",
         "Cupid-SNES preferences 1\ninput.port1 \"4\"\n",
         "Cupid-SNES preferences 1\ninput.port1 \"2\"\ninput.port2 \"2\"\n",
         "Cupid-SNES preferences 1\ninput.expansion \"2\"\n",
@@ -117,6 +131,21 @@ void BadInput(const fs::path &directory) {
     Check(rejected && Read(path) == text,
           "Rejected preferences cannot be silently replaced with defaults");
   }
+}
+void LegacyInput(const fs::path &directory) {
+  using snes::frontend::InputBinding;
+  const auto path = directory / "legacy.cfg";
+  Write(path, "Cupid-SNES preferences 1\nkey.up \"0\"\nkey.a \"6\"\n");
+  PreferencesFile file(path);
+  const auto loaded = file.Load();
+  Check(loaded.input.players[0].buttons[0][0] == InputBinding{} &&
+            loaded.input.players[0].buttons[4][0] ==
+                InputBinding{InputBinding::Kind::Keyboard, SDL_SCANCODE_C} &&
+            loaded.input.players[0].buttons[0][1].kind == InputBinding::Kind::GamepadButton &&
+            loaded.input.players[7].buttons[4][0] == InputBinding{},
+        "Legacy key preferences migrate without duplicating keyboard input across players");
+  file.Save(loaded);
+  Check(file.Load().input == loaded.input, "Migrated input settings survive a second profile load");
 }
 void FailedReplacement(const fs::path &directory) {
   const auto folder = directory / "settings";
@@ -212,6 +241,7 @@ int main() {
   try {
     RoundTrip(directory);
     BadInput(directory);
+    LegacyInput(directory);
     FailedReplacement(directory);
     RecentRequests();
     RelativeDirectories(directory);

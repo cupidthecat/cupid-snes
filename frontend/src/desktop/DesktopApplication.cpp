@@ -79,7 +79,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     audioConfig.deviceName = preferences.audioDevice;
     SdlAudioOutput audio(audioConfig);
     audio.SetVolume(preferences.volume, preferences.mute);
-    SdlInputProvider input(preferences.keyboard);
+    SdlInputProvider input(preferences.input);
     Session session(std::move(config), {&video, &audio, &input}, devices);
     struct SaveOnExit {
       Session &session;
@@ -203,7 +203,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           audio.SelectDevice(next.audioDevice);
         video.SetPresentation(presentation(next));
         audio.SetVolume(next.volume, nextMuted);
-        input.SetKeyMap(next.keyboard);
+        input.SetBindings(next.input);
         preferencesFile.Save(next);
       } catch (...) {
         const auto original = std::current_exception();
@@ -219,7 +219,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         } catch (const std::exception &error) {
           std::cerr << "Cannot restore video settings: " << error.what() << '\n';
         }
-        input.SetKeyMap(preferences.keyboard);
+        input.SetBindings(preferences.input);
         std::rethrow_exception(original);
       }
       if (changedFirmware)

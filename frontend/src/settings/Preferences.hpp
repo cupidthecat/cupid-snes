@@ -1,8 +1,8 @@
 #pragma once
 
 #include "ConsoleDevices.hpp"
-#include "SdlInputProvider.hpp"
 #include "input/Hotkeys.hpp"
+#include "input/InputBindings.hpp"
 #include "session/LaunchRequest.hpp"
 #include <filesystem>
 #include <map>
@@ -20,7 +20,7 @@ struct Preferences {
   bool mute = false, muteUnfocused = false;
   FocusBehavior focus = FocusBehavior::Pause;
   std::string audioDevice, firmwareDirectory, screenshotDirectory;
-  SdlInputProvider::KeyMap keyboard;
+  InputBindings input;
   ConsoleDevices console;
   Hotkeys hotkeys;
   std::vector<LaunchRequest> recent;

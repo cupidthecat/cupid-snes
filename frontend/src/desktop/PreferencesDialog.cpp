@@ -1,6 +1,7 @@
 #include "PreferencesDialog.hpp"
 
 #include "SdlAudioOutput.hpp"
+#include "SdlInputProvider.hpp"
 #include "imgui.h"
 #include "imgui_stdlib.h"
 #include "snes/core/FilePath.hpp"
@@ -9,20 +10,6 @@
 #include <utility>
 
 namespace snes::frontend {
-namespace {
-using KeyMap = SdlInputProvider::KeyMap;
-struct Binding {
-  const char *name;
-  SDL_Scancode KeyMap::*key;
-};
-constexpr std::array bindings{Binding{"Up", &KeyMap::up},       Binding{"Down", &KeyMap::down},
-                              Binding{"Left", &KeyMap::left},   Binding{"Right", &KeyMap::right},
-                              Binding{"A", &KeyMap::a},         Binding{"B", &KeyMap::b},
-                              Binding{"X", &KeyMap::x},         Binding{"Y", &KeyMap::y},
-                              Binding{"L", &KeyMap::l},         Binding{"R", &KeyMap::r},
-                              Binding{"Start", &KeyMap::start}, Binding{"Select", &KeyMap::select}};
-} // namespace
-
 struct PreferencesDialog::Impl {
   Preferences draft;
   std::string file, error;
@@ -30,6 +17,8 @@ struct PreferencesDialog::Impl {
   std::optional<Preferences> changes;
   bool active = false, opening = false, closeOnApply = false;
   int capturing = -1;
+  int inputPlayer = 0, inputSlot = 0, capturedPlayer = 0, capturedInputSlot = 0;
+  std::vector<SdlInputProvider::Gamepad> gamepads;
   int hotkeyCommand = -1, hotkeySlot = 0, capturedSlot = 0;
   KeyChord pendingModifier;
   ImGuiTextFilter hotkeyFilter;
@@ -74,34 +63,84 @@ struct PreferencesDialog::Impl {
   }
 
   void Input() {
-    ImGui::TextWrapped("Player 1 keyboard. Select a binding, then press a key. Escape cancels.");
-    if (ImGui::BeginTable("Bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+    if (ImGui::Combo("Player", &inputPlayer,
+                     "1\0"
+                     "2\0"
+                     "3\0"
+                     "4\0"
+                     "5\0"
+                     "6\0"
+                     "7\0"
+                     "8\0"))
+      capturing = -1;
+    auto &player = draft.input.players[inputPlayer];
+    std::string selected = player.device == "auto"   ? "Automatic player slot"
+                           : player.device == "none" ? "Disabled"
+                                                     : "Unavailable saved gamepad";
+    for (const auto &pad : gamepads)
+      if (pad.key == player.device)
+        selected = pad.name;
+    ImGui::SetNextItemWidth(300);
+    if (ImGui::BeginCombo("Gamepad", selected.c_str())) {
+      if (ImGui::Selectable("Automatic player slot", player.device == "auto"))
+        player.device = "auto";
+      if (ImGui::Selectable("Disabled", player.device == "none"))
+        player.device = "none";
+      for (size_t index = 0; index < gamepads.size(); ++index) {
+        ImGui::PushID(int(index));
+        if (ImGui::Selectable(("Device " + std::to_string(index + 1)).c_str(),
+                              player.device == gamepads[index].key))
+          player.device = gamepads[index].key;
+        ImGui::SameLine();
+        ImGui::TextUnformatted(gamepads[index].name.c_str());
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh"))
+      gamepads = SdlInputProvider::ConnectedGamepads();
+    ImGui::SliderInt("Axis threshold", &player.axisThreshold, 1, 32767);
+    if (ImGui::Combo("Binding", &inputSlot,
+                     "1\0"
+                     "2\0"
+                     "3\0"
+                     "4\0"))
+      capturing = -1;
+    ImGui::TextWrapped(
+        "Select a binding, then press a key, pad control, or mouse button. Escape cancels.");
+    if (ImGui::BeginTable(
+            "Bindings", 3,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
+            {0, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing()})) {
       ImGui::TableSetupColumn("Button", ImGuiTableColumnFlags_WidthStretch);
-      ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Clear", ImGuiTableColumnFlags_WidthFixed, 64);
-      for (unsigned i = 0; i < bindings.size(); ++i) {
+      for (unsigned i = 0; i < controllerButtons.size(); ++i) {
         ImGui::PushID(int(i));
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted(bindings[i].name);
+        ImGui::TextUnformatted(controllerButtons[i].label);
         ImGui::TableNextColumn();
-        auto &key = draft.keyboard.*bindings[i].key;
-        const auto *name = key == SDL_SCANCODE_UNKNOWN ? "Unassigned" : SDL_GetScancodeName(key);
-        if (ImGui::Button(capturing == int(i) ? "Press a key..." : name, {-1, 0})) {
+        auto &binding = player.buttons[i][inputSlot];
+        if (ImGui::Button(capturing == int(i) ? "Press a control..." : binding.Label().c_str(),
+                          {-1, 0})) {
           capturing = int(i);
+          capturedPlayer = inputPlayer;
+          capturedInputSlot = inputSlot;
           hotkeyCommand = -1;
         }
         ImGui::TableNextColumn();
         if (ImGui::Button("Clear")) {
-          key = SDL_SCANCODE_UNKNOWN;
+          binding = {};
           capturing = -1;
         }
         ImGui::PopID();
       }
       ImGui::EndTable();
     }
-    if (ImGui::Button("Restore keyboard defaults")) {
-      draft.keyboard = {};
+    if (ImGui::Button("Restore player defaults")) {
+      player = PlayerBindings::Defaults(inputPlayer);
       capturing = -1;
     }
   }
@@ -221,28 +260,71 @@ void PreferencesDialog::Open(const Preferences &current, const std::filesystem::
   impl_->draft = current;
   impl_->file = core::PathText(file);
   impl_->audioDevices = SdlAudioOutput::DeviceNames();
+  impl_->gamepads = SdlInputProvider::ConnectedGamepads();
   impl_->error.clear();
   impl_->changes.reset();
   impl_->active = impl_->opening = true;
   impl_->capturing = -1;
+  impl_->inputPlayer = impl_->inputSlot = 0;
   impl_->hotkeyCommand = -1;
   impl_->pendingModifier = {};
 }
 bool PreferencesDialog::Active() const noexcept {
   return impl_->active;
 }
-void PreferencesDialog::ProcessEvent(const SDL_Event &event) {
+bool PreferencesDialog::ProcessEvent(const SDL_Event &event) {
   auto &self = *impl_;
   if (!self.active)
-    return;
+    return false;
+  if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED)
+    self.gamepads = SdlInputProvider::ConnectedGamepads();
+  if (self.capturing >= 0) {
+    InputBinding binding;
+    auto &player = self.draft.input.players[self.capturedPlayer];
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+      if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
+        self.capturing = -1;
+        return true;
+      }
+      if (event.key.scancode > SDL_SCANCODE_UNKNOWN && event.key.scancode < SDL_SCANCODE_COUNT)
+        binding = {InputBinding::Kind::Keyboard, event.key.scancode};
+    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button >= 1 &&
+               event.button.button <= 5)
+      binding = {InputBinding::Kind::MouseButton, event.button.button};
+    else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+             event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+      const auto id =
+          event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? event.gbutton.which : event.gaxis.which;
+      const auto found = std::find_if(self.gamepads.begin(), self.gamepads.end(),
+                                      [&](const auto &pad) { return pad.id == id; });
+      if (found == self.gamepads.end() || player.device == "none" ||
+          (player.device != "auto" && player.device != found->key))
+        return true;
+      if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
+        binding = {InputBinding::Kind::GamepadButton, event.gbutton.button};
+      else if (event.gaxis.value > player.axisThreshold ||
+               event.gaxis.value < -player.axisThreshold)
+        binding = {event.gaxis.value > 0 ? InputBinding::Kind::AxisPositive
+                                         : InputBinding::Kind::AxisNegative,
+                   event.gaxis.axis};
+    }
+    if (binding.kind != InputBinding::Kind::None) {
+      binding.Validate();
+      player.buttons[self.capturing][self.capturedInputSlot] = binding;
+      self.capturing = -1;
+    }
+    return event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+           event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+           event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION;
+  }
   if (self.hotkeyCommand >= 0 && event.type == SDL_EVENT_KEY_UP &&
       self.pendingModifier.scancode != SDL_SCANCODE_UNKNOWN &&
       event.key.scancode == self.pendingModifier.scancode) {
     self.AssignHotkey(self.pendingModifier);
-    return;
+    return true;
   }
   if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat)
-    return;
+    return false;
   if (self.hotkeyCommand >= 0) {
     const auto chord = KeyChord::From(event.key);
     if (chord.scancode == SDL_SCANCODE_ESCAPE && chord.modifiers == 0)
@@ -251,14 +333,13 @@ void PreferencesDialog::ProcessEvent(const SDL_Event &event) {
       self.pendingModifier = chord;
     else
       self.AssignHotkey(chord);
-    return;
+    return true;
   }
-  if (self.capturing >= 0) {
-    if (event.key.scancode != SDL_SCANCODE_ESCAPE)
-      self.draft.keyboard.*bindings[self.capturing].key = event.key.scancode;
-    self.capturing = -1;
-  } else if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+  if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
     self.active = false;
+    return true;
+  }
+  return false;
 }
 void PreferencesDialog::Draw() {
   auto &self = *impl_;

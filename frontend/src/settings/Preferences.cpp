@@ -11,15 +11,6 @@
 namespace snes::frontend {
 namespace {
 constexpr size_t recentLimit = 10, maximumFileSize = 1024 * 1024;
-constexpr std::array keyNames{"up", "down", "left", "right", "a",     "b",
-                              "x",  "y",    "l",    "r",     "start", "select"};
-constexpr std::array keyMembers{
-    &SdlInputProvider::KeyMap::up,    &SdlInputProvider::KeyMap::down,
-    &SdlInputProvider::KeyMap::left,  &SdlInputProvider::KeyMap::right,
-    &SdlInputProvider::KeyMap::a,     &SdlInputProvider::KeyMap::b,
-    &SdlInputProvider::KeyMap::x,     &SdlInputProvider::KeyMap::y,
-    &SdlInputProvider::KeyMap::l,     &SdlInputProvider::KeyMap::r,
-    &SdlInputProvider::KeyMap::start, &SdlInputProvider::KeyMap::select};
 
 int Number(std::string_view text, int minimum, int maximum) {
   int value = 0;
@@ -46,8 +37,22 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
       {"path.firmware", p.firmwareDirectory},
       {"path.screenshots", p.screenshotDirectory},
       {"recent.count", std::to_string(p.recent.size())}};
-  for (unsigned index = 0; index < keyNames.size(); ++index)
-    result["key." + std::string(keyNames[index])] = std::to_string(p.keyboard.*keyMembers[index]);
+  const auto keyboard = p.input.Keyboard();
+  for (const auto &button : controllerButtons)
+    result["key." + std::string(button.key)] = std::to_string(keyboard.*button.keyboard);
+  for (size_t player = 0; player < p.input.players.size(); ++player) {
+    const auto prefix = "player." + std::to_string(player + 1) + ".";
+    const auto &mapping = p.input.players[player];
+    result[prefix + "device"] = mapping.device;
+    result[prefix + "threshold"] = std::to_string(mapping.axisThreshold);
+    for (size_t button = 0; button < controllerButtons.size(); ++button) {
+      for (size_t slot = 0; slot < mapping.buttons[button].size(); ++slot) {
+        const auto binding = prefix + controllerButtons[button].key + "." + std::to_string(slot);
+        result[binding + ".type"] = std::to_string(int(mapping.buttons[button][slot].kind));
+        result[binding + ".control"] = std::to_string(mapping.buttons[button][slot].control);
+      }
+    }
+  }
   for (size_t command = 0; command < desktopCommands.size(); ++command) {
     for (size_t slot = 0; slot < Hotkeys::bindingCount; ++slot) {
       const auto prefix =
@@ -71,12 +76,10 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
 void Preferences::Validate() const {
   console.Validate();
   hotkeys.Validate();
+  input.Validate();
   if (scale < 1 || scale > 6 || volume < 0 || volume > 200 || int(focus) < 0 || int(focus) > 2 ||
       recent.size() > recentLimit)
     throw std::invalid_argument("Preferences contain an unsupported setting");
-  for (const auto member : keyMembers)
-    if (keyboard.*member < SDL_SCANCODE_UNKNOWN || keyboard.*member >= SDL_SCANCODE_COUNT)
-      throw std::invalid_argument("Keyboard preference contains an invalid scancode");
   for (const auto &request : recent) {
     if (int(request.kind) < 0 || request.kind > LaunchRequest::Kind::PowerFest94 ||
         request.paths[0].empty())
@@ -189,10 +192,25 @@ Preferences PreferencesFile::Load() {
       chord.modifiers = unsigned(number(prefix + "modifiers", chord.modifiers, 0, 15));
     }
   }
-  for (unsigned index = 0; index < keyNames.size(); ++index)
-    p.keyboard.*keyMembers[index] =
-        SDL_Scancode(number("key." + std::string(keyNames[index]), p.keyboard.*keyMembers[index], 0,
-                            SDL_SCANCODE_COUNT - 1));
+  KeyboardMap keyboard;
+  for (const auto &button : controllerButtons)
+    keyboard.*button.keyboard = SDL_Scancode(number(
+        "key." + std::string(button.key), keyboard.*button.keyboard, 0, SDL_SCANCODE_COUNT - 1));
+  p.input.SetKeyboard(keyboard);
+  for (size_t player = 0; player < p.input.players.size(); ++player) {
+    const auto prefix = "player." + std::to_string(player + 1) + ".";
+    auto &mapping = p.input.players[player];
+    mapping.device = text(prefix + "device", mapping.device);
+    mapping.axisThreshold = number(prefix + "threshold", mapping.axisThreshold, 1, 32767);
+    for (size_t button = 0; button < controllerButtons.size(); ++button) {
+      for (size_t slot = 0; slot < mapping.buttons[button].size(); ++slot) {
+        const auto binding = prefix + controllerButtons[button].key + "." + std::to_string(slot);
+        auto &target = mapping.buttons[button][slot];
+        target.kind = InputBinding::Kind(number(binding + ".type", int(target.kind), 0, 5));
+        target.control = number(binding + ".control", target.control, 0, SDL_SCANCODE_COUNT - 1);
+      }
+    }
+  }
   const auto count = number("recent.count", 0, 0, int(recentLimit));
   for (int index = 0; index < count; ++index) {
     const auto prefix = "recent." + std::to_string(index) + ".";

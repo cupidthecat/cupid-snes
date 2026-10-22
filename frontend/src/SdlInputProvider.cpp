@@ -8,11 +8,75 @@
 #include <string>
 
 namespace snes::frontend {
+namespace {
+std::string GamepadKey(SDL_Gamepad *pad) {
+  char guid[33];
+  SDL_GUIDToString(SDL_GetGamepadGUIDForID(SDL_GetGamepadID(pad)), guid, sizeof(guid));
+  std::string key = guid;
+  if (const auto *serial = SDL_GetGamepadSerial(pad); serial && *serial)
+    return key + "/serial/" + serial;
+  if (const auto *path = SDL_GetGamepadPath(pad); path && *path)
+    return key + "/path/" + path;
+  return key + "/index/";
+}
+} // namespace
 
-SdlInputProvider::SdlInputProvider() : SdlInputProvider(KeyMap{}) {}
+std::vector<SdlInputProvider::Gamepad> SdlInputProvider::ConnectedGamepads() {
+  static std::vector<Gamepad> known;
+  std::vector<Gamepad> result;
+  int count = 0;
+  auto *ids = SDL_GetGamepads(&count);
+  for (int i = 0; ids && i < count; ++i) {
+    auto *pad = SDL_OpenGamepad(ids[i]);
+    if (!pad)
+      continue;
+    const auto base = GamepadKey(pad);
+    const auto previous = std::find_if(known.begin(), known.end(), [&](const auto &device) {
+      return device.id == ids[i] && device.key.starts_with(base);
+    });
+    auto key = previous != known.end() ? previous->key : base;
+    if (previous == known.end()) {
+      unsigned ordinal = 0;
+      const auto occupied = [&](const auto &device) {
+        return device.key == key && std::find(ids, ids + count, device.id) != ids + count;
+      };
+      if (base.ends_with("/index/"))
+        key += "0";
+      while (std::any_of(known.begin(), known.end(), occupied) ||
+             std::any_of(result.begin(), result.end(), occupied)) {
+        ++ordinal;
+        key = base + (base.ends_with("/index/") ? "" : "/index/") + std::to_string(ordinal);
+      }
+    }
+    const auto *name = SDL_GetGamepadName(pad);
+    result.push_back({ids[i], name ? name : "Gamepad", std::move(key)});
+    SDL_CloseGamepad(pad);
+  }
+  SDL_free(ids);
+  known = result;
+  return result;
+}
 
-SdlInputProvider::SdlInputProvider(const KeyMap &keyMap)
-    : keyMap_(keyMap), scriptedRanges_(ParseScript()) {}
+SdlInputProvider::SdlInputProvider() : SdlInputProvider(InputBindings{}) {}
+
+SdlInputProvider::SdlInputProvider(const KeyMap &keyMap) : SdlInputProvider(InputBindings{}) {
+  bindings_.SetKeyboard(keyMap);
+  bindings_.Validate();
+}
+
+SdlInputProvider::SdlInputProvider(const InputBindings &bindings)
+    : bindings_(bindings), scriptedRanges_(ParseScript()) {
+  bindings_.Validate();
+  // Keep host state current; SetEnabled applies the frontend's focus policy.
+  SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1", SDL_HINT_OVERRIDE);
+}
+
+void SdlInputProvider::SetBindings(const InputBindings &bindings) {
+  bindings.Validate();
+  auto next = bindings;
+  std::swap(bindings_, next);
+  ResetSampling();
+}
 
 SdlInputProvider::~SdlInputProvider() {
   for (auto *gamepad : gamepads_)
@@ -24,10 +88,12 @@ void SdlInputProvider::RefreshGamepads(uint64_t frameIndex) {
   if (lastDeviceFrame_ == frameIndex)
     return;
   lastDeviceFrame_ = frameIndex;
+  bool changed = false;
   for (auto &gamepad : gamepads_) {
     if (gamepad && !SDL_GamepadConnected(gamepad)) {
       SDL_CloseGamepad(gamepad);
       gamepad = nullptr;
+      changed = true;
     }
   }
   int count = 0;
@@ -39,38 +105,67 @@ void SdlInputProvider::RefreshGamepads(uint64_t frameIndex) {
     if (known != gamepads_.end())
       continue;
     auto empty = std::find(gamepads_.begin(), gamepads_.end(), nullptr);
+    auto *opened = SDL_OpenGamepad(ids[i]);
     if (empty == gamepads_.end())
-      break;
-    *empty = SDL_OpenGamepad(ids[i]);
+      gamepads_.push_back(opened);
+    else
+      *empty = opened;
+    changed |= opened != nullptr;
   }
   SDL_free(ids);
+  if (!changed)
+    return;
+  const auto connected = ConnectedGamepads();
+  gamepadKeys_.resize(gamepads_.size());
+  for (size_t slot = 0; slot < gamepads_.size(); ++slot) {
+    gamepadKeys_[slot].clear();
+    if (gamepads_[slot])
+      for (const auto &device : connected)
+        if (device.id == SDL_GetGamepadID(gamepads_[slot]))
+          gamepadKeys_[slot] = device.key;
+  }
 }
 
 snes::core::InputState SdlInputProvider::PollController(int player, uint64_t frameIndex) {
   if (!enabled_)
     return {};
-  if (player < 0 || player >= static_cast<int>(gamepads_.size()))
+  if (player < 0 || player >= static_cast<int>(bindings_.players.size()))
     return {};
   RefreshGamepads(frameIndex);
-  auto state = player == 0 ? Poll(frameIndex) : snes::core::InputState{};
-  auto *pad = gamepads_[player];
-  if (!pad)
-    return state;
-  const auto button = [&](SDL_GamepadButton id) { return SDL_GetGamepadButton(pad, id); };
-  const auto x = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-  const auto y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-  state.up |= button(SDL_GAMEPAD_BUTTON_DPAD_UP) || y < -16000;
-  state.down |= button(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || y > 16000;
-  state.left |= button(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || x < -16000;
-  state.right |= button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || x > 16000;
-  state.b |= button(SDL_GAMEPAD_BUTTON_SOUTH);
-  state.a |= button(SDL_GAMEPAD_BUTTON_EAST);
-  state.y |= button(SDL_GAMEPAD_BUTTON_WEST);
-  state.x |= button(SDL_GAMEPAD_BUTTON_NORTH);
-  state.l |= button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
-  state.r |= button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
-  state.start |= button(SDL_GAMEPAD_BUTTON_START);
-  state.select |= button(SDL_GAMEPAD_BUTTON_BACK);
+  const auto &mapping = bindings_.players[player];
+  SDL_Gamepad *pad = nullptr;
+  if (mapping.device == "auto")
+    pad = gamepads_[player];
+  else if (mapping.device != "none")
+    for (size_t slot = 0; slot < gamepads_.size(); ++slot)
+      if (gamepadKeys_[slot] == mapping.device)
+        pad = gamepads_[slot];
+  int keyCount = 0;
+  const auto *keys = SDL_GetKeyboardState(&keyCount);
+  const auto mouse = capturePointer_ ? 0 : SDL_GetMouseState(nullptr, nullptr);
+  const auto pressed = [&](const InputBinding &binding) {
+    using Kind = InputBinding::Kind;
+    const auto control = binding.control;
+    switch (binding.kind) {
+    case Kind::Keyboard:
+      return !captureKeyboard_ && keys && control < keyCount && keys[control];
+    case Kind::MouseButton:
+      return (mouse & SDL_BUTTON_MASK(control)) != 0;
+    case Kind::GamepadButton:
+      return pad && SDL_GetGamepadButton(pad, SDL_GamepadButton(control));
+    case Kind::AxisPositive:
+      return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) > mapping.axisThreshold;
+    case Kind::AxisNegative:
+      return pad && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(control)) < -mapping.axisThreshold;
+    default:
+      return false;
+    }
+  };
+  snes::core::InputState state;
+  for (size_t button = 0; button < controllerButtons.size(); ++button)
+    state.*controllerButtons[button].state =
+        std::any_of(mapping.buttons[button].begin(), mapping.buttons[button].end(), pressed) ||
+        (player == 0 && !captureKeyboard_ && ScriptPressed(Button(button), frameIndex));
   return state;
 }
 
@@ -98,49 +193,7 @@ snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameI
 }
 
 snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
-  if (!enabled_ || captureKeyboard_)
-    return {};
-  // SDL_GetKeyboardState returns a pointer to an internal array indexed by
-  // SDL_Scancode.  The array is updated by SDL_PumpEvents(), which the main
-  // loop must call before Poll().
-  int numKeys = 0;
-  const bool *keys = SDL_GetKeyboardState(&numKeys);
-  if (!keys)
-    return {};
-
-  // Helper: safely check a scancode against the array bounds.
-  auto pressed = [&](SDL_Scancode sc) -> bool {
-    return sc > SDL_SCANCODE_UNKNOWN && static_cast<int>(sc) < numKeys && keys[sc];
-  };
-
-  snes::core::InputState state{};
-  state.up = pressed(keyMap_.up);
-  state.down = pressed(keyMap_.down);
-  state.left = pressed(keyMap_.left);
-  state.right = pressed(keyMap_.right);
-  state.a = pressed(keyMap_.a);
-  state.b = pressed(keyMap_.b);
-  state.x = pressed(keyMap_.x);
-  state.y = pressed(keyMap_.y);
-  state.l = pressed(keyMap_.l);
-  state.r = pressed(keyMap_.r);
-  state.start = pressed(keyMap_.start);
-  state.select = pressed(keyMap_.select);
-
-  state.up = state.up || ScriptPressed(Button::Up, frameIndex);
-  state.down = state.down || ScriptPressed(Button::Down, frameIndex);
-  state.left = state.left || ScriptPressed(Button::Left, frameIndex);
-  state.right = state.right || ScriptPressed(Button::Right, frameIndex);
-  state.a = state.a || ScriptPressed(Button::A, frameIndex);
-  state.b = state.b || ScriptPressed(Button::B, frameIndex);
-  state.x = state.x || ScriptPressed(Button::X, frameIndex);
-  state.y = state.y || ScriptPressed(Button::Y, frameIndex);
-  state.l = state.l || ScriptPressed(Button::L, frameIndex);
-  state.r = state.r || ScriptPressed(Button::R, frameIndex);
-  state.start = state.start || ScriptPressed(Button::Start, frameIndex);
-  state.select = state.select || ScriptPressed(Button::Select, frameIndex);
-
-  return state;
+  return PollController(0, frameIndex);
 }
 
 snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint64_t frameIndex) {

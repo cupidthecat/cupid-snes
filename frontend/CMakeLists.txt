@@ -9,6 +9,7 @@ add_library(snes_frontend_support STATIC
   src/settings/Preferences.cpp
   src/settings/ConsoleDevices.cpp
   src/input/Hotkeys.cpp
+  src/input/InputBindings.cpp
   src/session/Session.cpp
   src/desktop/DesktopMenu.cpp
   src/desktop/FileDialogs.cpp

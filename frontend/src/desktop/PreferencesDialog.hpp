@@ -11,7 +11,7 @@ public:
   PreferencesDialog();
   ~PreferencesDialog();
   void Open(const Preferences &current, const std::filesystem::path &file);
-  void ProcessEvent(const SDL_Event &event);
+  bool ProcessEvent(const SDL_Event &event);
   void Draw();
   bool Active() const noexcept;
   std::optional<Preferences> TakeChanges();

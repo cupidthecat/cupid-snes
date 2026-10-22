@@ -1,3 +1,4 @@
+#include "SdlInputProvider.hpp"
 #include "SdlVideoOutput.hpp"
 #include "desktop/DesktopMenu.hpp"
 #include "desktop/DesktopUi.hpp"
@@ -264,7 +265,7 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   frame();
   frame();
   click(left + 90, top + 44);
-  click(left + 300, top + 102);
+  click(left + 300, top + 224);
   SDL_Event binding{};
   binding.type = SDL_EVENT_KEY_DOWN;
   binding.key.windowID = video.WindowID();
@@ -282,7 +283,9 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   }
   click(left + 40, top + 540);
   changes = editor.TakeChanges();
-  Check(changes && changes->keyboard.up == SDL_SCANCODE_C,
+  Check(changes && changes->input.players[0].buttons[0][0] ==
+                       snes::frontend::InputBinding{snes::frontend::InputBinding::Kind::Keyboard,
+                                                    SDL_SCANCODE_C},
         "The shared Input page captures SDL scancodes without invoking game shortcuts");
   editor.Rejected("This profile could not be saved.");
   frame();
@@ -292,6 +295,89 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   editor.Applied();
   frame();
   Check(!editor.Active(), "A successful OK operation closes the editor");
+
+  SDL_VirtualJoystickDesc padDescription;
+  SDL_INIT_INTERFACE(&padDescription);
+  padDescription.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+  padDescription.naxes = SDL_GAMEPAD_AXIS_COUNT;
+  padDescription.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+  padDescription.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+  padDescription.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+  padDescription.name = "Mapping editor gamepad";
+  const auto padId = SDL_AttachVirtualJoystick(&padDescription);
+  Check(padId != 0, "Editor test owns its virtual gamepad");
+  struct PadLifetime {
+    SDL_JoystickID id;
+    ~PadLifetime() {
+      SDL_DetachVirtualJoystick(id);
+    }
+  } padLifetime{padId};
+  std::string padKey;
+  for (const auto &pad : snes::frontend::SdlInputProvider::ConnectedGamepads())
+    if (pad.id == padId)
+      padKey = pad.key;
+  Check(!padKey.empty(), "Editor host selection has a persistent device key");
+  const auto chooseLast = [&](float y) {
+    click(left + 100, top + y);
+    key(SDL_SCANCODE_END, SDLK_END);
+    key(SDL_SCANCODE_END, SDLK_END, 0, SDL_EVENT_KEY_UP);
+    key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+    key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  };
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 90, top + 44);
+  chooseLast(76);
+  chooseLast(108);
+  click(left + 300, top + 224);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  Check(editor.Active() && !editor.TakeChanges(),
+        "Capturing Enter assigns a control without activating another editor button");
+  chooseLast(172);
+  click(left + 300, top + 224);
+  SDL_Event padEvent{};
+  padEvent.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+  padEvent.gbutton.which = padId;
+  padEvent.gbutton.button = SDL_GAMEPAD_BUTTON_EAST;
+  ui.ProcessEvent(padEvent);
+  frame();
+  click(left + 300, top + 252);
+  padEvent = {};
+  padEvent.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+  padEvent.gaxis.which = padId;
+  padEvent.gaxis.axis = SDL_GAMEPAD_AXIS_RIGHTY;
+  padEvent.gaxis.value = -22000;
+  ui.ProcessEvent(padEvent);
+  frame();
+  capture(".player8.bmp");
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  using snes::frontend::InputBinding;
+  Check(changes && changes->input.players[7].device == padKey &&
+            changes->input.players[7].buttons[0][0] ==
+                InputBinding{InputBinding::Kind::Keyboard, SDL_SCANCODE_RETURN} &&
+            changes->input.players[7].buttons[0][3] ==
+                InputBinding{InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_EAST} &&
+            changes->input.players[7].buttons[1][3] ==
+                InputBinding{InputBinding::Kind::AxisNegative, SDL_GAMEPAD_AXIS_RIGHTY} &&
+            changes->input.players[0] == current.input.players[0],
+        "The Input editor selects player eight and its host pad and captures fourth alternatives "
+        "independently");
+  changes->Validate();
+  editor.Applied();
+  frame();
+  click(left + 550, top + 224);
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->input.players[7].buttons[0][3] == InputBinding{} &&
+            changes->input.players[7].buttons[0][0].control == SDL_SCANCODE_RETURN,
+        "Clearing one input alternative preserves other bindings");
+  editor.Applied();
+  frame();
+  key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+  key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE, 0, SDL_EVENT_KEY_UP);
 
   editor.Open(current, "isolated-preferences.cfg");
   frame();
@@ -446,7 +532,7 @@ int main(int argc, char **argv) {
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #endif
   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     std::fprintf(stderr, "%s\n", SDL_GetError());
     return 1;
   }

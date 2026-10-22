@@ -101,8 +101,8 @@ DesktopUi::DesktopUi(SDL_Window *window, SDL_Renderer *renderer) : impl_(std::ma
 DesktopUi::~DesktopUi() = default;
 void DesktopUi::ProcessEvent(const SDL_Event &event) {
   impl_->Activate();
-  ImGui_ImplSDL3_ProcessEvent(&event);
-  impl_->preferences.ProcessEvent(event);
+  if (!impl_->preferences.ProcessEvent(event))
+    ImGui_ImplSDL3_ProcessEvent(&event);
 }
 void DesktopUi::Frame() {
   auto &self = *impl_;
