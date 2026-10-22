@@ -47,6 +47,8 @@ void SdlInputProvider::RefreshGamepads(uint64_t frameIndex) {
 }
 
 snes::core::InputState SdlInputProvider::PollController(int player, uint64_t frameIndex) {
+  if (!enabled_)
+    return {};
   if (player < 0 || player >= static_cast<int>(gamepads_.size()))
     return {};
   RefreshGamepads(frameIndex);
@@ -73,6 +75,10 @@ snes::core::InputState SdlInputProvider::PollController(int player, uint64_t fra
 }
 
 snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameIndex) {
+  if (!enabled_) {
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    return {};
+  }
   if (lastMouseFrame_ == frameIndex)
     return mouseState_;
   lastMouseFrame_ = frameIndex;
@@ -92,6 +98,8 @@ snes::core::MouseState SdlInputProvider::PollMouse(int /*port*/, uint64_t frameI
 }
 
 snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
+  if (!enabled_)
+    return {};
   // SDL_GetKeyboardState returns a pointer to an internal array indexed by
   // SDL_Scancode.  The array is updated by SDL_PumpEvents(), which the main
   // loop must call before Poll().
@@ -136,6 +144,8 @@ snes::core::InputState SdlInputProvider::Poll(uint64_t frameIndex) {
 }
 
 snes::core::LightGunState SdlInputProvider::PollLightGun(int port, int gun, uint64_t frameIndex) {
+  if (!enabled_)
+    return {};
   if (port < 0 || port > 1 || gun < 0 || gun > 1 || !gunFocused_)
     return {};
   int count = 0;

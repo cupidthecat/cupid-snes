@@ -1,6 +1,7 @@
 #include "SdlVideoOutput.hpp"
 #include "desktop/DesktopMenu.hpp"
 #include "desktop/FileDialogs.hpp"
+#include "snes/core/FilePath.hpp"
 
 #include <array>
 #include <cstdio>
@@ -81,6 +82,40 @@ void NativeMenu(SdlVideoOutput &video) {
   }
   Check(command == DesktopCommand::Pause, "Native menu selections reach the desktop command queue");
   Check(!menu.TakeCommand(), "Native menu selections are consumed exactly once");
+  std::array<snes::frontend::LaunchRequest, 3> recent{};
+  recent[0].paths[0] =
+      snes::core::PathText(std::filesystem::path(u8"\u65e5\u672c\u8a9e & game.sfc"));
+  recent[1].kind = snes::frontend::LaunchRequest::Kind::Handheld;
+  recent[1].paths = {"adapter.sfc", "guest.gb", "boot.bin", ""};
+  recent[2].kind = snes::frontend::LaunchRequest::Kind::SufamiTurbo;
+  recent[2].paths = {"bios.bin", "slot-a.st", "slot-b.st", ""};
+  menu.SetRecent(recent);
+  const auto history = GetSubMenu(file, 6);
+  Check(history && GetMenuItemCount(history) == 5,
+        "Recent games include entries and a clear action");
+  wchar_t label[512]{};
+  Check(GetMenuStringW(history, first + unsigned(DesktopCommand::Recent0), label, 512,
+                       MF_BYCOMMAND) &&
+            std::wstring(label).find(L"\u65e5\u672c\u8a9e && game.sfc") != std::wstring::npos,
+        "Recent game menus preserve Unicode names and literal ampersands");
+  Check(GetMenuStringW(history, first + unsigned(DesktopCommand::Recent2), label, 512,
+                       MF_BYCOMMAND) &&
+            std::wstring(label).find(L"slot-a.st + slot-b.st") != std::wstring::npos,
+        "Slot history identifies both selected games");
+  command.reset();
+  Check(PostMessageW(window, WM_COMMAND, first + unsigned(DesktopCommand::Recent1), 0),
+        "A recent game selection can be posted");
+  const auto recentDeadline = SDL_GetTicks() + 1000;
+  while (!command && SDL_GetTicks() < recentDeadline) {
+    SDL_PumpEvents();
+    command = menu.TakeCommand();
+    if (!command)
+      SDL_Delay(1);
+  }
+  Check(command == DesktopCommand::Recent1, "Native recent selections retain their history index");
+  menu.SetRecent({});
+  Check(GetMenuItemCount(history) == 1,
+        "Clearing recent games replaces old entries with an empty marker");
 #else
   menu.Update(true, true);
   Check(!menu.TakeCommand(), "An untouched menu has no pending commands");

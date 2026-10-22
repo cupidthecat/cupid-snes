@@ -3,6 +3,8 @@ add_library(snes_frontend_support STATIC
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp
   src/SaveRamFile.cpp
+  src/storage/AtomicFile.cpp
+  src/settings/Preferences.cpp
   src/session/Session.cpp
   src/desktop/DesktopMenu.cpp
   src/desktop/FileDialogs.cpp

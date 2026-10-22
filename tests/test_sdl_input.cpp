@@ -96,6 +96,13 @@ int main() {
     }
     Check(firstPlayer >= 0 && secondPlayer >= 0 && firstPlayer != secondPlayer,
           "Host gamepads map to independent players");
+    input.SetEnabled(false);
+    Check(!input.PollController(firstPlayer, 0).b && !input.PollController(secondPlayer, 0).a &&
+              input.PollLightGun(1, 0, 0).offscreen && input.PollMouse(0, 0).dx == 0,
+          "Background input blocking neutralizes all attached device types");
+    input.SetEnabled(true);
+    Check(input.PollController(firstPlayer, 0).b && input.PollController(secondPlayer, 0).a,
+          "Returning focus resamples attached devices even at the same frame index");
     SDL_SetJoystickVirtualButton(first.joystick, SDL_GAMEPAD_BUTTON_SOUTH, false);
     SDL_SetJoystickVirtualButton(first.joystick, SDL_GAMEPAD_BUTTON_NORTH, true);
     SDL_SetJoystickVirtualButton(first.joystick, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, true);

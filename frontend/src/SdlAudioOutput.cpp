@@ -31,7 +31,19 @@ SdlAudioOutput::SdlAudioOutput(const Config &config) {
   // them together.  Passing nullptr for the callback means we will push
   // data ourselves via SDL_PutAudioStreamData (queue-based model).
   // The stream stays paused until Resume() is requested and input is ready.
-  stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
+  auto device = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+  if (!config.deviceName.empty()) {
+    int count = 0;
+    auto *devices = SDL_GetAudioPlaybackDevices(&count);
+    for (int index = 0; devices && index < count; ++index)
+      if (const char *name = SDL_GetAudioDeviceName(devices[index]);
+          name && config.deviceName == name) {
+        device = devices[index];
+        break;
+      }
+    SDL_free(devices);
+  }
+  stream_ = SDL_OpenAudioDeviceStream(device, &spec,
                                       nullptr,  // no callback - push model
                                       nullptr); // no userdata
 
@@ -99,6 +111,13 @@ void SdlAudioOutput::Clear() {
   Pause();
   if (stream_ && !SDL_ClearAudioStream(stream_))
     throw std::runtime_error(std::string("Audio clear failed: ") + SDL_GetError());
+}
+
+void SdlAudioOutput::SetVolume(int percent, bool muted) {
+  if (percent < 0 || percent > 200)
+    throw std::invalid_argument("Audio volume must be between 0 and 200 percent");
+  if (stream_ && !SDL_SetAudioStreamGain(stream_, muted ? 0.0f : percent / 100.0f))
+    throw std::runtime_error(std::string("Cannot set audio volume: ") + SDL_GetError());
 }
 
 int SdlAudioOutput::QueuedBytes() const {

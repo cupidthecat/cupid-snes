@@ -28,11 +28,20 @@ int main(int argc, char *argv[]) {
   std::array devices{ControllerDevice::Gamepad, ControllerDevice::Gamepad};
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
+  std::filesystem::path preferencesPath;
   std::optional<uint8_t> competitionDip;
   std::optional<snes::core::Region> regionOverride;
   auto expansion = snes::core::Emulator::ExpansionDevice::None;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
+    if (value.starts_with("--preferences=")) {
+      preferencesPath = snes::core::FilePath(value.substr(14));
+      if (preferencesPath.empty()) {
+        std::cerr << "Preferences path must not be empty\n";
+        return EXIT_FAILURE;
+      }
+      continue;
+    }
     if (value.starts_with("--region=")) {
       const auto name = value.substr(9);
       if (name == "auto")
@@ -172,5 +181,5 @@ int main(int argc, char *argv[]) {
     emulatorConfig.cartridgeFirmware = std::move(firmware);
   }
 
-  return snes::frontend::RunDesktop(std::move(emulatorConfig), devices, initial);
+  return snes::frontend::RunDesktop(std::move(emulatorConfig), devices, initial, preferencesPath);
 }

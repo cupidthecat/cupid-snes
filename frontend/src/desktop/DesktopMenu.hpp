@@ -1,8 +1,10 @@
 #pragma once
 
+#include "session/LaunchRequest.hpp"
 #include <SDL3/SDL.h>
 #include <memory>
 #include <optional>
+#include <span>
 
 namespace snes::frontend {
 enum class DesktopCommand {
@@ -19,7 +21,18 @@ enum class DesktopCommand {
   Reset,
   PowerCycle,
   Fullscreen,
-  Screenshot
+  Screenshot,
+  ClearRecent,
+  Recent0,
+  Recent1,
+  Recent2,
+  Recent3,
+  Recent4,
+  Recent5,
+  Recent6,
+  Recent7,
+  Recent8,
+  Recent9
 };
 
 class DesktopMenu {
@@ -27,6 +40,7 @@ public:
   explicit DesktopMenu(SDL_Window *window);
   ~DesktopMenu();
   void Update(bool loaded, bool paused);
+  void SetRecent(std::span<const LaunchRequest> requests);
   std::optional<DesktopCommand> TakeCommand();
   static std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent &key);
 

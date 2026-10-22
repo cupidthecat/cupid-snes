@@ -22,15 +22,17 @@ struct VideoViewport {
   }
 };
 
-inline VideoViewport MakeVideoViewport(int windowWidth, int windowHeight, unsigned frameHeight) {
+inline VideoViewport MakeVideoViewport(int windowWidth, int windowHeight, unsigned frameHeight,
+                                       bool aspectCorrection = false, bool integerScaling = true) {
   VideoViewport viewport;
   viewport.visibleLines = frameHeight > 240 ? frameHeight / 2 : frameHeight;
   if (!viewport.visibleLines || windowWidth <= 0 || windowHeight <= 0)
     return viewport;
-  float scale = std::min(windowWidth / 256.0f, windowHeight / float(viewport.visibleLines));
-  if (scale >= 1)
+  const float width = aspectCorrection ? 256.0f * 8 / 7 : 256.0f;
+  float scale = std::min(windowWidth / width, windowHeight / float(viewport.visibleLines));
+  if (integerScaling && scale >= 1)
     scale = std::floor(scale);
-  viewport.width = 256 * scale;
+  viewport.width = width * scale;
   viewport.height = viewport.visibleLines * scale;
   viewport.x = (windowWidth - viewport.width) / 2;
   viewport.y = (windowHeight - viewport.height) / 2;

@@ -3,6 +3,7 @@
 #include "SdlVideoOutput.hpp"
 
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,8 +35,9 @@ int ProbeFrameIndex() {
 SdlVideoOutput::SdlVideoOutput() : SdlVideoOutput(Config{}) {}
 
 SdlVideoOutput::SdlVideoOutput(const Config &config)
-    : deferredPresentation_(config.deferPresentation) {
-  int windowW = config.baseW * config.scale;
+    : deferredPresentation_(config.deferPresentation), aspectCorrection_(config.aspectCorrection),
+      integerScaling_(config.integerScaling), linearFilter_(config.linearFilter) {
+  int windowW = int(std::lround(config.baseW * (aspectCorrection_ ? 8.0 / 7 : 1.0) * config.scale));
   int windowH = config.baseH * config.scale;
 
   const auto flags = SDL_WINDOW_RESIZABLE | (config.hidden ? SDL_WINDOW_HIDDEN : 0);
@@ -110,7 +112,7 @@ void SdlVideoOutput::PresentPending() {
   // Fit the picture to the window, using integer scaling when it fits.
   int winW = 0, winH = 0;
   SDL_GetWindowSize(window_, &winW, &winH);
-  const auto viewport = MakeVideoViewport(winW, winH, texH_);
+  const auto viewport = MakeVideoViewport(winW, winH, texH_, aspectCorrection_, integerScaling_);
   SDL_FRect dst{viewport.x, viewport.y, viewport.width, viewport.height};
 
   // One-shot: log presentation dimensions
@@ -199,7 +201,7 @@ uint32_t SdlVideoOutput::WindowID() const noexcept {
 VideoViewport SdlVideoOutput::InputViewport() const {
   int width = 0, height = 0;
   SDL_GetWindowSize(window_, &width, &height);
-  return MakeVideoViewport(width, height, texH_ ? texH_ : 224);
+  return MakeVideoViewport(width, height, texH_ ? texH_ : 224, aspectCorrection_, integerScaling_);
 }
 
 // EnsureTexture - (re)create texture when frame dimensions change
@@ -221,8 +223,8 @@ void SdlVideoOutput::EnsureTexture(uint32_t w, uint32_t h) {
   if (texture_) {
     texW_ = w;
     texH_ = h;
-    // Use nearest-neighbour scaling for crisp pixels
-    SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_NEAREST);
+    // Filtering affects presentation; captured core pixels retain their native values.
+    SDL_SetTextureScaleMode(texture_, linearFilter_ ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
   } else {
     texW_ = texH_ = 0;
   }

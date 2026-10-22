@@ -35,6 +35,7 @@ public:
     bool vsync = true;
     bool deferPresentation = false;
     bool hidden = false;
+    bool aspectCorrection = false, integerScaling = true, linearFilter = false;
   };
 
   explicit SdlVideoOutput();
@@ -93,6 +94,7 @@ private:
   bool pending_ = false;
   uint64_t submittedFrames_ = 0;
   std::vector<uint32_t> lastPixels_;
+  bool aspectCorrection_ = false, integerScaling_ = true, linearFilter_ = false;
 };
 
 } // namespace snes::frontend

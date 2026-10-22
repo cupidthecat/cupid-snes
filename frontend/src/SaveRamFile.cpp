@@ -2,9 +2,8 @@
 
 #include "SaveRamFile.hpp"
 #include "snes/core/FilePath.hpp"
-#include <SDL3/SDL.h>
+#include "storage/AtomicFile.hpp"
 #include <algorithm>
-#include <atomic>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -39,29 +38,7 @@ std::vector<uint8_t> SaveRamFile::Read(size_t size) {
 void SaveRamFile::Flush(std::span<const uint8_t> data) {
   if (data.empty() || std::equal(data.begin(), data.end(), saved_.begin(), saved_.end()))
     return;
-  static std::atomic<unsigned> serial{0};
-  auto temporary = path_;
-  temporary += ".tmp-" + std::to_string(SDL_GetTicksNS()) + "-" + std::to_string(serial++);
-  std::ofstream file(temporary, std::ios::binary);
-  if (!file)
-    throw std::runtime_error("Cannot create save RAM file: " + core::PathText(temporary));
-  file.write(reinterpret_cast<const char *>(data.data()),
-             static_cast<std::streamsize>(data.size()));
-  file.close();
-  if (!file) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw std::runtime_error("Cannot write save RAM: " + core::PathText(path_));
-  }
-  const auto source = temporary.u8string();
-  const auto destination = path_.u8string();
-  if (!SDL_RenamePath(reinterpret_cast<const char *>(source.c_str()),
-                      reinterpret_cast<const char *>(destination.c_str()))) {
-    const std::string error = SDL_GetError();
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw std::runtime_error("Cannot replace save RAM: " + error);
-  }
+  WriteFileAtomically(path_, data);
   saved_.assign(data.begin(), data.end());
 }
 } // namespace snes::frontend

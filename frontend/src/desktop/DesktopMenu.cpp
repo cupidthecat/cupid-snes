@@ -1,5 +1,6 @@
 #include "DesktopMenu.hpp"
 
+#include "snes/core/FilePath.hpp"
 #include <deque>
 #include <stdexcept>
 #include <utility>
@@ -18,6 +19,7 @@ struct DesktopMenu::Impl {
 #ifdef _WIN32
   HWND window = nullptr;
   HMENU menu = nullptr;
+  HMENU recent = nullptr;
   std::vector<std::pair<HMENU, DesktopCommand>> items;
   static constexpr unsigned firstId = 4100;
   static bool SDLCALL Message(void *userdata, MSG *message) {
@@ -25,7 +27,7 @@ struct DesktopMenu::Impl {
     if (message->hwnd == self.window && message->message == WM_COMMAND &&
         HIWORD(message->wParam) == 0 && message->lParam == 0) {
       const unsigned id = LOWORD(message->wParam);
-      if (id >= firstId && id <= firstId + unsigned(DesktopCommand::Screenshot)) {
+      if (id >= firstId && id <= firstId + unsigned(DesktopCommand::Recent9)) {
         self.commands.push_back(DesktopCommand(id - firstId));
         return false;
       }
@@ -78,6 +80,14 @@ DesktopMenu::DesktopMenu(SDL_Window *window) : impl_(std::make_unique<Impl>()) {
   self.Add(file, L"Open &Broadcast Cartridge...", DesktopCommand::OpenBroadcast);
   self.Add(file, L"Open Campus Challenge &92...", DesktopCommand::OpenCampus);
   self.Add(file, L"Open PowerFest &94...", DesktopCommand::OpenPowerFest);
+  self.recent = CreatePopupMenu();
+  if (!self.recent)
+    throw std::runtime_error("Cannot create recent game menu");
+  if (!AppendMenuW(file, MF_POPUP, reinterpret_cast<UINT_PTR>(self.recent), L"&Recent Games")) {
+    DestroyMenu(self.recent);
+    self.recent = nullptr;
+    throw std::runtime_error("Cannot create recent game menu");
+  }
   AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
   self.Add(file, L"&Unload Game\tCtrl+W", DesktopCommand::Unload);
   self.Add(file, L"&Quit\tCtrl+Q", DesktopCommand::Quit);
@@ -98,8 +108,66 @@ DesktopMenu::DesktopMenu(SDL_Window *window) : impl_(std::make_unique<Impl>()) {
   (void)window;
 #endif
   Update(false, false);
+  SetRecent({});
 }
 DesktopMenu::~DesktopMenu() = default;
+
+void DesktopMenu::SetRecent(std::span<const LaunchRequest> requests) {
+#ifdef _WIN32
+  auto &self = *impl_;
+  while (GetMenuItemCount(self.recent) > 0)
+    DeleteMenu(self.recent, 0, MF_BYPOSITION);
+  const auto count = std::min<size_t>(requests.size(), 10);
+  for (unsigned index = 0; index < count; ++index) {
+    const auto &request = requests[index];
+    std::wstring name;
+    const auto asset = [&](unsigned index) {
+      if (request.paths[index].empty() || request.paths[index] == "-")
+        return;
+      if (!name.empty())
+        name += L" + ";
+      name += core::FilePath(request.paths[index]).filename().native();
+    };
+    if (request.kind == LaunchRequest::Kind::Handheld)
+      asset(1);
+    else if (request.kind == LaunchRequest::Kind::SufamiTurbo) {
+      asset(1);
+      asset(2);
+      if (name.empty())
+        asset(0);
+    } else {
+      asset(0);
+      if (request.kind == LaunchRequest::Kind::Broadcast)
+        asset(1);
+      if (request.kind == LaunchRequest::Kind::Campus92 ||
+          request.kind == LaunchRequest::Kind::PowerFest94) {
+        asset(1);
+        asset(2);
+        asset(3);
+        name += L" [DIP " + std::to_wstring(request.competitionDip) + L"]";
+      }
+    }
+    std::wstring label = std::to_wstring(index + 1) + L". ";
+    for (wchar_t c : name) {
+      label += c;
+      if (c == L'&')
+        label += L'&';
+    }
+    if (!AppendMenuW(self.recent, MF_STRING,
+                     Impl::firstId + unsigned(DesktopCommand::Recent0) + index, label.c_str()))
+      throw std::runtime_error("Cannot create recent game item");
+  }
+  if (!count)
+    AppendMenuW(self.recent, MF_GRAYED, 0, L"No recent games");
+  else {
+    AppendMenuW(self.recent, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(self.recent, MF_STRING, Impl::firstId + unsigned(DesktopCommand::ClearRecent),
+                L"&Clear Recent Games");
+  }
+#else
+  (void)requests;
+#endif
+}
 
 void DesktopMenu::Update(bool loaded, bool paused) {
 #ifdef _WIN32

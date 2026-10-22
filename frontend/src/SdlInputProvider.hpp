@@ -62,6 +62,15 @@ public:
   const KeyMap &GetKeyMap() const noexcept {
     return keyMap_;
   }
+  void SetEnabled(bool enabled) noexcept {
+    if (enabled_ == enabled)
+      return;
+    enabled_ = enabled;
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    mouseState_ = {};
+    mouseFractionX_ = mouseFractionY_ = 0;
+    lastMouseFrame_ = lastGunFrame_ = lastDeviceFrame_ = uint64_t(-1);
+  }
 
 private:
   struct FrameRange {
@@ -91,6 +100,7 @@ private:
   bool ScriptPressed(Button button, uint64_t frameIndex) const noexcept;
 
   KeyMap keyMap_;
+  bool enabled_ = true;
   ScriptRanges scriptedRanges_;
   std::array<SDL_Gamepad *, 8> gamepads_{};
   void RefreshGamepads(uint64_t frameIndex);

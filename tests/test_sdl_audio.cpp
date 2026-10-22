@@ -96,6 +96,23 @@ void GameChangesDiscardAudio() {
   audio.Resume();
   Expect(WaitForDrain(audio), "new game audio primes and plays after resume");
 }
+
+void MutedPlaybackKeepsPacing() {
+  SdlAudioOutput::Config config;
+  config.deviceName = "A missing playback device";
+  SdlAudioOutput audio(config);
+  auto buffer = Tone(2400);
+  const auto original = buffer.interleavedStereo;
+  audio.SetVolume(175, true);
+  audio.Resume();
+  audio.Submit(buffer);
+  Expect(WaitForDrain(audio), "muted playback still drains and paces emulation");
+  Expect(buffer.interleavedStereo == original,
+         "host volume and mute preserve generated audio samples");
+  audio.SetVolume(175);
+  audio.Submit(buffer);
+  Expect(WaitForDrain(audio), "unmuting preserves the running audio stream");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -109,6 +126,7 @@ int main(int argc, char **argv) {
     QueuePreservesInput();
     PlaybackPrimesAndRecovers();
     GameChangesDiscardAudio();
+    MutedPlaybackKeepsPacing();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     ++failures;

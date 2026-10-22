@@ -36,6 +36,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_competition_cartridge_tests
   snes_sdl_audio_tests
   snes_sdl_video_tests
+  snes_sdl_input_tests
   snes_bsx_tests
   snes_cartridge_command_tests
   snes_sdd1_tests
@@ -50,6 +51,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_save_ram_tests
   snes_session_tests
   snes_desktop_tests
+  snes_preferences_tests
   snes_cx4_processor_tests
   snes_sa1_tests
   snes_st018_tests

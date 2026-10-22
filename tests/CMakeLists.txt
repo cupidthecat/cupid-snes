@@ -270,6 +270,10 @@ add_executable(snes_desktop_tests test_desktop.cpp)
 target_link_libraries(snes_desktop_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_desktop_tests snes_desktop_tests)
 
+add_executable(snes_preferences_tests test_preferences.cpp)
+target_link_libraries(snes_preferences_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_preferences_tests snes_preferences_tests)
+
 # Opt in with an existing diagnostic checkout; ROMs are never fetched by a build.
 set(SNES_DIAGNOSTIC_ROM_DIR "" CACHE PATH "Root of an external SnesTests checkout")
 if(SNES_DIAGNOSTIC_ROM_DIR)

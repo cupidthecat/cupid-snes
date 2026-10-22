@@ -4,6 +4,8 @@ Run `snes_frontend` without arguments to open an idle window. Ctrl+O opens a con
 
 On Windows, the File menu also opens Super Game Boy, Sufami Turbo, broadcast, Campus Challenge 92, and PowerFest 94 cartridges. Each picker names the asset it needs. Cancelling any step keeps the current game. Sufami Turbo offers one or two game slots, and broadcast cartridges offer a pack or an empty slot. Existing command-line launch modes remain available.
 
+File > Recent Games remembers the last ten successful launch requests. A multi-file entry retains its cartridge mode, all asset paths, and its competition DIP setting. Reopening a game moves it to the front. Clear Recent Games removes the saved launch history. Missing assets produce a load error and keep the current game loaded.
+
 | Control | Action |
 | --- | --- |
 | Ctrl+O | Open a console game |
@@ -31,3 +33,30 @@ Console battery RAM uses a neighboring `.srm` file. Clock storage uses `.rtc`. A
 Game paths, firmware directories, save files, and picker results use UTF-8, including on Windows. The frontend preserves full Unicode paths when opening files and reporting errors.
 
 These files contain battery storage, clocks, and pack identity. They do not capture a running machine's complete execution state.
+
+## Preferences
+
+Preferences use a UTF-8 `preferences.cfg` in the SDL preference directory, normally `%APPDATA%\Cupid\Cupid-SNES` on Windows. Use `--preferences=<file>` to choose a separate configuration for portable setups or different controller layouts. Edit the file while the application is closed; changes apply at the next launch.
+
+The first line is `Cupid-SNES preferences 1`. Each record contains a key and a quoted value. Backslashes and quotation marks inside values are escaped with a backslash. Unknown keys survive a save. Unsupported versions, duplicate keys, and invalid values produce an error and preserve the original file.
+
+```text
+Cupid-SNES preferences 1
+video.scale "3"
+video.aspect "0"
+video.integer "1"
+video.linear "0"
+audio.volume "100"
+audio.mute "0"
+audio.mute-unfocused "0"
+audio.device ""
+input.focus "0"
+path.firmware ""
+path.screenshots ""
+```
+
+Scale accepts 1 through 6. Aspect correction uses an 8:7 pixel aspect. Integer scaling and linear filtering affect presentation; screenshots retain the generated pixels. Volume accepts 0 through 200 percent. Mute and volume leave the emulated sound samples and timing unchanged. An empty or unavailable audio device name selects the system default.
+
+Focus mode 0 pauses while the window is unfocused, hidden, or minimized. Mode 1 continues emulation while blocking controller input. Mode 2 continues with controller input enabled. Returning focus resumes an automatic pause and preserves a manual pause. Relative mouse capture is released while paused or unfocused.
+
+`path.firmware` supplies cartridge processor firmware when the command line does not specify a directory. An empty screenshot path uses the default `screenshots` directory. The `key.up`, `key.down`, `key.left`, `key.right`, `key.a`, `key.b`, `key.x`, `key.y`, `key.l`, `key.r`, `key.start`, and `key.select` entries store SDL scancode numbers for the keyboard layout. Recent entries store complete launch requests and absolute asset paths.
