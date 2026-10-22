@@ -838,6 +838,10 @@ std::span<const uint8_t> Cartridge::SramData() const noexcept {
   return sram_;
 }
 
+size_t Cartridge::SramLoadSize() const noexcept {
+  return header_.mapping == MappingType::St010 && !necDsp_ ? 0 : SramData().size();
+}
+
 void Cartridge::LoadSram(std::span<const uint8_t> data) {
   if (competition_) {
     competition_->LoadRam(data);

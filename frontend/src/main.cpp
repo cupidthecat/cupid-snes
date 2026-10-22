@@ -273,7 +273,7 @@ int main(int argc, char *argv[]) {
         emulator->LoadSlotSram(i, slotSaves[i]->Load(cart->SlotSramData(i).size()));
       }
     } else {
-      emulator->LoadSram(saveRam.Load(cart->SramData().size()));
+      emulator->LoadSram(saveRam.Load(cart->SramLoadSize()));
       const auto rtc = saveRtc.Load(emulator->SaveRtc().size());
       if (!rtc.empty() && !emulator->LoadRtc(rtc))
         throw std::runtime_error("Invalid cartridge clock save: " + rtcPath.string());

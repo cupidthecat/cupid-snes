@@ -76,7 +76,8 @@ void BoardDefaults() {
                            Board{0x30, 0x25, 0x100000, 8192}}) {
     auto cart = Cartridge::FromRomImage(Image(board.mode, board.type, board.size), nullptr, nullptr,
                                         nullptr, &firmware);
-    Check(cart && cart->SramData().size() == board.ram, "The board exposes its physical RAM size");
+    Check(cart && cart->SramData().size() == board.ram && cart->SramLoadSize() == board.ram,
+          "The board exposes its physical RAM size for save input and output");
     if (board.ram)
       RetainedSave(*cart, 255);
     else
@@ -166,7 +167,8 @@ void ProcessorOwnedMemory() {
     if (shift == 9)
       std::copy_n("2DAN MORITA SHOUGI", 18, image.begin() + 0x7fc0);
     auto cart = Cartridge::FromRomImage(image, nullptr, nullptr, nullptr, &firmware);
-    Check(cart && cart->HasSignalProcessor() && cart->SramData().size() == 4096,
+    Check(cart && cart->HasSignalProcessor() && cart->SramData().size() == 4096 &&
+              cart->SramLoadSize() == 4096,
           "SETA save RAM belongs to its signal processor");
     RetainedSave(*cart, 0);
   }

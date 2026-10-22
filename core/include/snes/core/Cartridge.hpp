@@ -219,6 +219,7 @@ public:
   }
   std::span<const uint8_t> RomData() const noexcept;
   std::span<const uint8_t> SramData() const noexcept;
+  size_t SramLoadSize() const noexcept;
   void LoadSram(std::span<const uint8_t> data);
   std::span<const uint8_t> SlotSramData(unsigned slot) const noexcept;
   void LoadSlotSram(unsigned slot, std::span<const uint8_t> data);

@@ -24,7 +24,7 @@ void CommandStorage(const fs::path &directory) {
       throw std::runtime_error(message);
   };
   for (bool pal : {false, true}) {
-    for (bool existing : {false, true}) {
+    for (size_t savedSize : {0u, 17u, 4096u, 4103u}) {
       auto imagePath = directory / (pal ? "command-pal.sfc" : "command-ntsc.sfc");
       const auto image = st010_test::StorageGuest(pal);
       std::ofstream file(imagePath, std::ios::binary);
@@ -32,9 +32,9 @@ void CommandStorage(const fs::path &directory) {
       file.close();
       check(bool(file), "The command storage guest is written to disk");
       auto savePath = imagePath;
-      savePath.replace_extension(existing ? ".seeded.srm" : ".srm");
-      if (existing) {
-        std::vector<uint8_t> initial(4096);
+      savePath.replace_extension(".input-" + std::to_string(savedSize) + ".srm");
+      if (savedSize) {
+        std::vector<uint8_t> initial(savedSize);
         for (size_t i = 0; i < initial.size(); ++i)
           initial[i] = uint8_t(i * 37 + 0x53);
         SaveRamFile(savePath).Flush(initial);
@@ -49,7 +49,7 @@ void CommandStorage(const fs::path &directory) {
                 "The command storage guest loads through the file API");
           check(!machine->LoadedCartridge()->HasSignalProcessor(),
                 "The storage guest selects command execution without firmware");
-          machine->LoadSram(save.Load(machine->LoadedCartridge()->SramData().size()));
+          machine->LoadSram(save.Load(machine->LoadedCartridge()->SramLoadSize()));
         }
         for (unsigned field = 0; field < 8; ++field)
           machine->StepFrame();
