@@ -187,6 +187,10 @@ void CommandMemoryReset() {
         "The ST010 command device starts with cleared work RAM");
   cart->Write(0x680123, 0x57);
   Check(cart->Read(0x680123) == 0x57, "The command device writes its shared work RAM");
+  const std::array<uint8_t, 3> battery{0x69, 0x42, 0x17};
+  cart->LoadSram(battery);
+  Check(cart->SramLoadSize() == 0 && cart->Read(0x680000) == 0 && cart->Read(0x680123) == 0x57,
+        "Direct battery loading leaves running command work RAM unchanged");
   cart->Reset();
   Check(cart->Read(0x680123) == 0 && Filled(cart->SramData(), 0),
         "Reset clears ST010 command work RAM and retains its cleared battery image");
