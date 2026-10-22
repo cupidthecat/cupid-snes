@@ -254,10 +254,80 @@ void ScanlineEventSchedule() {
   timing.Tick(2);
   Check(renders == 2, "Changing the display boundary reevaluates events on the next timing edge");
 }
+
+void TimingBatchEdges() {
+  using Event = std::array<uint64_t, 11>;
+  for (auto region : {Region::NTSC, Region::PAL}) {
+    for (uint8_t revision : {uint8_t{1}, uint8_t{2}}) {
+      for (bool interlace : {false, true}) {
+        for (bool nested : {false, true}) {
+          const auto capture = [&](bool split) {
+            Timing timing(region, revision);
+            timing.SetInterlace(interlace);
+            std::vector<Event> events;
+            bool active = false;
+            const auto state = [&](char kind) -> Event {
+              return {uint64_t(kind),
+                      timing.MasterClocksElapsed(),
+                      timing.HCounter(),
+                      timing.VCounter(),
+                      timing.HPeriod(),
+                      timing.VPeriod(),
+                      timing.PreviousHPeriod(),
+                      timing.PreviousVPeriod(),
+                      timing.FrameCount(),
+                      timing.Field(),
+                      timing.HDot()};
+            };
+            const auto record = [&](char kind) {
+              events.push_back(state(kind));
+              if (nested && !active && kind == 'R' && timing.VCounter() % 47 == 0) {
+                active = true;
+                timing.Tick(6);
+                active = false;
+                events.push_back(state('r'));
+              }
+            };
+            timing.onFrameBegin = [&] {
+              record('F');
+              timing.SetVDisp(timing.FrameCount() & 1 ? 240 : 225);
+            };
+            timing.onHdmaSetup = [&] { record('S'); };
+            timing.onScanline = [&](uint16_t v) {
+              record('L');
+              if (v % 43 == 0)
+                timing.SetRenderCycle(std::array<uint16_t, 3>{2, 531, 1105}[v % 3]);
+            };
+            timing.onRenderCycle = [&](uint16_t) { record('R'); };
+            timing.onVBlankBegin = [&] { record('V'); };
+            timing.onHBlank = [&](uint16_t) { record('B'); };
+            timing.onNmiPoint = [&] { record('N'); };
+            timing.onDramRefresh = [&] { record('D'); };
+            timing.onHdmaTransfer = [&](uint16_t) { record('H'); };
+            timing.onIrqPoll = [&](uint16_t, uint16_t, uint16_t, uint16_t) { record('I'); };
+            timing.onJoypadPoll = [&](uint16_t, uint16_t, uint16_t) { record('J'); };
+            const unsigned clocks = (region == Region::PAL ? 626u : 526u) * 1364 + 129;
+            if (split) {
+              for (unsigned clock = 0; clock < clocks; ++clock)
+                timing.Tick(1);
+            } else {
+              timing.Tick(clocks);
+            }
+            events.push_back(state('E'));
+            return events;
+          };
+          Check(
+              capture(false) == capture(true),
+              "Timing batches retain every callback and counter across regional field boundaries");
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
-  const std::array<std::pair<const char *, std::function<void()>>, 10> tests{{
+  const std::array<std::pair<const char *, std::function<void()>>, 11> tests{{
       {"CPU read phases", CpuReadEdges},
       {"CPU write phases", CpuWriteEdges},
       {"controller divider", JoypadClockEdges},
@@ -268,6 +338,7 @@ int main() {
       {"automatic input edges", AutomaticInputEdges},
       {"latch enable changes", LatchEnableChanges},
       {"scanline event schedule", ScanlineEventSchedule},
+      {"timing batch edges", TimingBatchEdges},
   }};
   unsigned failures = 0;
   for (const auto &[name, run] : tests) {

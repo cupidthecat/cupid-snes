@@ -215,12 +215,11 @@ bool Smp::ClockBusCycle(const PendingCycle &cycle, BusWait &wait) {
     wait.sampled = true;
   }
   if (wait.elapsed < wait.duration) {
-    const unsigned previousTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
     ++wait.elapsed;
     ++hardwareClocks_;
     cycles_ = hardwareClocks_ / 2;
-    const unsigned nextTicks = unsigned(wait.elapsed) * wait.timerTicks / wait.duration;
-    StepTimers(nextTicks - previousTicks);
+    // Stretched accesses clock the timers on four of every five hardware edges.
+    StepTimers(wait.timerTicks == wait.duration || wait.elapsed % 5 != 1 ? 1 : 0);
     // The DSP starts on the first half-cycle, then clocks on alternate edges.
     if (dspMode_ == DspMode::PerCycle && (hardwareClocks_ & 1))
       tickDsp();

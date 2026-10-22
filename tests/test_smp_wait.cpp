@@ -188,6 +188,60 @@ void HaltedClocking() {
           "DSP and timers continue through stretched halted idle cycles");
   }
 }
+
+void TimerHardwareEdges() {
+  constexpr std::array<unsigned, 4> durations{2, 4, 10, 20};
+  constexpr std::array<unsigned, 4> ticks{2, 4, 8, 16};
+  for (auto mode : {Smp::DspMode::PerCycle, Smp::DspMode::Batch32}) {
+    for (unsigned internal = 0; internal < 4; ++internal) {
+      for (unsigned external = 0; external < 4; ++external) {
+        Smp smp;
+        Program(smp, {0xe4, 0xf2}); // MOV A,$F2 fetches two RAM bytes, then reads I/O.
+        for (unsigned instruction = 1; instruction < 256; ++instruction) {
+          smp.Ram()[0x200 + instruction * 2] = 0xe4;
+          smp.Ram()[0x201 + instruction * 2] = 0xf2;
+        }
+        smp.SetDspMode(mode);
+        smp.IoState().internalWaitStates = uint8_t(internal);
+        smp.IoState().externalWaitStates = uint8_t(external);
+        smp.GetTimer0().enable = smp.GetTimer1().enable = smp.GetTimer2().enable = true;
+        smp.GetTimer0().target = 1;
+        smp.GetTimer1().target = 2;
+        smp.GetTimer2().target = 3;
+        Dsp dsp;
+        dsp.SetRam(smp.Ram());
+        smp.SetDsp(dsp);
+        const unsigned externalClocks = durations[external] * 2;
+        const unsigned externalTicks = ticks[external] * 2;
+        const unsigned period = externalClocks + durations[internal];
+        for (unsigned clock = 1; clock <= period * 128 + 3; ++clock) {
+          smp.RunUntilHardwareClock(clock);
+          const unsigned complete = clock / period, elapsed = clock % period;
+          const unsigned expected =
+              complete * (externalTicks + ticks[internal]) +
+              (elapsed <= externalClocks
+                   ? elapsed * ticks[external] / durations[external]
+                   : externalTicks +
+                         (elapsed - externalClocks) * ticks[internal] / durations[internal]);
+          Check(smp.HardwareClockCount() == clock && smp.CycleCount() == clock / 2,
+                "Sound execution stops at every requested hardware edge");
+          const auto &zero = smp.GetTimer0();
+          const auto &one = smp.GetTimer1();
+          const auto &two = smp.GetTimer2();
+          Check(zero.stage0 == expected % 128 && zero.stage1 == (expected / 128) % 2 &&
+                    zero.stage2 == 0 && zero.stage3 == (expected / 256) % 16,
+                "Timer zero retains its complete pipeline at partial bus deadlines");
+          Check(one.stage0 == expected % 128 && one.stage1 == (expected / 128) % 2 &&
+                    one.stage2 == (expected / 256) % 2 && one.stage3 == (expected / 512) % 16,
+                "Timer one retains its divider at partial bus deadlines");
+          Check(two.stage0 == expected % 16 && two.stage1 == (expected / 16) % 2 &&
+                    two.stage2 == (expected / 32) % 3 && two.stage3 == (expected / 96) % 16,
+                "Timer two retains its divider and output at partial bus deadlines");
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -198,6 +252,7 @@ int main() {
     RamAndTestSampling();
     ResetDuringWait();
     HaltedClocking();
+    TimerHardwareEdges();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

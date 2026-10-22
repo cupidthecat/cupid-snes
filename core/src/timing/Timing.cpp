@@ -67,8 +67,13 @@ void Timing::Tick(uint32_t clocks) {
     --clocks;
   }
   while (clocks >= 2) {
-    tickOnce();
-    clocks -= 2;
+    // Skip an intermediate edge only when no callback or scanline event observes it.
+    const uint8_t step = clocks >= 4 && (hcounter_ & 2) && hcounter_ + 2 < nextEventH_ &&
+                                 ((masterClocksElapsed_ + 2) & 127) != 0
+                             ? 4
+                             : 2;
+    tickOnce(step);
+    clocks -= step;
   }
   // Preserve a half tick so splitting an interval into odd batches does not
   // change event positions or lose clocks from the horizontal counter.
