@@ -53,6 +53,7 @@ private:
   Output output_{};
   uint16_t line_ = 0;
   uint16_t horizontalOffset_ = 0, verticalOffset_ = 0;
+  uint16_t previousHorizontalOffset_ = 0, previousVerticalOffset_ = 0;
   bool field_ = false;
   Ppu::RenderModel model_ = Ppu::RenderModel::Progressive;
 };

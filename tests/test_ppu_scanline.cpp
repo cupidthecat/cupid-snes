@@ -1,4 +1,5 @@
 #include "PpuScanlineProgram.hpp"
+#include "ppu/OffsetTileProgram.hpp"
 #include "snes/core/Emulator.hpp"
 
 #include <algorithm>
@@ -298,6 +299,45 @@ void IndependentMode7Mosaic() {
     }
   }
 }
+
+void OffsetTileColumns() {
+  for (unsigned mode : {2u, 4u}) {
+    for (unsigned layer : {0u, 1u}) {
+      for (bool large : {false, true}) {
+        for (auto offset :
+             {PpuOffsetKind::None, PpuOffsetKind::Horizontal, PpuOffsetKind::Vertical}) {
+          for (bool pal : {false, true}) {
+            const auto rom = PpuOffsetTileProgram(mode, layer, large, offset, pal);
+            for (auto model : {Ppu::RenderModel::Progressive, Ppu::RenderModel::Scanline}) {
+              Emulator::Config config;
+              config.entropyMode = EntropyMode::None;
+              config.entropySeed = 0;
+              config.ppu.model = model;
+              auto machine = std::make_unique<Emulator>(config);
+              Check(machine->LoadCartridge(rom), "The offset-tile column guest loads");
+              Output output;
+              machine->AttachVideoOutput(&output);
+              const auto expected = !large                                ? 0x3d25fafee3e02325ull
+                                    : offset == PpuOffsetKind::None       ? 0x17e42fff5975e325ull
+                                    : model == Ppu::RenderModel::Scanline ? 0xfd74dc3bf015e325ull
+                                                                          : 0x4a7616d88fd5e325ull;
+              for (bool warm : {false, true}) {
+                if (warm)
+                  Check(machine->Reset(), "The offset-tile column guest resets");
+                for (unsigned field = 0; field < 4; ++field)
+                  machine->StepFrame({false, false, false});
+                Check(output.frame.width == 256 && output.frame.height == 224 &&
+                          output.Digest() == expected,
+                      "Offset tiles preserve the first column and the selected renderer's table "
+                      "phase");
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -310,6 +350,7 @@ int main() {
     ModelStatusRegisters();
     GraphicsPrograms();
     IndependentMode7Mosaic();
+    OffsetTileColumns();
     std::puts("Scanline video checks passed");
     return 0;
   } catch (const std::exception &error) {

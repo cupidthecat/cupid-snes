@@ -23,6 +23,7 @@ bool Hires(const Ppu::IO &io) {
 void PpuBackground::Reset() {
   output_ = {};
   line_ = horizontalOffset_ = verticalOffset_ = 0;
+  previousHorizontalOffset_ = previousVerticalOffset_ = 0;
   field_ = false;
   for (auto &layer : layers_) {
     layer.column = layer.position = layer.mosaicClock = layer.mosaicX = 0;
@@ -49,6 +50,7 @@ void PpuBackground::BeginLine(uint16_t line, bool field, const Ppu::IO &io,
   field_ = field;
   model_ = model;
   horizontalOffset_ = verticalOffset_ = 0;
+  previousHorizontalOffset_ = previousVerticalOffset_ = 0;
   for (unsigned i = 0; i < 4; ++i) {
     auto &layer = layers_[i];
     layer.column = 0;
@@ -82,19 +84,23 @@ void PpuBackground::Name(unsigned id, unsigned clock, const Ppu::IO &io, Vram vr
     const unsigned scrollX = unsigned(bg.hoffset) << unsigned(hires);
     unsigned x = screenX + scrollX, row = y + bg.voffset;
     if (io.bgMode == 2 || io.bgMode == 4 || io.bgMode == 6) {
+      // Large scanline tiles delay offset entries by another eight-pixel column.
+      const bool delayed = model_ == Ppu::RenderModel::Scanline && !hires && bg.tileSize;
+      const unsigned horizontal = delayed ? previousHorizontalOffset_ : horizontalOffset_;
+      const unsigned vertical = delayed ? previousVerticalOffset_ : verticalOffset_;
       const unsigned select = 0x2000u << id;
       if (io.bgMode == 4) {
-        if (horizontalOffset_ & select) {
-          if (horizontalOffset_ & 0x8000)
-            row = y + horizontalOffset_;
+        if (horizontal & select) {
+          if (horizontal & 0x8000)
+            row = y + horizontal;
           else
-            x = screenX + (horizontalOffset_ & ~7u) + (scrollX & 7);
+            x = screenX + (horizontal & ~7u) + (scrollX & 7);
         }
       } else {
-        if (horizontalOffset_ & select)
-          x = screenX + (horizontalOffset_ & ~7u) + (scrollX & 7);
-        if (verticalOffset_ & select)
-          row = y + verticalOffset_;
+        if (horizontal & select)
+          x = screenX + (horizontal & ~7u) + (scrollX & 7);
+        if (vertical & select)
+          row = y + vertical;
       }
     }
     const unsigned width = 256u << unsigned(hires);
@@ -144,7 +150,10 @@ void PpuBackground::Offset(bool vertical, unsigned clock, const Ppu::IO &io, Vra
   const unsigned xShift = Hires(io) ? 3 : 3 + unsigned(bg.tileSize);
   const uint16_t word =
       vram[MapAddress(bg, x >> xShift, y >> (3 + unsigned(bg.tileSize))) & (vram.size() - 1)];
-  (vertical ? verticalOffset_ : horizontalOffset_) = word;
+  auto &current = vertical ? verticalOffset_ : horizontalOffset_;
+  auto &previous = vertical ? previousVerticalOffset_ : previousHorizontalOffset_;
+  previous = current;
+  current = word;
 }
 
 void PpuBackground::Fetch(uint16_t clock, const Ppu::IO &io, Vram vram) {
