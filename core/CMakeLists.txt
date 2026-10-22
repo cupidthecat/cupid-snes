@@ -3,6 +3,8 @@ add_library(snes_core
   src/state/SystemState.cpp
   src/state/ProcessorState.cpp
   src/state/AudioState.cpp
+  src/state/DspState.cpp
+  src/state/StreamState.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp

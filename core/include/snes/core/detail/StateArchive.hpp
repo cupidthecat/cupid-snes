@@ -134,13 +134,13 @@ public:
 
   template <class T>
     requires(std::is_arithmetic_v<T>)
-  void Vector(std::vector<T> &values, size_t maximumElements) {
+  size_t Vector(std::vector<T> &values, size_t maximumElements) {
     Operation operation(*this);
     if (!Reading()) {
       WriteCount(values.size(), maximumElements);
       for (const T value : values)
         WriteNumber(value);
-      return;
+      return values.size();
     }
     const auto count = ReadCount(maximumElements, WireSize<T>());
     ReserveStaging(count, sizeof(T));
@@ -148,6 +148,7 @@ public:
     for (size_t index = 0; index < count; ++index)
       (*next)[index] = ReadNumber<T>();
     Replace(values, std::move(next));
+    return count;
   }
 
   // The record must own the fields visited here. Borrowed spans and pointers
@@ -175,14 +176,14 @@ public:
   }
 
   template <class T, class Visit>
-  void Vector(std::vector<T> &values, size_t maximumElements, Visit visit) {
+  size_t Vector(std::vector<T> &values, size_t maximumElements, Visit visit) {
     Operation operation(*this);
     static_assert(std::is_trivially_copyable_v<T>);
     if (!Reading()) {
       WriteCount(values.size(), maximumElements);
       for (auto &value : values)
         VisitObject(visit, value);
-      return;
+      return values.size();
     }
     const auto count = ReadCount(maximumElements, 1);
     ReserveStaging(count, sizeof(T));
@@ -192,6 +193,7 @@ public:
       scratch.VisitObject(visit, item);
     position_ += scratch.position_;
     Replace(values, std::move(next));
+    return count;
   }
 
   template <class Visit> void Section(uint32_t tag, Visit visit) {

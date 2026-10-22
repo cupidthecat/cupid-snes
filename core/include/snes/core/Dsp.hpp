@@ -21,6 +21,10 @@
 
 namespace snes::core {
 
+namespace detail {
+class StateArchive;
+}
+
 class Dsp {
 public:
   // Constants
@@ -106,6 +110,9 @@ public:
 
   // Soft reset (FLG bit 7)
   void SoftReset();
+  // Restore keeps the attached RAM and output buffer. The output buffer must
+  // have room for the checkpoint's samples that have not yet been consumed.
+  void SerializeState(detail::StateArchive &archive);
 
   // Output buffer management
   void SetOutput(int16_t *buffer, int maxSamples);

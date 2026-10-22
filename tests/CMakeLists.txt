@@ -8,6 +8,10 @@ add_executable(snes_processor_state_tests test_processor_state.cpp)
 target_link_libraries(snes_processor_state_tests PRIVATE snes_core)
 snes_add_check(snes_processor_state_tests snes_processor_state_tests)
 
+add_executable(snes_audio_state_tests test_audio_state.cpp)
+target_link_libraries(snes_audio_state_tests PRIVATE snes_core)
+snes_add_check(snes_audio_state_tests snes_audio_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )
