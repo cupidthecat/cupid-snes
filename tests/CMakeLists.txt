@@ -1,5 +1,13 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_state_archive_tests test_state_archive.cpp)
+target_link_libraries(snes_state_archive_tests PRIVATE snes_core)
+snes_add_check(snes_state_archive_tests snes_state_archive_tests)
+
+add_executable(snes_processor_state_tests test_processor_state.cpp)
+target_link_libraries(snes_processor_state_tests PRIVATE snes_core)
+snes_add_check(snes_processor_state_tests snes_processor_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )

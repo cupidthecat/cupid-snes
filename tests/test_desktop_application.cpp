@@ -88,8 +88,28 @@ void ReplaceText(SDL_WindowID window, const char *text) {
   std::this_thread::sleep_for(std::chrono::milliseconds(80));
 }
 std::string Read(const std::filesystem::path &path) {
-  const auto bytes = snes::frontend::ReadFile(path, 1024 * 1024);
-  return {bytes.begin(), bytes.end()};
+  struct Request {
+    const std::filesystem::path &path;
+    std::string bytes;
+    std::exception_ptr failure;
+  } request{path, {}, {}};
+  const auto read = [](void *data) {
+    auto &request = *static_cast<Request *>(data);
+    try {
+      const auto bytes = snes::frontend::ReadFile(request.path, 1024 * 1024);
+      request.bytes.assign(bytes.begin(), bytes.end());
+    } catch (...) {
+      request.failure = std::current_exception();
+    }
+  };
+  // Keep polling reads off concurrent atomic writes to the same profile.
+  if (SDL_WasInit(SDL_INIT_EVENTS))
+    Check(SDL_RunOnMainThread(read, &request, true), "The application services its file observer");
+  else
+    read(&request);
+  if (request.failure)
+    std::rethrow_exception(request.failure);
+  return request.bytes;
 }
 struct EditorPicture {
   SDL_WindowID window;

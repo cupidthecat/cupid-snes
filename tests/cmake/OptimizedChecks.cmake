@@ -1,6 +1,8 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_state_archive_tests
+  snes_processor_state_tests
   snes_gameboy_cpu_tests
   snes_gameboy_host_tests
   snes_gameboy_clocked_io_tests

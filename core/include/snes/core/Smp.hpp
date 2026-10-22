@@ -122,6 +122,7 @@ public:
   uint64_t HardwareClockCount() const noexcept {
     return hardwareClocks_;
   }
+  void SerializeState(detail::StateArchive &archive);
 
   // Warm reset keeps the shared audio RAM.
   void Power(bool retainRam = false);
