@@ -40,11 +40,23 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
       {"audio.mute-unfocused", std::to_string(p.muteUnfocused)},
       {"audio.device", p.audioDevice},
       {"input.focus", std::to_string(int(p.focus))},
+      {"input.port1", std::to_string(int(p.console.ports[0]))},
+      {"input.port2", std::to_string(int(p.console.ports[1]))},
+      {"input.expansion", std::to_string(int(p.console.expansion))},
       {"path.firmware", p.firmwareDirectory},
       {"path.screenshots", p.screenshotDirectory},
       {"recent.count", std::to_string(p.recent.size())}};
   for (unsigned index = 0; index < keyNames.size(); ++index)
     result["key." + std::string(keyNames[index])] = std::to_string(p.keyboard.*keyMembers[index]);
+  for (size_t command = 0; command < desktopCommands.size(); ++command) {
+    for (size_t slot = 0; slot < Hotkeys::bindingCount; ++slot) {
+      const auto prefix =
+          "hotkey." + std::string(desktopCommands[command].key) + "." + std::to_string(slot) + ".";
+      const auto &chord = p.hotkeys.bindings[command][slot];
+      result[prefix + "key"] = std::to_string(chord.scancode);
+      result[prefix + "modifiers"] = std::to_string(chord.modifiers);
+    }
+  }
   for (unsigned index = 0; index < p.recent.size(); ++index) {
     const auto prefix = "recent." + std::to_string(index) + ".";
     result[prefix + "kind"] = std::to_string(int(p.recent[index].kind));
@@ -57,6 +69,8 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
 } // namespace
 
 void Preferences::Validate() const {
+  console.Validate();
+  hotkeys.Validate();
   if (scale < 1 || scale > 6 || volume < 0 || volume > 200 || int(focus) < 0 || int(focus) > 2 ||
       recent.size() > recentLimit)
     throw std::invalid_argument("Preferences contain an unsupported setting");
@@ -158,6 +172,23 @@ Preferences PreferencesFile::Load() {
   p.firmwareDirectory = text("path.firmware", "");
   p.screenshotDirectory = text("path.screenshots", "");
   p.focus = FocusBehavior(number("input.focus", int(p.focus), 0, 2));
+  for (size_t port = 0; port < p.console.ports.size(); ++port)
+    p.console.ports[port] = core::ControllerDevice(number("input.port" + std::to_string(port + 1),
+                                                          int(p.console.ports[port]), 0,
+                                                          int(core::ControllerDevice::MacsRifle)));
+  p.console.expansion =
+      core::Emulator::ExpansionDevice(number("input.expansion", int(p.console.expansion), 0,
+                                             int(core::Emulator::ExpansionDevice::Satellaview)));
+  for (size_t command = 0; command < desktopCommands.size(); ++command) {
+    for (size_t slot = 0; slot < Hotkeys::bindingCount; ++slot) {
+      const auto prefix =
+          "hotkey." + std::string(desktopCommands[command].key) + "." + std::to_string(slot) + ".";
+      auto &chord = p.hotkeys.bindings[command][slot];
+      chord.scancode =
+          SDL_Scancode(number(prefix + "key", chord.scancode, 0, SDL_SCANCODE_COUNT - 1));
+      chord.modifiers = unsigned(number(prefix + "modifiers", chord.modifiers, 0, 15));
+    }
+  }
   for (unsigned index = 0; index < keyNames.size(); ++index)
     p.keyboard.*keyMembers[index] =
         SDL_Scancode(number("key." + std::string(keyNames[index]), p.keyboard.*keyMembers[index], 0,

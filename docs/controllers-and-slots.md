@@ -2,7 +2,7 @@
 
 ## Controller setup
 
-Each console port accepts `pad`, `mouse`, `multitap`, or `none`. Both default to `pad`. Port two also accepts `scope`, `justifier`, `justifiers`, and `rifle`; see [light-gun setup and controls](light-guns-and-raster.md).
+Each console port accepts `pad`, `mouse`, `multitap`, or `none`. Both default to `pad`. File > Preferences > Devices saves the choices and changes connected devices without restarting the game. Port two also accepts `scope`, `justifier`, `justifiers`, and `rifle`; see [light-gun setup and controls](light-guns-and-raster.md). Command-line flags override the named choices for that run; Apply in the editor saves the active choices.
 
 ```powershell
 .\out\build\release\frontend\snes_frontend.exe --port1=mouse "C:\games\game.sfc"

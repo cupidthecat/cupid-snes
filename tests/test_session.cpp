@@ -108,6 +108,77 @@ void Replacement(const fs::path &directory) {
   session.Close();
   Check(!session.Machine() && Read(save)[0] == 0xa7, "Retry saves and unloads successfully");
 }
+void DeviceChanges(const fs::path &directory) {
+  using D = snes::core::ControllerDevice;
+  using E = snes::core::Emulator::ExpansionDevice;
+  struct Input : snes::core::IInputProvider {
+    std::array<snes::core::InputState, 8> players{};
+    snes::core::InputState Poll(uint64_t) override {
+      return players[0];
+    }
+    snes::core::InputState PollController(int player, uint64_t) override {
+      return players.at(player);
+    }
+    snes::core::MouseState PollMouse(int, uint64_t) override {
+      return {1, 0, true, false};
+    }
+  } input;
+  input.players[0].b = input.players[0].y = input.players[4].b = true;
+  const auto rom = directory / "device-settings.sfc";
+  Write(rom, ConsoleImage());
+  Session session(snes::tests::DeterministicConsoleConfig(), {nullptr, nullptr, &input},
+                  {D::Gamepad, D::Gamepad});
+  LaunchRequest request;
+  request.paths[0] = snes::core::PathText(rom);
+  session.Open(request);
+  auto *machine = session.Machine();
+  machine->StepFrame();
+  machine->GetBus().Write(0x7e0123, 0xa6);
+  const auto frame = machine->CurrentFrame(), cycles = machine->CurrentMasterCycles();
+  auto &ports = machine->GetAutoJoypad().Ports();
+  ports.SetLatch(true);
+  ports.SetLatch(false);
+  Check((ports.Read(0) & 1) == 1 && (ports.Read(1) & 1) == 0,
+        "The initial pads use players one and two");
+  session.SetDevices(session.Devices());
+  Check((ports.Read(0) & 1) == 1,
+        "Applying unchanged devices preserves a partially shifted controller packet");
+  snes::frontend::ConsoleDevices devices{{D::Multitap, D::Gamepad}, E::Satellaview};
+  session.SetDevices(devices);
+  ports.SetLatch(true);
+  ports.SetLatch(false);
+  Check((ports.Read(1) & 1) == 1, "Port two moves to player five after attaching a multitap");
+  Check(session.Machine() == machine && machine->CurrentFrame() == frame &&
+            machine->CurrentMasterCycles() == cycles && machine->GetBus().Read(0x7e0123) == 0xa6 &&
+            machine->LoadedCartridge()->SramData()[0] == 0x5a &&
+            machine->GetExpansionDevice() == E::Satellaview,
+        "Live device changes preserve the machine, timing, work RAM and cartridge storage");
+  auto invalid = devices;
+  invalid.ports[0] = D::SuperScope;
+  bool rejected = false;
+  try {
+    session.SetDevices(invalid);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected && session.Devices() == devices && session.Machine() == machine,
+        "Rejected hardware choices leave the current session intact");
+  session.Close();
+  session.Open(request);
+  Check(session.Devices() == devices && session.Machine()->GetExpansionDevice() == E::Satellaview,
+        "Device choices remain active when replacing or reopening games");
+  devices.ports = {D::Gamepad, D::Mouse};
+  session.SetDevices(devices);
+  auto &mousePorts = session.Machine()->GetAutoJoypad().Ports();
+  mousePorts.SetLatch(true);
+  mousePorts.SetLatch(false);
+  for (unsigned bit = 0; bit < 9; ++bit)
+    mousePorts.Read(1);
+  devices.ports[0] = D::Multitap;
+  session.SetDevices(devices);
+  Check((mousePorts.Read(1) & 1) == 1,
+        "Changing another port preserves the mouse's partially shifted button packet");
+}
 void Handheld(const fs::path &directory) {
   using namespace snes::tests::gameboy;
   for (bool second : {false, true}) {
@@ -363,6 +434,7 @@ int main() {
   } cleanup{directory};
   try {
     Replacement(directory);
+    DeviceChanges(directory);
     Handheld(directory);
     UnicodePaths(directory);
     SlotSaves(directory);

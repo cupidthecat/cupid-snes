@@ -25,13 +25,12 @@
 int main(int argc, char *argv[]) {
   // 1. Parse command-line arguments
   using snes::core::ControllerDevice;
-  std::array devices{ControllerDevice::Gamepad, ControllerDevice::Gamepad};
+  snes::frontend::DeviceOverrides devices;
   std::vector<std::string> arguments;
   std::filesystem::path firmwareDirectory;
   std::filesystem::path preferencesPath;
   std::optional<uint8_t> competitionDip;
   std::optional<snes::core::Region> regionOverride;
-  auto expansion = snes::core::Emulator::ExpansionDevice::None;
   for (int i = 1; i < argc; ++i) {
     const std::string_view value(argv[i]);
     if (value.starts_with("--preferences=")) {
@@ -59,9 +58,9 @@ int main(int argc, char *argv[]) {
     if (value.starts_with("--expansion=")) {
       const auto name = value.substr(12);
       if (name == "none")
-        expansion = snes::core::Emulator::ExpansionDevice::None;
+        devices.expansion = snes::core::Emulator::ExpansionDevice::None;
       else if (name == "satellaview")
-        expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
+        devices.expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
       else {
         std::cerr << "Unknown expansion device: " << name << '\n';
         return EXIT_FAILURE;
@@ -89,7 +88,7 @@ int main(int argc, char *argv[]) {
       continue;
     }
     if (value.starts_with("--port1=") || value.starts_with("--port2=")) {
-      auto &device = devices[value[6] - '1'];
+      auto &device = devices.ports[value[6] - '1'];
       const auto name = value.substr(8);
       if (name == "pad")
         device = ControllerDevice::Gamepad;
@@ -139,18 +138,6 @@ int main(int argc, char *argv[]) {
     std::cerr << "       --region=auto|ntsc|pal selects the console hardware region\n";
     return EXIT_FAILURE;
   }
-  if (devices[0] == ControllerDevice::Mouse && devices[1] == ControllerDevice::Mouse) {
-    std::cerr << "The frontend supports one host mouse; choose one console port\n";
-    return EXIT_FAILURE;
-  }
-  if (snes::core::IsLightGun(devices[0])) {
-    std::cerr << "Connect light guns to port 2 for beam-counter input\n";
-    return EXIT_FAILURE;
-  }
-  if (devices[0] == ControllerDevice::Mouse && snes::core::IsLightGun(devices[1])) {
-    std::cerr << "The host pointer cannot control a relative mouse and a light gun together\n";
-    return EXIT_FAILURE;
-  }
   std::optional<snes::frontend::LaunchRequest> initial;
   if (!arguments.empty()) {
     snes::frontend::LaunchRequest request;
@@ -170,7 +157,6 @@ int main(int argc, char *argv[]) {
 
   snes::core::Emulator::Config emulatorConfig;
   emulatorConfig.regionOverride = regionOverride;
-  emulatorConfig.expansionDevice = expansion;
   if (!firmwareDirectory.empty()) {
     auto firmware = std::make_shared<snes::core::CartridgeFirmware>();
     std::string error;

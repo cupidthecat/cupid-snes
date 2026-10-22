@@ -39,6 +39,29 @@ bool SameSavePath(const std::filesystem::path &first, const std::filesystem::pat
   return false;
 #endif
 }
+auto PlayersFor(const std::array<core::ControllerDevice, 2> &devices) {
+  std::array<std::array<int, 4>, 2> result{};
+  int player = 0;
+  for (size_t port = 0; port < devices.size(); ++port) {
+    result[port].fill(-1);
+    const int count = devices[port] == core::ControllerDevice::Multitap ? 4 : 1;
+    for (int index = 0; index < count; ++index)
+      result[port][index] = player++;
+  }
+  return result;
+}
+void ConfigurePorts(core::Emulator &machine, const std::array<core::ControllerDevice, 2> &devices,
+                    const std::array<core::ControllerDevice, 2> *previous = nullptr) {
+  const auto players = PlayersFor(devices);
+  const auto oldPlayers = PlayersFor(previous ? *previous : devices);
+  for (unsigned port = 0; port < devices.size(); ++port) {
+    const bool usesPlayers = devices[port] == core::ControllerDevice::Gamepad ||
+                             devices[port] == core::ControllerDevice::Multitap;
+    if (!previous || devices[port] != (*previous)[port] ||
+        (usesPlayers && players[port] != oldPlayers[port]))
+      machine.GetAutoJoypad().Ports().Configure(port, devices[port], players[port]);
+  }
+}
 } // namespace
 
 struct Session::State {
@@ -50,7 +73,9 @@ struct Session::State {
 
 Session::Session(core::Emulator::Config config, Outputs outputs,
                  std::array<core::ControllerDevice, 2> devices)
-    : config_(std::move(config)), outputs_(outputs), devices_(devices) {}
+    : config_(std::move(config)), outputs_(outputs), devices_(devices) {
+  Devices().Validate();
+}
 Session::~Session() = default;
 
 core::Emulator *Session::Machine() const noexcept {
@@ -59,6 +84,19 @@ core::Emulator *Session::Machine() const noexcept {
 const LaunchRequest *Session::Loaded() const noexcept {
   return state_ ? &state_->request : nullptr;
 }
+ConsoleDevices Session::Devices() const noexcept {
+  return {devices_, config_.expansionDevice};
+}
+void Session::SetDevices(const ConsoleDevices &devices) {
+  devices.Validate();
+  if (auto *machine = Machine()) {
+    ConfigurePorts(*machine, devices.ports, &devices_);
+    if (devices.expansion != config_.expansionDevice)
+      machine->SetExpansionDevice(devices.expansion);
+  }
+  devices_ = devices.ports;
+  config_.expansionDevice = devices.expansion;
+}
 
 void Session::Open(const LaunchRequest &request) {
   Flush();
@@ -66,14 +104,7 @@ void Session::Open(const LaunchRequest &request) {
   next->request = request;
   next->machine = std::make_unique<core::Emulator>(config_);
   auto &machine = *next->machine;
-  int nextPlayer = 0;
-  for (unsigned port = 0; port < devices_.size(); ++port) {
-    std::array<int, 4> players{-1, -1, -1, -1};
-    const int count = devices_[port] == core::ControllerDevice::Multitap ? 4 : 1;
-    for (int index = 0; index < count; ++index)
-      players[index] = nextPlayer++;
-    machine.GetAutoJoypad().Ports().Configure(port, devices_[port], players);
-  }
+  ConfigurePorts(machine, devices_);
   using Kind = LaunchRequest::Kind;
   const auto &paths = request.paths;
   std::string error;

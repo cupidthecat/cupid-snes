@@ -1,11 +1,13 @@
 #pragma once
 
 #include "LaunchRequest.hpp"
+#include "settings/ConsoleDevices.hpp"
 #include "snes/core/Emulator.hpp"
 
 #include <array>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace snes::frontend {
 
@@ -27,6 +29,8 @@ public:
   void Reset(bool powerCycle = false);
   core::Emulator *Machine() const noexcept;
   const LaunchRequest *Loaded() const noexcept;
+  ConsoleDevices Devices() const noexcept;
+  void SetDevices(const ConsoleDevices &devices);
   void SetFirmware(std::shared_ptr<const core::CartridgeFirmware> firmware) {
     config_.cartridgeFirmware = std::move(firmware);
   }

@@ -6,7 +6,7 @@ The File menu on Windows and Linux also opens Super Game Boy, Sufami Turbo, broa
 
 File > Recent Games remembers the last ten successful launch requests. A multi-file entry retains its cartridge mode, all asset paths, and its competition DIP setting. Reopening a game moves it to the front. Clear Recent Games removes the saved launch history. Missing assets produce a load error and keep the current game loaded.
 
-| Control | Action |
+| Default control | Action |
 | --- | --- |
 | Ctrl+O | Open a console game |
 | Ctrl+W | Save and unload the current game |
@@ -19,7 +19,7 @@ File > Recent Games remembers the last ten successful launch requests. A multi-f
 | F11 or Alt+Enter | Toggle fullscreen |
 | F12 | Save a screenshot |
 
-Shortcuts ignore key repeat. Press N several times to queue that many field advances. Reset and power cycle retain the pause setting and do not advance a paused game. Resize the window to fit your display; the picture keeps its current aspect and integer scale when space allows. Windows and Linux share the same Dear ImGui menus and preference editor. Menu and status bars sit outside the game picture and light-gun input area. Keyboard and pointer input used by the UI is blocked from the game; gamepad input remains independent.
+Shortcuts ignore key repeat. The Hotkeys preference page remaps them. Press N several times to queue that many field advances. Reset and power cycle retain the pause setting and do not advance a paused game. Resize the window to fit your display; the picture keeps its current aspect and integer scale when space allows. Windows and Linux share the same Dear ImGui menus and preference editor. Menu and status bars sit outside the game picture and light-gun input area. Keyboard and pointer input used by the UI is blocked from the game; gamepad input remains independent.
 
 Pausing clears queued host audio. Frame advance runs silently. Resuming collects a fresh audio buffer before playback starts. Opening a picker pauses the current game and restores its previous pause setting when cancelled. Quitting with a picker open cancels it before releasing the window on Windows; on other hosts, dismiss the picker to finish quitting.
 
@@ -39,7 +39,7 @@ These files contain battery storage, clocks, and pack identity. They do not capt
 
 ## Preferences
 
-Open File > Preferences or press Ctrl+, to change video, audio, focus, keyboard bindings, and paths. Apply saves and activates the changes. OK also closes the editor. Cancel or Escape discards changes made since the last Apply. Opening the editor pauses emulation; closing it restores the previous pause setting. A rejected change leaves the editor open with an error and retains the previous settings.
+Open File > Preferences or press Ctrl+, to change video, audio, focus, keyboard bindings, paths, connected devices, and hotkeys. Apply saves and activates the changes. OK also closes the editor. Cancel or Escape discards changes made since the last Apply. Opening the editor pauses emulation; closing it restores the previous pause setting. A rejected change leaves the editor open with an error and retains the previous settings.
 
 Preferences use a UTF-8 `preferences.cfg` in the SDL preference directory, normally `%APPDATA%\Cupid\Cupid-SNES` on Windows and `$XDG_DATA_HOME/Cupid/Cupid-SNES` on Linux (`~/.local/share` when unset). Use `--preferences=<file>` to choose a separate configuration for portable setups or different controller layouts. You can also edit the file while the application is closed.
 
@@ -65,3 +65,16 @@ Scale accepts 1 through 6. Aspect correction uses an 8:7 pixel aspect. Integer s
 Focus mode 0 pauses while the window is unfocused, hidden, or minimized. Mode 1 continues emulation while blocking controller input. Mode 2 continues with controller input enabled. Returning focus resumes an automatic pause and preserves a manual pause. Relative mouse capture is released while paused or unfocused.
 
 `path.firmware` supplies cartridge processor firmware when the command line does not specify a directory. Changing it in the editor applies to the next game opened. An empty screenshot path uses the default `screenshots` directory. Relative directory paths start at the folder containing the preferences file. The Input page captures keys for player 1, clears individual bindings, or restores the default keyboard layout. The `key.up`, `key.down`, `key.left`, `key.right`, `key.a`, `key.b`, `key.x`, `key.y`, `key.l`, `key.r`, `key.start`, and `key.select` entries store SDL scancode numbers for this layout; 0 leaves a button unassigned. Recent entries store complete launch requests and absolute asset paths.
+
+The Devices page connects gamepads, mice, multitaps, light guns, and the console expansion device. Applying a change retains the loaded game, execution position, work RAM, and cartridge saves. Reapplying the same configuration keeps current controller polling state. Port 2 moves to player 5 when port 1 has a multitap. One mouse or empty port reserves one player slot. The frontend supports one host pointer, so a relative mouse cannot be paired with another mouse or a light gun. Light guns connect to port 2.
+
+`input.port1` and `input.port2` store 0 for none, 1 for gamepad, 2 for mouse, and 3 for multitap. Port 2 also accepts 4 for Super Scope, 5 for Justifier, 6 for dual Justifiers, and 7 for MACS rifle. `input.expansion` stores 0 for none or 1 for Satellaview. Command-line `--port1`, `--port2`, and `--expansion` flags override only the named choices for that run. The editor shows the active choices; Apply saves them to the profile.
+
+The Hotkeys page provides four alternative keyboard bindings for each desktop action. Select a binding number, find the action, and click its shortcut to capture a key with optional Ctrl, Alt, Shift, or Super modifiers. Escape cancels capture; Use Escape assigns an unmodified Escape key. Clear removes one binding, and Restore hotkey defaults resets all actions. Modifier keys alone trigger on release and are cancelled when used as part of another chord or mouse click. A chord assigned to two different actions is rejected. Menus show the active shortcuts.
+
+Each binding uses `hotkey.<action>.<0..3>.key` for its SDL scancode and `.modifiers` for a bit mask: Shift = 1, Ctrl = 2, Alt = 4, Super = 8. Add modifier values to combine them. Caps Lock and Num Lock state are ignored. In a chord, left and right versions of a modifier are equivalent. For example, these records assign Ctrl+Shift+F8 to pause:
+
+```text
+hotkey.pause.0.key "65"
+hotkey.pause.0.modifiers "3"
+```

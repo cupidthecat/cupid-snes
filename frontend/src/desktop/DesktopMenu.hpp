@@ -1,5 +1,6 @@
 #pragma once
 
+#include "input/Hotkeys.hpp"
 #include "session/LaunchRequest.hpp"
 #include <SDL3/SDL.h>
 #include <memory>
@@ -7,35 +8,6 @@
 #include <span>
 
 namespace snes::frontend {
-enum class DesktopCommand {
-  Open,
-  OpenHandheld,
-  OpenSufami,
-  OpenBroadcast,
-  OpenCampus,
-  OpenPowerFest,
-  Unload,
-  Quit,
-  Pause,
-  FrameAdvance,
-  Reset,
-  PowerCycle,
-  Fullscreen,
-  Screenshot,
-  ClearRecent,
-  Recent0,
-  Recent1,
-  Recent2,
-  Recent3,
-  Recent4,
-  Recent5,
-  Recent6,
-  Recent7,
-  Recent8,
-  Recent9,
-  Preferences
-};
-
 class DesktopMenu {
 public:
   DesktopMenu();
@@ -44,7 +16,9 @@ public:
   void SetRecent(std::span<const LaunchRequest> requests);
   void Draw(bool enabled = true);
   std::optional<DesktopCommand> TakeCommand();
-  static std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent &key);
+  void SetHotkeys(const Hotkeys &hotkeys);
+  std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent &key);
+  void ResetHotkeys() noexcept;
 
 private:
   struct Impl;

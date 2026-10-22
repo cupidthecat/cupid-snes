@@ -39,7 +39,7 @@ std::filesystem::path ScreenshotPath(const Preferences &preferences, const Prefe
 }
 } // namespace
 
-int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice, 2> devices,
+int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
                const std::optional<LaunchRequest> &initial,
                const std::filesystem::path &preferencesPath) {
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -55,6 +55,9 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
     PreferencesFile preferencesFile(preferencesPath.empty() ? PreferencesFile::DefaultPath()
                                                             : preferencesPath);
     auto preferences = preferencesFile.Load();
+    const auto console = overrides.Resolve(preferences.console);
+    auto devices = console.ports;
+    config.expansionDevice = console.expansion;
     if (!config.cartridgeFirmware && !preferences.firmwareDirectory.empty()) {
       auto firmware = std::make_shared<core::CartridgeFirmware>();
       std::string error;
@@ -93,6 +96,7 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
     video.SetOverlay([&] { ui.Render(); }, ui.TopInset(), ui.BottomInset());
     auto &menu = ui.Menu();
     menu.SetRecent(preferences.recent);
+    menu.SetHotkeys(preferences.hotkeys);
     FileDialogs dialogs(video.Window());
     FramePacer pacer;
     bool running = true, paused = false, dialogWasPaused = false, picturePending = false;
@@ -115,7 +119,7 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
         title += " (Paused)";
       SDL_SetWindowTitle(video.Window(), title.c_str());
       menu.Update(session.Machine() != nullptr, paused);
-      ui.SetStatus(session.Machine() ? title : "Ready - Ctrl+O to open a game");
+      ui.SetStatus(session.Machine() ? title : "Ready - Open a game from File");
     };
     const auto resetPresentation = [&] {
       audio.Clear();
@@ -220,6 +224,12 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
       }
       if (changedFirmware)
         session.SetFirmware(std::move(firmware));
+      const bool changedPorts = devices != next.console.ports;
+      session.SetDevices(next.console);
+      devices = next.console.ports;
+      if (changedPorts)
+        video.SetGunAim({}, 0);
+      menu.SetHotkeys(next.hotkeys);
       preferences = std::move(next);
       audioMuted = nextMuted;
       input.ResetSampling();
@@ -244,7 +254,9 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
           preferencesFile.Save(preferences);
         } else if (command == Command::Preferences) {
           preferencesWasPaused = paused;
-          ui.PreferencesEditor().Open(preferences, preferencesFile.Path());
+          auto current = preferences;
+          current.console = session.Devices();
+          ui.PreferencesEditor().Open(current, preferencesFile.Path());
           preferencesActive = true;
           steps = 0;
           setPaused(true);
@@ -330,12 +342,18 @@ int RunDesktop(core::Emulator::Config config, std::array<core::ControllerDevice,
       while (running && SDL_PollEvent(&event)) {
         const bool capturedKeyboard = ui.WantsKeyboard();
         ui.ProcessEvent(event);
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST || event.type == SDL_EVENT_WINDOW_HIDDEN ||
+            event.type == SDL_EVENT_WINDOW_MINIMIZED || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+            event.type == SDL_EVENT_DROP_BEGIN)
+          menu.ResetHotkeys();
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
           execute(DesktopCommand::Quit);
-        else if (event.type == SDL_EVENT_KEY_DOWN) {
+        else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
           if (!capturedKeyboard && !ui.WantsKeyboard())
-            if (const auto command = DesktopMenu::KeyCommand(event.key))
+            if (const auto command = menu.KeyCommand(event.key))
               execute(*command);
+          if (capturedKeyboard || ui.WantsKeyboard())
+            menu.ResetHotkeys();
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                    !ui.PreferencesEditor().Active() && !ui.ErrorOpen()) {
           try {

@@ -140,9 +140,7 @@ int main() {
         }
       }
     });
-    const auto result = snes::frontend::RunDesktop(
-        {}, {snes::core::ControllerDevice::Gamepad, snes::core::ControllerDevice::Gamepad}, {},
-        file.Path());
+    const auto result = snes::frontend::RunDesktop({}, {}, {}, file.Path());
     returned = true;
     driver.join();
     if (failure)

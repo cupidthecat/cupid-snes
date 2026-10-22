@@ -1,10 +1,13 @@
 #pragma once
 
+#include "ConsoleDevices.hpp"
 #include "SdlInputProvider.hpp"
+#include "input/Hotkeys.hpp"
 #include "session/LaunchRequest.hpp"
 #include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace snes::frontend {
@@ -18,6 +21,8 @@ struct Preferences {
   FocusBehavior focus = FocusBehavior::Pause;
   std::string audioDevice, firmwareDirectory, screenshotDirectory;
   SdlInputProvider::KeyMap keyboard;
+  ConsoleDevices console;
+  Hotkeys hotkeys;
   std::vector<LaunchRequest> recent;
 
   void Remember(LaunchRequest request);

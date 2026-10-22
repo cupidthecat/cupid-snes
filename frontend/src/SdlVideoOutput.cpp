@@ -222,7 +222,7 @@ void SdlVideoOutput::ShowIdle() {
   SDL_SetRenderDrawColor(renderer_, 235, 237, 245, 255);
   SDL_RenderDebugText(renderer_, 20, 30, "Cupid-SNES");
   SDL_SetRenderDrawColor(renderer_, 170, 178, 195, 255);
-  SDL_RenderDebugText(renderer_, 20, 56, "Open a game with Ctrl+O");
+  SDL_RenderDebugText(renderer_, 20, 56, "Open a game from the File menu");
   SDL_RenderDebugText(renderer_, 20, 76, "or drop a cartridge file here.");
   SDL_SetRenderScale(renderer_, 1, 1);
   if (overlay_)

@@ -36,6 +36,12 @@ void RoundTrip(const fs::path &directory) {
   preferences.mute = true;
   preferences.aspectCorrection = true;
   preferences.keyboard.a = SDL_SCANCODE_C;
+  preferences.console.ports[0] = snes::core::ControllerDevice::Multitap;
+  preferences.console.expansion = snes::core::Emulator::ExpansionDevice::Satellaview;
+  preferences.hotkeys.bindings[size_t(snes::frontend::DesktopCommand::Pause)][0] = {
+      SDL_SCANCODE_F8, snes::frontend::KeyChord::Control | snes::frontend::KeyChord::Shift};
+  preferences.hotkeys.bindings[size_t(snes::frontend::DesktopCommand::Pause)][3] = {
+      SDL_SCANCODE_F8, snes::frontend::KeyChord::Gui};
   preferences.audioDevice = "Headphones \\\"USB\\\"";
   preferences.screenshotDirectory = snes::core::PathText(directory / fs::path(u8"\u753b\u50cf"));
   preferences.firmwareDirectory = "spaces, \\slashes and\nnewlines";
@@ -54,6 +60,8 @@ void RoundTrip(const fs::path &directory) {
             loaded.screenshotDirectory == preferences.screenshotDirectory &&
             loaded.recent == normalized,
         "Preferences preserve Unicode, escapes, keyboard bindings and complete launch requests");
+  Check(loaded.console == preferences.console && loaded.hotkeys == preferences.hotkeys,
+        "Hardware choices and all hotkey alternatives survive a profile restart");
   Write(path, Read(path) + "future.setting \"retain me\"\n");
   auto extended = fresh.Load();
   extended.volume = 21;
@@ -64,7 +72,7 @@ void RoundTrip(const fs::path &directory) {
   extended = fresh.Load();
   extended.recent.clear();
   fresh.Save(extended);
-  Check(Read(path).find("recent.0.") == std::string::npos &&
+  Check(Read(path).find("\nrecent.0.") == std::string::npos &&
             Read(path).find("future.setting") != std::string::npos,
         "Clearing history removes unknown per-launch metadata while preserving unrelated settings");
   Write(path, "\xef\xbb\xbf"
@@ -78,6 +86,13 @@ void BadInput(const fs::path &directory) {
         "Cupid-SNES preferences 1\nvideo.scale \"0\"\n",
         "Cupid-SNES preferences 1\naudio.mute \"2\"\n",
         "Cupid-SNES preferences 1\nkey.a \"9999\"\n",
+        "Cupid-SNES preferences 1\ninput.port1 \"4\"\n",
+        "Cupid-SNES preferences 1\ninput.port1 \"2\"\ninput.port2 \"2\"\n",
+        "Cupid-SNES preferences 1\ninput.expansion \"2\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.key \"9999\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.modifiers \"16\"\n",
+        "Cupid-SNES preferences 1\nhotkey.pause.0.key \"0\"\nhotkey.pause.0.modifiers \"2\"\n",
+        "Cupid-SNES preferences 1\nhotkey.open.0.key \"19\"\nhotkey.open.0.modifiers \"0\"\n",
         "Cupid-SNES preferences 1\nrecent.count \"11\"\n",
         "Cupid-SNES preferences 1\nrecent.count \"1\"\nrecent.0.kind \"9\"\n",
         "Cupid-SNES preferences 1\nrecent.count \"1\"\nrecent.0.kind \"1\"\nrecent.0.path0 "
@@ -158,6 +173,28 @@ void RelativeDirectories(const fs::path &directory) {
   Check(file.ResolvePath(snes::core::PathText(absolute)) == absolute,
         "Absolute Unicode directories are preserved");
 }
+void DeviceOverrides() {
+  using D = snes::core::ControllerDevice;
+  using E = snes::core::Emulator::ExpansionDevice;
+  snes::frontend::ConsoleDevices saved{{D::Multitap, D::SuperScope}, E::Satellaview};
+  saved.Validate();
+  snes::frontend::DeviceOverrides overrides;
+  overrides.ports[0] = D::None;
+  overrides.expansion = E::None;
+  const auto actual = overrides.Resolve(saved);
+  Check(actual.ports == std::array{D::None, D::SuperScope} && actual.expansion == E::None,
+        "Explicit command-line overrides preserve unspecified profile devices");
+  Check(saved.ports[0] == D::Multitap && saved.expansion == E::Satellaview,
+        "Resolving session overrides does not change saved choices");
+  overrides.ports[0] = D::Mouse;
+  bool rejected = false;
+  try {
+    overrides.Resolve(saved);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected, "Profile and command-line devices are validated as one configuration");
+}
 } // namespace
 
 int main() {
@@ -178,6 +215,7 @@ int main() {
     FailedReplacement(directory);
     RecentRequests();
     RelativeDirectories(directory);
+    DeviceOverrides();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

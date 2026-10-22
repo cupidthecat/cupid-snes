@@ -29,26 +29,112 @@ void Check(bool condition, const char *message) {
 }
 
 void Shortcuts() {
+  DesktopMenu menu;
   SDL_KeyboardEvent key{};
   key.type = SDL_EVENT_KEY_DOWN;
   key.scancode = SDL_SCANCODE_P;
-  Check(DesktopMenu::KeyCommand(key) == DesktopCommand::Pause, "P pauses the game");
+  Check(menu.KeyCommand(key) == DesktopCommand::Pause, "P pauses the game");
   key.repeat = true;
-  Check(!DesktopMenu::KeyCommand(key), "Held shortcuts do not repeatedly toggle a command");
+  Check(!menu.KeyCommand(key), "Held shortcuts do not repeatedly toggle a command");
   key.repeat = false;
   key.mod = SDL_KMOD_ALT;
-  Check(!DesktopMenu::KeyCommand(key), "Alt+P does not pause the game");
+  Check(!menu.KeyCommand(key), "Alt+P does not pause the game");
   key.scancode = SDL_SCANCODE_RETURN;
-  Check(DesktopMenu::KeyCommand(key) == DesktopCommand::Fullscreen, "Alt+Enter toggles fullscreen");
+  Check(menu.KeyCommand(key) == DesktopCommand::Fullscreen, "Alt+Enter toggles fullscreen");
   key.mod = SDL_KMOD_CTRL;
   key.scancode = SDL_SCANCODE_O;
-  Check(DesktopMenu::KeyCommand(key) == DesktopCommand::Open, "Ctrl+O opens a game");
+  Check(menu.KeyCommand(key) == DesktopCommand::Open, "Ctrl+O opens a game");
   key.scancode = SDL_SCANCODE_N;
-  Check(!DesktopMenu::KeyCommand(key), "Ctrl+N does not execute an unmodified shortcut");
+  Check(!menu.KeyCommand(key), "Ctrl+N does not execute an unmodified shortcut");
   key.mod = SDL_KMOD_NONE;
-  Check(DesktopMenu::KeyCommand(key) == DesktopCommand::FrameAdvance, "N advances one frame");
+  Check(menu.KeyCommand(key) == DesktopCommand::FrameAdvance, "N advances one frame");
   key.type = SDL_EVENT_KEY_UP;
-  Check(!DesktopMenu::KeyCommand(key), "Releasing a key does not execute a command");
+  Check(!menu.KeyCommand(key), "Releasing a key does not execute a command");
+}
+void CustomShortcuts() {
+  using snes::frontend::Hotkeys;
+  using snes::frontend::KeyChord;
+  Hotkeys hotkeys;
+  auto &pause = hotkeys.bindings[size_t(DesktopCommand::Pause)];
+  pause = {{{SDL_SCANCODE_F8, KeyChord::Control | KeyChord::Shift},
+            {SDL_SCANCODE_F8, KeyChord::Alt},
+            {SDL_SCANCODE_F8, KeyChord::Gui},
+            {SDL_SCANCODE_F8, 0}}};
+  hotkeys.Validate();
+  DesktopMenu menu;
+  menu.SetHotkeys(hotkeys);
+  SDL_KeyboardEvent key{};
+  key.type = SDL_EVENT_KEY_DOWN;
+  key.scancode = SDL_SCANCODE_F8;
+  for (const auto modifiers :
+       {SDL_Keymod(SDL_KMOD_LCTRL | SDL_KMOD_RSHIFT | SDL_KMOD_CAPS), SDL_Keymod(SDL_KMOD_RALT),
+        SDL_Keymod(SDL_KMOD_LGUI), SDL_Keymod(SDL_KMOD_NONE)}) {
+    key.mod = modifiers;
+    Check(menu.KeyCommand(key) == DesktopCommand::Pause,
+          "All four custom alternatives normalize left/right modifiers and ignore lock state");
+  }
+  key.mod = SDL_KMOD_CTRL;
+  Check(!menu.KeyCommand(key), "A modifier combination must match exactly");
+  key.mod = SDL_KMOD_NONE;
+  key.scancode = SDL_SCANCODE_P;
+  Check(!menu.KeyCommand(key), "Remapping removes the old shortcut");
+  key.scancode = SDL_SCANCODE_UNKNOWN;
+  Check(!menu.KeyCommand(key), "Unassigned bindings do not consume unknown key events");
+  key.scancode = SDL_SCANCODE_F8;
+  key.repeat = true;
+  Check(!menu.KeyCommand(key), "Custom shortcuts ignore key repeat");
+  Check(hotkeys.Label(DesktopCommand::Pause).find("Ctrl+Shift+F8") != std::string::npos,
+        "Menu shortcut labels reflect the saved configuration");
+  hotkeys.bindings[size_t(DesktopCommand::Quit)][0] = pause[0];
+  bool rejected = false;
+  try {
+    hotkeys.Validate();
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected, "A chord cannot trigger two different commands");
+}
+void ModifierShortcuts() {
+  using snes::frontend::Hotkeys;
+  using snes::frontend::KeyChord;
+  Hotkeys hotkeys;
+  hotkeys.bindings[size_t(DesktopCommand::Pause)][0] = {SDL_SCANCODE_LCTRL, 0};
+  hotkeys.bindings[size_t(DesktopCommand::PowerCycle)][0] = {SDL_SCANCODE_RALT, KeyChord::Control};
+  hotkeys.Validate();
+  DesktopMenu menu;
+  menu.SetHotkeys(hotkeys);
+  const auto send = [&](SDL_Scancode scan, SDL_Keymod mods, SDL_EventType type) {
+    SDL_KeyboardEvent key{};
+    key.type = type;
+    key.scancode = scan;
+    key.mod = mods;
+    return menu.KeyCommand(key);
+  };
+  Check(!send(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN),
+        "A modifier-only shortcut waits for release");
+  Check(send(SDL_SCANCODE_LCTRL, 0, SDL_EVENT_KEY_UP) == DesktopCommand::Pause,
+        "Releasing an unused modifier invokes its shortcut once");
+  send(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN);
+  Check(send(SDL_SCANCODE_O, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN) == DesktopCommand::Open &&
+            !send(SDL_SCANCODE_LCTRL, 0, SDL_EVENT_KEY_UP),
+        "A modifier used in another chord does not invoke a modifier-only action");
+  send(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN);
+  SDL_KeyboardEvent repeated{};
+  repeated.type = SDL_EVENT_KEY_DOWN;
+  repeated.scancode = SDL_SCANCODE_A;
+  repeated.mod = SDL_KMOD_LCTRL;
+  repeated.repeat = true;
+  Check(!menu.KeyCommand(repeated) && !send(SDL_SCANCODE_LCTRL, 0, SDL_EVENT_KEY_UP),
+        "Repeated gameplay keys consume a held modifier without repeatedly invoking shortcuts");
+  send(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN);
+  Check(!send(SDL_SCANCODE_RALT, SDL_KMOD_LCTRL | SDL_KMOD_RALT, SDL_EVENT_KEY_DOWN) &&
+            !send(SDL_SCANCODE_LCTRL, SDL_KMOD_RALT, SDL_EVENT_KEY_UP) &&
+            send(SDL_SCANCODE_RALT, 0, SDL_EVENT_KEY_UP) == DesktopCommand::PowerCycle,
+        "Modifier chords preserve their pressed combination across release order");
+  send(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_EVENT_KEY_DOWN);
+  menu.ResetHotkeys();
+  Check(!send(SDL_SCANCODE_LCTRL, 0, SDL_EVENT_KEY_UP),
+        "UI capture and focus changes discard pending modifier shortcuts");
 }
 
 void SharedUi(SdlVideoOutput &video, const char *capturePath) {
@@ -61,6 +147,25 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   const auto frame = [&] {
     ui.Frame();
     video.Redraw();
+  };
+  const auto capture = [&](const char *suffix) {
+    if (!capturePath)
+      return;
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+        SDL_RenderReadPixels(video.Renderer(), nullptr), SDL_DestroySurface);
+    Check(surface && SDL_SaveBMP(surface.get(), (std::string(capturePath) + suffix).c_str()),
+          SDL_GetError());
+  };
+  const auto key = [&](SDL_Scancode scan, SDL_Keycode code, SDL_Keymod modifiers = 0,
+                       SDL_EventType type = SDL_EVENT_KEY_DOWN) {
+    SDL_Event event{};
+    event.type = type;
+    event.key.windowID = video.WindowID();
+    event.key.scancode = scan;
+    event.key.key = code;
+    event.key.mod = modifiers;
+    ui.ProcessEvent(event);
+    frame();
   };
   const auto click = [&](float x, float y) {
     SDL_Event event{};
@@ -188,6 +293,79 @@ void SharedUi(SdlVideoOutput &video, const char *capturePath) {
   frame();
   Check(!editor.Active(), "A successful OK operation closes the editor");
 
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 280, top + 44);
+  click(left + 100, top + 132);
+  SDL_Event text{};
+  text.type = SDL_EVENT_TEXT_INPUT;
+  text.text.windowID = video.WindowID();
+  text.text.text = "Pause";
+  ui.ProcessEvent(text);
+  frame();
+  frame();
+  capture(".hotkeys.bmp");
+  click(left + 300, top + 164);
+  key(SDL_SCANCODE_LCTRL, SDLK_LCTRL, SDL_KMOD_LCTRL);
+  click(left + 112, top + 540);
+  Check(!editor.TakeChanges(), "Apply waits for a complete shortcut assignment");
+  key(SDL_SCANCODE_LSHIFT, SDLK_LSHIFT, SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT);
+  key(SDL_SCANCODE_F8, SDLK_F8, SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT);
+  key(SDL_SCANCODE_F8, SDLK_F8, SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_LSHIFT, SDLK_LSHIFT, SDL_KMOD_LCTRL, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_LCTRL, SDLK_LCTRL, 0, SDL_EVENT_KEY_UP);
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->hotkeys.bindings[size_t(DesktopCommand::Pause)][0] ==
+                snes::frontend::KeyChord{SDL_SCANCODE_F8, snes::frontend::KeyChord::Control |
+                                                              snes::frontend::KeyChord::Shift},
+        "The Hotkeys page captures modifier chords without prematurely assigning a modifier");
+  editor.Applied();
+  frame();
+  click(left + 300, top + 164);
+  key(SDL_SCANCODE_LCTRL, SDLK_LCTRL, SDL_KMOD_LCTRL);
+  key(SDL_SCANCODE_RALT, SDLK_RALT, SDL_KMOD_LCTRL | SDL_KMOD_RALT);
+  key(SDL_SCANCODE_LCTRL, SDLK_LCTRL, SDL_KMOD_RALT, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_RALT, SDLK_RALT, 0, SDL_EVENT_KEY_UP);
+  click(left + 112, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes &&
+            changes->hotkeys.bindings[size_t(DesktopCommand::Pause)][0] ==
+                snes::frontend::KeyChord{SDL_SCANCODE_RALT, snes::frontend::KeyChord::Control},
+        "Modifier-only chords retain the held combination when released in either order");
+  editor.Applied();
+  frame();
+  key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+  key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE, 0, SDL_EVENT_KEY_UP);
+  Check(!editor.Active(), "Escape closes the editor after a completed assignment");
+
+  editor.Open(current, "isolated-preferences.cfg");
+  frame();
+  frame();
+  click(left + 208, top + 44);
+  click(left + 100, top + 124);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  capture(".devices.bmp");
+  click(left + 100, top + 292);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN);
+  key(SDL_SCANCODE_DOWN, SDLK_DOWN, 0, SDL_EVENT_KEY_UP);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN);
+  key(SDL_SCANCODE_RETURN, SDLK_RETURN, 0, SDL_EVENT_KEY_UP);
+  click(left + 40, top + 540);
+  changes = editor.TakeChanges();
+  Check(changes && changes->console.ports[0] == snes::core::ControllerDevice::Multitap &&
+            changes->console.expansion == snes::core::Emulator::ExpansionDevice::Satellaview,
+        "The Devices page submits controller and expansion choices using keyboard navigation");
+  editor.Applied();
+  frame();
+
   snes::core::VideoFrame picture;
   picture.pixels.assign(picture.width * picture.height, 0xff0000ff);
   video.Present(picture);
@@ -275,6 +453,8 @@ int main(int argc, char **argv) {
   int result = 0;
   try {
     Shortcuts();
+    CustomShortcuts();
+    ModifierShortcuts();
     SdlVideoOutput::Config config;
     config.hidden = true;
     config.vsync = false;

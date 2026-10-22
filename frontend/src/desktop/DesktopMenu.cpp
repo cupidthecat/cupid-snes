@@ -11,11 +11,13 @@ namespace snes::frontend {
 struct DesktopMenu::Impl {
   std::deque<DesktopCommand> commands;
   std::vector<std::string> recent;
+  Hotkeys hotkeys;
+  HotkeyDispatcher dispatcher;
   bool loaded = false, paused = false;
 
-  void Item(const char *label, const char *shortcut, DesktopCommand command, bool enabled = true,
-            bool selected = false) {
-    if (ImGui::MenuItem(label, shortcut, selected, enabled))
+  void Item(const char *label, DesktopCommand command, bool enabled = true, bool selected = false) {
+    const auto shortcut = hotkeys.Label(command);
+    if (ImGui::MenuItem(label, shortcut.c_str(), selected, enabled))
       commands.push_back(command);
   }
 };
@@ -69,12 +71,12 @@ void DesktopMenu::Draw(bool enabled) {
     return;
   using C = DesktopCommand;
   if (ImGui::BeginMenu("File", enabled)) {
-    self.Item("Open Game...", "Ctrl+O", C::Open);
-    self.Item("Open Super Game Boy...", nullptr, C::OpenHandheld);
-    self.Item("Open Sufami Turbo...", nullptr, C::OpenSufami);
-    self.Item("Open Broadcast Cartridge...", nullptr, C::OpenBroadcast);
-    self.Item("Open Campus Challenge 92...", nullptr, C::OpenCampus);
-    self.Item("Open PowerFest 94...", nullptr, C::OpenPowerFest);
+    self.Item("Open Game...", C::Open);
+    self.Item("Open Super Game Boy...", C::OpenHandheld);
+    self.Item("Open Sufami Turbo...", C::OpenSufami);
+    self.Item("Open Broadcast Cartridge...", C::OpenBroadcast);
+    self.Item("Open Campus Challenge 92...", C::OpenCampus);
+    self.Item("Open PowerFest 94...", C::OpenPowerFest);
     if (ImGui::BeginMenu("Recent Games")) {
       if (self.recent.empty())
         ImGui::TextDisabled("No recent games");
@@ -82,35 +84,44 @@ void DesktopMenu::Draw(bool enabled) {
         ImGui::PushID(int(i));
         // Filename characters must not become widget identifiers.
         const auto size = ImGui::CalcTextSize(self.recent[i].c_str(), nullptr, false);
+        const auto command = C(unsigned(C::Recent0) + i);
+        const auto shortcut = self.hotkeys.Label(command);
+        auto rowSize = size;
+        if (!shortcut.empty())
+          rowSize.x += 24 + ImGui::CalcTextSize(shortcut.c_str()).x;
         const auto position = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##recent", false, 0, size))
-          self.commands.push_back(C(unsigned(C::Recent0) + i));
+        if (ImGui::Selectable("##recent", false, 0, rowSize))
+          self.commands.push_back(command);
         ImGui::GetWindowDrawList()->AddText(position, ImGui::GetColorU32(ImGuiCol_Text),
                                             self.recent[i].c_str());
+        if (!shortcut.empty())
+          ImGui::GetWindowDrawList()->AddText({position.x + size.x + 24, position.y},
+                                              ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                                              shortcut.c_str());
         ImGui::PopID();
       }
       if (!self.recent.empty()) {
         ImGui::Separator();
-        self.Item("Clear Recent Games", nullptr, C::ClearRecent);
+        self.Item("Clear Recent Games", C::ClearRecent);
       }
       ImGui::EndMenu();
     }
     ImGui::Separator();
-    self.Item("Unload Game", "Ctrl+W", C::Unload, self.loaded);
-    self.Item("Preferences...", "Ctrl+,", C::Preferences);
-    self.Item("Quit", "Ctrl+Q", C::Quit);
+    self.Item("Unload Game", C::Unload, self.loaded);
+    self.Item("Preferences...", C::Preferences);
+    self.Item("Quit", C::Quit);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Game", enabled)) {
-    self.Item("Pause", "P", C::Pause, self.loaded, self.paused);
-    self.Item("Frame Advance", "N", C::FrameAdvance, self.loaded);
-    self.Item("Reset", "F5", C::Reset, self.loaded);
-    self.Item("Power Cycle", nullptr, C::PowerCycle, self.loaded);
+    self.Item("Pause", C::Pause, self.loaded, self.paused);
+    self.Item("Frame Advance", C::FrameAdvance, self.loaded);
+    self.Item("Reset", C::Reset, self.loaded);
+    self.Item("Power Cycle", C::PowerCycle, self.loaded);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View", enabled)) {
-    self.Item("Fullscreen", "F11", C::Fullscreen);
-    self.Item("Screenshot", "F12", C::Screenshot, self.loaded);
+    self.Item("Fullscreen", C::Fullscreen);
+    self.Item("Screenshot", C::Screenshot, self.loaded);
     ImGui::EndMenu();
   }
   ImGui::EndMainMenuBar();
@@ -124,39 +135,15 @@ std::optional<DesktopCommand> DesktopMenu::TakeCommand() {
   return command;
 }
 
-std::optional<DesktopCommand> DesktopMenu::KeyCommand(const SDL_KeyboardEvent &key) {
-  if (key.repeat || key.type != SDL_EVENT_KEY_DOWN)
-    return {};
-  if (key.mod & SDL_KMOD_CTRL) {
-    if (key.scancode == SDL_SCANCODE_COMMA)
-      return DesktopCommand::Preferences;
-    if (key.scancode == SDL_SCANCODE_O)
-      return DesktopCommand::Open;
-    if (key.scancode == SDL_SCANCODE_W)
-      return DesktopCommand::Unload;
-    if (key.scancode == SDL_SCANCODE_Q)
-      return DesktopCommand::Quit;
-    return {};
-  }
-  if ((key.mod & SDL_KMOD_ALT) && key.scancode == SDL_SCANCODE_RETURN)
-    return DesktopCommand::Fullscreen;
-  if (key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))
-    return {};
-  switch (key.scancode) {
-  case SDL_SCANCODE_ESCAPE:
-    return DesktopCommand::Quit;
-  case SDL_SCANCODE_P:
-    return DesktopCommand::Pause;
-  case SDL_SCANCODE_N:
-    return DesktopCommand::FrameAdvance;
-  case SDL_SCANCODE_F5:
-    return DesktopCommand::Reset;
-  case SDL_SCANCODE_F11:
-    return DesktopCommand::Fullscreen;
-  case SDL_SCANCODE_F12:
-    return DesktopCommand::Screenshot;
-  default:
-    return {};
-  }
+void DesktopMenu::SetHotkeys(const Hotkeys &hotkeys) {
+  impl_->hotkeys = hotkeys;
+  ResetHotkeys();
 }
+std::optional<DesktopCommand> DesktopMenu::KeyCommand(const SDL_KeyboardEvent &key) {
+  return impl_->dispatcher.Process(impl_->hotkeys, key);
+}
+void DesktopMenu::ResetHotkeys() noexcept {
+  impl_->dispatcher.Reset();
+}
+
 } // namespace snes::frontend
