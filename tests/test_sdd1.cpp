@@ -306,6 +306,51 @@ void LargeImages() {
   }
 }
 
+void ClockedRomMirrors() {
+  auto rom = Image();
+  rom[0x101234] = 0x2a;
+  rom[0x401234] = 0x6d;
+  rom[0x501234] = 0x91;
+  size_t position = 0;
+  const auto emit = [&](std::initializer_list<uint8_t> bytes) {
+    for (auto byte : bytes)
+      rom[position++] = byte;
+  };
+  emit({0x78, 0xa9, 0x80, 0x8d, 0x00, 0x21});
+  unsigned result = 0;
+  for (unsigned window = 0; window < 4; ++window) {
+    for (uint8_t bank : {5, 6, 7, 15}) {
+      emit({0xa9, bank, 0x8f, uint8_t(4 + window), 0x48, uint8_t(window & 1 ? 0x80 : 0)});
+      emit({0xaf, 0x34, 0x12, uint8_t(0xc0 + window * 0x10)});
+      emit({0x8f, uint8_t(result++), 0x00, 0x7f});
+    }
+  }
+  emit({0xa9, 0xa5, 0x8f, 0x10, 0x00, 0x7f, 0xdb});
+
+  for (bool pal : {false, true}) {
+    rom[0x7fd9] = pal ? 2 : 1;
+    for (auto model : {Ppu::RenderModel::Progressive, Ppu::RenderModel::Scanline}) {
+      auto config = snes::tests::DeterministicConsoleConfig();
+      config.ppu.model = model;
+      auto emu = std::make_unique<Emulator>(config);
+      Check(emu->LoadCartridge(rom), "Clocked ROM-mirror guest loads");
+      for (bool warm : {false, true}) {
+        if (warm)
+          Check(emu->Reset(), "Clocked ROM-mirror guest resets");
+        for (unsigned index = 0; index <= 16; ++index)
+          emu->GetBus().Write(0x7f0000 + index, 0);
+        emu->StepFrame();
+        const auto *wram = emu->GetBus().WramData();
+        Check(wram[0x10010] == 0xa5, "Clocked ROM-mirror guest completes after each reset");
+        constexpr uint8_t expected[] = {0x91, 0x6d, 0x91, 0x91};
+        for (unsigned index = 0; index < 16; ++index)
+          Check(wram[0x10000 + index] == expected[index & 3],
+                "Unpopulated MMC banks retain bounded non-power-of-two ROM mirroring");
+      }
+    }
+  }
+}
+
 void CompressedBankBoundary() {
   auto rom = Image();
   std::fill(rom.begin() + 0x200000, rom.begin() + 0x201000, 0);
@@ -390,6 +435,7 @@ int main() {
     MappingAndSaves();
     DmaDecompression();
     LargeImages();
+    ClockedRomMirrors();
     CompressedBankBoundary();
     ClockedStreams();
   } catch (const std::exception &e) {
