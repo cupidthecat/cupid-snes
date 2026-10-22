@@ -80,4 +80,49 @@ inline std::vector<uint8_t> PageReadRom(unsigned slot = 0) {
   return rom;
 }
 
+inline std::vector<uint8_t> InformationPageRom(bool pal, unsigned slot) {
+  auto rom = ErasePollingRom(pal, false, slot);
+  std::vector<uint8_t> code{0x78};
+  const uint32_t window = slot == 2 ? 0xe00000 : 0xc00000;
+  const auto store = [&](uint32_t address, uint8_t value) {
+    code.insert(code.end(), {0xa9, value, 0x8f, uint8_t(address), uint8_t(address >> 8),
+                             uint8_t(address >> 16)});
+  };
+  const auto readPage = [&](unsigned output) {
+    code.insert(code.end(), {0xa2, 0, 0xbf, 0, 0, uint8_t(window >> 16), 0x9f, 0,
+                             uint8_t(output >> 8), 0x7e, 0xe8, 0xd0, 0xf5});
+  };
+  for (unsigned reg : {12, 14})
+    store((reg << 16) | 0x5000, 0x80);
+  for (unsigned page = 0; page < 2; ++page) {
+    store(window, 0xe0);
+    store(window, 255);
+    store(window, 0);
+    for (unsigned byte = 0; byte < 256; ++byte)
+      store(window + byte, uint8_t(byte * 37 + 0x53 + page * 17));
+    store(window, 0x72);
+  }
+  store(window, 0x75);
+  readPage(0x300);
+  for (unsigned repeat = 0; repeat < 3; ++repeat) {
+    store(window, 0x99);
+    store(window + repeat * 7, 0xd0);
+    readPage(0x400 + repeat * 0x200);
+    store(window, 0x72);
+    readPage(0x500 + repeat * 0x200);
+  }
+  store(window, 0x99);
+  store(window + 7, 0);
+  readPage(0xa00);
+  store(0x120, 0xa5);
+  code.push_back(0xdb);
+  const size_t offset = slot == 2 ? 0x8000 : 0;
+  std::fill_n(rom.begin() + offset, 0x3000, 0);
+  std::copy(code.begin(), code.end(), rom.begin() + offset);
+  const size_t header = slot == 2 ? 0xffc0 : 0x7fc0;
+  std::fill_n(rom.begin() + header, 21, ' ');
+  std::copy_n("FLASH INFORMATION", 17, rom.begin() + header);
+  return rom;
+}
+
 } // namespace broadcast_test
