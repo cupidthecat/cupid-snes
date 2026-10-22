@@ -32,6 +32,28 @@ snes::core::Emulator emulator(config);
 
 These settings cover the progressive renderer. The default scanline model has separate cold and warm graphics-memory rules; see [scanline rendering](scanline-video.md).
 
+## Super Game Boy
+
+Both adapter models run an SM83 processor with DMG video and sound, interrupts, timers, OAM DMA, boot-ROM mapping and cartridge storage. The console BIOS handles borders and adapter commands through the cartridge registers, packet queue and four tile buffers. Controller selection supports one, two or four handheld players.
+
+The register windows occupy `$6000-$67FF` and `$7000-$7FFF` in system banks `$00-$3F` and `$80-$BF`. `$6000` reports the video row and write buffer; `$6001` selects the read buffer. `$6002` dequeues a command packet into `$7000-$700F`, `$6003` controls execution and clock division, and `$6004-$6007` hold controller input. `$600F` reports revision `$21`; `$7800` streams the selected 512-byte tile buffer.
+
+Console bus intervals accrue handheld clock credit under the active divider. Scanline handoffs resume instruction execution. The first model derives its oscillator from the console master clock; the second uses 20,971,520 Hz before division. Divider writes, bridge reset and audio register accesses preserve their ordering. Handheld, console and optional expansion audio mix through retained stream histories.
+
+Supply a console BIOS, handheld game and matching 256-byte boot firmware:
+
+```powershell
+.\snes_frontend.exe --super-game-boy ".\adapter.sfc" ".\game.gb" ".\boot.bin"
+```
+
+These files may occupy separate directories. `--region=pal` or `--region=ntsc` selects the console hardware before power; `--region=auto` uses the BIOS header. Game and firmware assets are not bundled.
+
+Cartridge support includes ROM-only, MBC1/2/3/5/7, MMM01, HuC1/HuC3, Camera and TPP1 mapping. Cartridge components model clocks, motion, infrared, camera capture and rumble state. The SDL frontend does not provide physical camera, motion, infrared or rumble integration for handheld cartridges. Battery RAM survives console and bridge resets; volatile cartridge RAM follows its mapper's reset rules. See [battery saves](compatibility.md#battery-saves) for file paths and short-file handling.
+
+Generated tests cover processor instructions, memory and clock boundaries, host packets, tile transfer, video, sound, cartridge controllers and battery lifetimes. Supplied BIOS and game sequences cover both models, both console renderers and NTSC/PAL host selection. Fresh device runs measured about 60.12 presentations/s in NTSC and 50.02-50.05 in PAL, with no refills during the 900-presentation measurement windows. Near-silent startup refills were counted separately.
+
+These checks cover DMG execution and the recorded sequences. They do not establish complete game compatibility, color handheld hardware, physical peripheral integration or equality of every internal state and bus access. The save-file checks include CPU-written data in all four MBC1 RAM banks, warm reset, fresh reload and normal frontend exit.
+
 ## Cartridge implementations
 
 | Device | Implemented behavior | Important limits |

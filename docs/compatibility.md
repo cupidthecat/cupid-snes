@@ -27,6 +27,10 @@ The frontend loads a `.srm` file beside the ROM when the cartridge has SRAM. Cha
 
 Each save is written to a temporary file beside the destination, then renamed over the previous save. A save with the wrong size stops loading with an error and remains untouched. Tests cover loading, replacement, unchanged saves, size mismatches, and failed replacements.
 
+Super Game Boy uses a `.sav` beside the canonical handheld game path. It does not load or overwrite a save beside the console BIOS. Missing or empty files leave the cartridge's initial battery contents intact. A shorter file supplies its available prefix; the remaining RAM retains its initial bytes. A file larger than the cartridge's battery image stops loading with an error. Cartridge clocks may append mapper-specific state to the RAM payload.
+
+Handheld saves use the same 300-frame autosave interval, normal-exit flush and atomic replacement. Unchanged bytes leave the file timestamp intact. Cartridges without battery data create no save file and leave any existing file untouched. Tests cover both adapter models and host regions, writes across four RAM banks, warm reset and fresh reload. Separate normal frontend runs verify loading and saving when BIOS, game and boot firmware occupy different directories.
+
 ## Headless game checks
 
 The smoke tool runs a supplied ROM without opening a window. It reports visible frames, non-silent audio samples, elapsed time, throughput and median/95th/99th-percentile/maximum frame times. It presses Start for 20 frames and can save the final frame as a BMP:
