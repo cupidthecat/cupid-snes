@@ -241,11 +241,23 @@ class Emulator {
         return ppu_;
     }
 
+    const Ppu& GetPpu() const noexcept {
+        return ppu_;
+    }
+
     Smp& GetSmp() noexcept {
         return smp_;
     }
 
+    const Smp& GetSmp() const noexcept {
+        return smp_;
+    }
+
     Dsp& GetDsp() noexcept {
+        return dsp_;
+    }
+
+    const Dsp& GetDsp() const noexcept {
         return dsp_;
     }
 

@@ -9,6 +9,7 @@
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
 #include "storage/AtomicFile.hpp"
+#include "storage/InspectionBitmap.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -117,6 +118,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         bool cheatsActive = false, cheatsWasPaused = false;
         bool memoryActive = false, memoryWasPaused = false;
         bool cpuActive = false, cpuWasPaused = false;
+        bool hardwareActive = false, hardwareWasPaused = false;
         bool errorActive = false, errorWasPaused = false;
         unsigned steps = 0;
         uint64_t presentationTime = 0;
@@ -374,11 +376,11 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
 
         const auto execute = [&](DesktopCommand command) {
             try {
-                if (!running ||
-                    ((dialogs.Active() || ui.PreferencesEditor().Active() ||
-                      ui.StateManager().Active() || ui.CheatsEditor().Active() ||
-                      ui.MemoryEditor().Active() || ui.CpuEditor().Active() || ui.ErrorOpen()) &&
-                     command != DesktopCommand::Quit))
+                if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() ||
+                                  ui.StateManager().Active() || ui.CheatsEditor().Active() ||
+                                  ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
+                                  ui.HardwareEditor().Active() || ui.ErrorOpen()) &&
+                                 command != DesktopCommand::Quit))
                     return;
                 using Command = DesktopCommand;
                 if (command >= Command::Recent0 && command <= Command::Recent9) {
@@ -449,6 +451,20 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         return;
                     }
                     switch (command) {
+                    case Command::GraphicsInspector:
+                    case Command::AudioInspector:
+                        hardwareWasPaused = paused;
+                        steps = 0;
+                        setPaused(true);
+                        try {
+                            ui.HardwareEditor().Open(HardwareSnapshot::Capture(*session.Machine()),
+                                                     command == Command::AudioInspector);
+                            hardwareActive = true;
+                        } catch (...) {
+                            setPaused(hardwareWasPaused);
+                            throw;
+                        }
+                        break;
                     case Command::CpuDebugger:
                         cpuWasPaused = paused;
                         steps = 0;
@@ -623,7 +639,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                            !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
                            !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() &&
-                           !ui.CpuEditor().Active() && !ui.ErrorOpen()) {
+                           !ui.CpuEditor().Active() && !ui.HardwareEditor().Active() &&
+                           !ui.ErrorOpen()) {
                     try {
                         LaunchRequest request;
                         request.paths[0] = event.drop.data;
@@ -719,6 +736,46 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 input.ResetSampling();
                 resetPresentation();
                 setPaused(cpuWasPaused);
+            }
+            const bool refreshHardware = ui.HardwareEditor().TakeRefresh();
+            const bool stepHardware = ui.HardwareEditor().TakeStep();
+            if (ui.HardwareEditor().Active() && (refreshHardware || stepHardware)) {
+                try {
+                    if (stepHardware) {
+                        input.SetUiCapture(true, true);
+                        session.Machine()->StepFrame();
+                        resetPresentation();
+                    }
+                    ui.HardwareEditor().Updated(HardwareSnapshot::Capture(*session.Machine()));
+                } catch (const std::exception& error) {
+                    ui.HardwareEditor().Message(error.what());
+                }
+            }
+            if (auto exported = ui.HardwareEditor().TakeExport()) {
+                try {
+                    const auto directory = session.States()->Directory() / "hardware-dumps";
+                    std::filesystem::create_directories(directory);
+                    const bool text = !exported->text.empty();
+                    const auto path =
+                        directory / (exported->label + "-" + std::to_string(SDL_GetTicksNS()) +
+                                     (text ? ".tsv" : ".bmp"));
+                    if (text)
+                        WriteFileAtomically(
+                            path, std::span(reinterpret_cast<const uint8_t*>(exported->text.data()),
+                                            exported->text.size()));
+                    else {
+                        const auto bytes = InspectionBitmap(exported->picture);
+                        WriteFileAtomically(path, bytes);
+                    }
+                    ui.HardwareEditor().Message("Saved: " + core::PathText(path));
+                } catch (const std::exception& error) {
+                    ui.HardwareEditor().Message(error.what());
+                }
+            }
+            if (hardwareActive && !ui.HardwareEditor().Active()) {
+                hardwareActive = false;
+                input.ResetSampling();
+                setPaused(hardwareWasPaused);
             }
             auto memoryCheat = ui.MemoryEditor().TakeCheat();
             if (memoryActive && !ui.MemoryEditor().Active()) {
@@ -873,7 +930,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 SDL_SetWindowRelativeMouseMode(video.Window(), capture);
             if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
                 ui.StateManager().Active() || ui.CheatsEditor().Active() ||
-                ui.MemoryEditor().Active() || ui.ErrorOpen() ||
+                ui.MemoryEditor().Active() || ui.HardwareEditor().Active() || ui.ErrorOpen() ||
                 ((paused || focusPaused) && !steps)) {
                 if (uiFrame)
                     video.Redraw();

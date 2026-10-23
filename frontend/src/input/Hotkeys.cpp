@@ -125,6 +125,8 @@ Hotkeys::Hotkeys() {
     set(DesktopCommand::MemoryViewer, SDL_SCANCODE_M, KeyChord::Control | KeyChord::Shift);
     set(DesktopCommand::RamSearch, SDL_SCANCODE_F, KeyChord::Control | KeyChord::Shift);
     set(DesktopCommand::CpuDebugger, SDL_SCANCODE_D, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::GraphicsInspector, SDL_SCANCODE_V, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::AudioInspector, SDL_SCANCODE_A, KeyChord::Control | KeyChord::Shift);
 }
 
 std::optional<DesktopCommand> Hotkeys::Match(const SDL_KeyboardEvent& key) const {

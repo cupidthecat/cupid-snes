@@ -1,6 +1,8 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_hardware_inspection_tests
+  snes_hardware_application_tests
   snes_disassembly_tests
   snes_cpu_debugger_tests
   snes_cpu_debugger_application_tests

@@ -163,6 +163,8 @@ void DesktopMenu::Draw(bool enabled) {
         self.Item("Memory...", C::MemoryViewer, self.loaded);
         self.Item("RAM Search...", C::RamSearch, self.loaded);
         self.Item("CPU Debugger...", C::CpuDebugger, self.loaded);
+        self.Item("Graphics Inspector...", C::GraphicsInspector, self.loaded);
+        self.Item("Audio Inspector...", C::AudioInspector, self.loaded);
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();

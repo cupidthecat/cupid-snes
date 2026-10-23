@@ -3,6 +3,7 @@
 #include "CheatDialog.hpp"
 #include "CpuDebuggerDialog.hpp"
 #include "DesktopMenu.hpp"
+#include "HardwareDialog.hpp"
 #include "MemoryDialog.hpp"
 #include "PreferencesDialog.hpp"
 #include "StateManagerDialog.hpp"
@@ -29,6 +30,7 @@ class DesktopUi {
     CheatDialog& CheatsEditor();
     MemoryDialog& MemoryEditor();
     CpuDebuggerDialog& CpuEditor();
+    HardwareDialog& HardwareEditor();
     void SetStatus(std::string text);
     void ShowError(std::string text);
     bool ErrorOpen() const;

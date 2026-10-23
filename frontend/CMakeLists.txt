@@ -6,11 +6,13 @@ add_library(snes_frontend_support STATIC
   src/debug/MemoryTools.cpp
   src/debug/CpuDebugger.cpp
   src/debug/Disassembly.cpp
+  src/debug/HardwareSnapshot.cpp
   src/SdlVideoOutput.cpp
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp
   src/SaveRamFile.cpp
   src/storage/AtomicFile.cpp
+  src/storage/InspectionBitmap.cpp
   src/storage/BatteryStorage.cpp
   src/storage/StateStorage.cpp
   src/settings/Preferences.cpp
@@ -22,6 +24,7 @@ add_library(snes_frontend_support STATIC
   src/desktop/CheatDialog.cpp
   src/desktop/MemoryDialog.cpp
   src/desktop/CpuDebuggerDialog.cpp
+  src/desktop/HardwareDialog.cpp
   src/desktop/FileDialogs.cpp
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp
