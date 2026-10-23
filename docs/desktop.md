@@ -14,7 +14,12 @@ File > Recent Games remembers the last ten successful launch requests. A multi-f
 | Ctrl+Q or Escape | Save and quit |
 | P | Pause or resume |
 | N | Pause and advance one field |
+| F2 | Save the selected quick slot |
+| F3 | Open the state manager |
+| F4 | Load the selected quick slot |
 | F5 | Reset the loaded machine |
+| F6 / F7 | Select the previous / next quick slot |
+| Ctrl+Z / Ctrl+Y | Undo / redo a state load |
 | Game > Power Cycle | Restart the hardware while retaining cartridge storage |
 | F11 or Alt+Enter | Toggle fullscreen |
 | F12 | Save a screenshot |
@@ -24,6 +29,16 @@ Shortcuts ignore key repeat. The Hotkeys preference page remaps them. Press N se
 Pausing clears queued host audio. Frame advance runs silently. Resuming collects a fresh audio buffer before playback starts. Opening a picker pauses the current game and restores its previous pause setting when cancelled. Quitting with a picker open cancels it before releasing the window on Windows; on other hosts, dismiss the picker to finish quitting.
 
 Screenshots are BMP files at the generated picture's native dimensions. They exclude menus, status text, window borders, scaling, and light-gun sights. They are saved under the SDL preference directory in `screenshots`, normally `%APPDATA%\Cupid\Cupid-SNES\screenshots` on Windows. The status bar reports the saved path. A screenshot requires a generated game picture.
+
+## Save states
+
+Game > Quick Slot selects one of ten slots. F2 replaces that slot and F4 loads it. The selection survives a restart. The state manager offers named states, previews, dates, and the same quick slots. Add State creates a named checkpoint. Save replaces the selected entry, Rename changes a managed state's name, and Remove deletes the selected file. Replacement and removal ask for confirmation. Cancel or Escape preserves the file. These controls and their remappable keyboard/gamepad shortcuts work on both desktop platforms.
+
+Opening the manager pauses playback. Closing it restores the previous pause setting. A successful load refreshes the completed game picture immediately, including while paused, and discards audio queued from the previous timeline. Undo Load returns to the execution saved just before the latest successful load; Redo Load reapplies it. Saving a state preserves this undo history. Opening another game or unloading clears it. Undo history belongs to the current session and is not stored across application restarts.
+
+Capture finishes in-flight instructions and DMA while retaining any picture, input, and audio events crossed along the way. A checkpoint includes the resulting partial field and all required cartridge hardware. Loading validates the file and loaded hardware before capturing undo or replacing execution. Invalid versions, damaged files, different cartridges, and changed or missing streamed media leave the game and previous undo history available. State loading does not read or flush battery files. Later battery saves write the restored cartridge data normally.
+
+Preferences > Paths selects the state directory. A blank setting uses a `states` folder beside the game. Each launch has its own subfolder, derived from its cartridge mode, all canonical asset paths, and competition DIP setting. Handheld games and different slot/pack combinations therefore keep separate collections. Changing the directory changes future state destinations without moving existing files or replacing the loaded machine. See [State files](state-files.md) for the format and filename rules.
 
 ## Battery files
 

@@ -2,6 +2,7 @@
 
 #include "DesktopMenu.hpp"
 #include "PreferencesDialog.hpp"
+#include "StateManagerDialog.hpp"
 #include <SDL3/SDL.h>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@ public:
   bool WantsPointer() const;
   DesktopMenu &Menu();
   PreferencesDialog &PreferencesEditor();
+  StateManagerDialog &StateManager();
   void SetStatus(std::string text);
   void ShowError(std::string text);
   bool ErrorOpen() const;

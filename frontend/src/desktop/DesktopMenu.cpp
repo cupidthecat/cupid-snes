@@ -17,6 +17,8 @@ struct DesktopMenu::Impl {
   GamepadHotkeyDispatcher gamepadDispatcher;
   std::map<SDL_JoystickID, std::string> gamepadKeys;
   bool loaded = false, paused = false;
+  bool undo = false, redo = false;
+  unsigned stateSlot = 0;
 
   void Item(const char *label, DesktopCommand command, bool enabled = true, bool selected = false) {
     const auto shortcut = hotkeys.Label(command);
@@ -66,6 +68,11 @@ void DesktopMenu::SetRecent(std::span<const LaunchRequest> requests) {
 void DesktopMenu::Update(bool loaded, bool paused) {
   impl_->loaded = loaded;
   impl_->paused = paused;
+}
+void DesktopMenu::UpdateStates(unsigned slot, bool undo, bool redo) {
+  impl_->stateSlot = slot;
+  impl_->undo = undo;
+  impl_->redo = redo;
 }
 
 void DesktopMenu::Draw(bool enabled) {
@@ -120,6 +127,24 @@ void DesktopMenu::Draw(bool enabled) {
     self.Item("Frame Advance", C::FrameAdvance, self.loaded);
     self.Item("Reset", C::Reset, self.loaded);
     self.Item("Power Cycle", C::PowerCycle, self.loaded);
+    ImGui::Separator();
+    const auto save = "Save Quick State (" + std::to_string(self.stateSlot + 1) + ")";
+    const auto load = "Load Quick State (" + std::to_string(self.stateSlot + 1) + ")";
+    self.Item(save.c_str(), C::QuickSave, self.loaded);
+    self.Item(load.c_str(), C::QuickLoad, self.loaded);
+    if (ImGui::BeginMenu("Quick Slot", self.loaded)) {
+      for (unsigned slot = 0; slot < 10; ++slot) {
+        const auto label = std::to_string(slot + 1);
+        self.Item(label.c_str(), C(unsigned(C::Slot0) + slot), true, self.stateSlot == slot);
+      }
+      ImGui::Separator();
+      self.Item("Previous Slot", C::PreviousSlot);
+      self.Item("Next Slot", C::NextSlot);
+      ImGui::EndMenu();
+    }
+    self.Item("State Manager...", C::StateManager, self.loaded);
+    self.Item("Undo State Load", C::UndoState, self.loaded && self.undo);
+    self.Item("Redo State Load", C::RedoState, self.loaded && self.redo);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View", enabled)) {

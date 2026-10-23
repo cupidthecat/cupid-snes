@@ -10,7 +10,7 @@ import time
 def main():
     environment = dict(os.environ, SDL_VIDEODRIVER="x11", SDL_AUDIODRIVER="dummy",
                        SDL_RENDER_DRIVER="software", SNES_TEST_WINDOW="1")
-    process = subprocess.Popen([str(Path(sys.argv[1]).resolve())], env=environment)
+    process = subprocess.Popen([str(Path(sys.argv[1]).resolve()), *sys.argv[2:]], env=environment)
     focused = set()
     deadline = time.monotonic() + 90
     try:

@@ -38,6 +38,8 @@ std::map<std::string, std::string> Fields(const Preferences &p) {
       {"path.firmware", p.firmwareDirectory},
       {"path.screenshots", p.screenshotDirectory},
       {"path.saves", p.saveDirectory},
+      {"path.states", p.stateDirectory},
+      {"state.slot", std::to_string(p.stateSlot)},
       {"recent.count", std::to_string(p.recent.size())}};
   const auto keyboard = p.input.Keyboard();
   for (const auto &button : controllerButtons)
@@ -126,7 +128,7 @@ void Preferences::Validate() const {
   hotkeys.Validate();
   input.Validate();
   if (scale < 1 || scale > 6 || volume < 0 || volume > 200 || int(focus) < 0 || int(focus) > 2 ||
-      recent.size() > recentLimit)
+      recent.size() > recentLimit || stateSlot >= 10)
     throw std::invalid_argument("Preferences contain an unsupported setting");
   for (const auto &request : recent) {
     if (int(request.kind) < 0 || request.kind > LaunchRequest::Kind::PowerFest94 ||
@@ -223,6 +225,8 @@ Preferences PreferencesFile::Load() {
   p.firmwareDirectory = text("path.firmware", "");
   p.screenshotDirectory = text("path.screenshots", "");
   p.saveDirectory = text("path.saves", "");
+  p.stateDirectory = text("path.states", "");
+  p.stateSlot = unsigned(number("state.slot", 0, 0, 9));
   p.focus = FocusBehavior(number("input.focus", int(p.focus), 0, 2));
   p.input.turboFrequency = number("input.turbo-frequency", p.input.turboFrequency, 1, 8);
   for (size_t port = 0; port < p.console.ports.size(); ++port)
@@ -232,11 +236,15 @@ Preferences PreferencesFile::Load() {
   p.console.expansion =
       core::Emulator::ExpansionDevice(number("input.expansion", int(p.console.expansion), 0,
                                              int(core::Emulator::ExpansionDevice::Satellaview)));
+  std::array<std::array<bool, Hotkeys::bindingCount>, desktopCommands.size()> implicit{};
   for (size_t command = 0; command < desktopCommands.size(); ++command) {
     for (size_t slot = 0; slot < Hotkeys::bindingCount; ++slot) {
       const auto prefix =
           "hotkey." + std::string(desktopCommands[command].key) + "." + std::to_string(slot) + ".";
       auto &chord = p.hotkeys.bindings[command][slot];
+      implicit[command][slot] = command >= size_t(DesktopCommand::QuickSave) &&
+                                !fields.contains(prefix + "key") &&
+                                !fields.contains(prefix + "modifiers");
       chord.scancode =
           SDL_Scancode(number(prefix + "key", chord.scancode, 0, SDL_SCANCODE_COUNT - 1));
       chord.modifiers = unsigned(number(prefix + "modifiers", chord.modifiers, 0, 15));
@@ -249,6 +257,21 @@ Preferences PreferencesFile::Load() {
         value.kind = InputBinding::Kind(number(binding + "type", int(value.kind), 0, 5));
         value.control = number(binding + "control", value.control, 0, SDL_SCANCODE_COUNT - 1);
       }
+    }
+  }
+  // Older profiles keep their assignments when a new default would collide.
+  for (size_t command = 0; command < implicit.size(); ++command) {
+    for (size_t slot = 0; slot < Hotkeys::bindingCount; ++slot) {
+      auto &chord = p.hotkeys.bindings[command][slot];
+      if (!implicit[command][slot] || chord.scancode == SDL_SCANCODE_UNKNOWN)
+        continue;
+      for (size_t other = 0; other < p.hotkeys.bindings.size(); ++other)
+        if (other != command &&
+            std::find(p.hotkeys.bindings[other].begin(), p.hotkeys.bindings[other].end(), chord) !=
+                p.hotkeys.bindings[other].end()) {
+          chord = {};
+          break;
+        }
     }
   }
   KeyboardMap keyboard;

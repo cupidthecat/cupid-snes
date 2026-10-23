@@ -54,6 +54,7 @@ struct DesktopUi::Impl {
   SDL_Renderer *renderer = nullptr;
   DesktopMenu menu;
   PreferencesDialog preferences;
+  std::unique_ptr<StateManagerDialog> states;
   std::string status = "Ready", error;
   bool platformReady = false, rendererReady = false, errorOpening = false, errorOpen = false;
 
@@ -77,6 +78,7 @@ DesktopUi::DesktopUi(SDL_Window *window, SDL_Renderer *renderer) : impl_(std::ma
   IMGUI_CHECKVERSION();
   self.context = ImGui::CreateContext();
   self.renderer = renderer;
+  self.states = std::make_unique<StateManagerDialog>(renderer);
   auto &io = ImGui::GetIO();
   io.IniFilename = nullptr;
   io.LogFilename = nullptr;
@@ -110,7 +112,7 @@ void DesktopUi::Frame() {
   ImGui_ImplSDLRenderer3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
-  self.menu.Draw(!self.preferences.Active() && !self.errorOpen);
+  self.menu.Draw(!self.preferences.Active() && !self.states->Active() && !self.errorOpen);
   const auto *viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos({viewport->Pos.x, viewport->Pos.y + viewport->Size.y - BottomInset()});
   ImGui::SetNextWindowSize({viewport->Size.x, float(BottomInset())});
@@ -121,6 +123,7 @@ void DesktopUi::Frame() {
     ImGui::TextUnformatted(self.status.c_str());
   ImGui::End();
   self.preferences.Draw();
+  self.states->Draw();
   if (self.errorOpening) {
     ImGui::OpenPopup("Cupid-SNES error");
     self.errorOpening = false;
@@ -154,18 +157,23 @@ int DesktopUi::BottomInset() const {
 }
 bool DesktopUi::WantsKeyboard() const {
   impl_->Activate();
-  return impl_->preferences.Active() || impl_->errorOpen || ImGui::GetIO().WantCaptureKeyboard ||
+  return impl_->preferences.Active() || impl_->states->Active() || impl_->errorOpen ||
+         ImGui::GetIO().WantCaptureKeyboard ||
          ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 }
 bool DesktopUi::WantsPointer() const {
   impl_->Activate();
-  return impl_->preferences.Active() || impl_->errorOpen || ImGui::GetIO().WantCaptureMouse;
+  return impl_->preferences.Active() || impl_->states->Active() || impl_->errorOpen ||
+         ImGui::GetIO().WantCaptureMouse;
 }
 DesktopMenu &DesktopUi::Menu() {
   return impl_->menu;
 }
 PreferencesDialog &DesktopUi::PreferencesEditor() {
   return impl_->preferences;
+}
+StateManagerDialog &DesktopUi::StateManager() {
+  return *impl_->states;
 }
 void DesktopUi::SetStatus(std::string text) {
   impl_->status = std::move(text);

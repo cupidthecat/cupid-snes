@@ -67,6 +67,8 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_spc7110_timing_tests
   snes_save_ram_tests
   snes_session_tests
+  snes_state_storage_tests
+  snes_state_application_tests
   snes_battery_directory_tests
   snes_desktop_tests
   snes_desktop_application_tests

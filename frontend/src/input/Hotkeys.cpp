@@ -105,6 +105,13 @@ Hotkeys::Hotkeys() {
   set(DesktopCommand::Fullscreen, SDL_SCANCODE_RETURN, KeyChord::Alt, 1);
   set(DesktopCommand::Screenshot, SDL_SCANCODE_F12);
   set(DesktopCommand::Preferences, SDL_SCANCODE_COMMA, KeyChord::Control);
+  set(DesktopCommand::QuickSave, SDL_SCANCODE_F2);
+  set(DesktopCommand::StateManager, SDL_SCANCODE_F3);
+  set(DesktopCommand::QuickLoad, SDL_SCANCODE_F4);
+  set(DesktopCommand::PreviousSlot, SDL_SCANCODE_F6);
+  set(DesktopCommand::NextSlot, SDL_SCANCODE_F7);
+  set(DesktopCommand::UndoState, SDL_SCANCODE_Z, KeyChord::Control);
+  set(DesktopCommand::RedoState, SDL_SCANCODE_Y, KeyChord::Control);
 }
 std::optional<DesktopCommand> Hotkeys::Match(const SDL_KeyboardEvent &key) const {
   if (key.type != SDL_EVENT_KEY_DOWN || key.repeat || key.scancode == SDL_SCANCODE_UNKNOWN)

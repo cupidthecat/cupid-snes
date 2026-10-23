@@ -70,6 +70,8 @@ void RoundTrip(const fs::path &directory) {
   preferences.saveDirectory =
       "../battery folder/" + snes::core::PathText(fs::path(u8"\u4fdd\u5b58"));
   preferences.firmwareDirectory = "spaces, \\slashes and\nnewlines";
+  preferences.stateDirectory = "../states with spaces";
+  preferences.stateSlot = 9;
   LaunchRequest request;
   request.kind = LaunchRequest::Kind::Campus92;
   request.paths = {"boot.sfc", "game1.sfc", "game2.sfc", "game3.sfc"};
@@ -83,7 +85,8 @@ void RoundTrip(const fs::path &directory) {
             loaded.input == preferences.input && loaded.audioDevice == preferences.audioDevice &&
             loaded.firmwareDirectory == preferences.firmwareDirectory &&
             loaded.screenshotDirectory == preferences.screenshotDirectory &&
-            loaded.saveDirectory == preferences.saveDirectory && loaded.recent == normalized,
+            loaded.saveDirectory == preferences.saveDirectory && loaded.recent == normalized &&
+            loaded.stateDirectory == preferences.stateDirectory && loaded.stateSlot == 9,
         "Preferences preserve Unicode, escapes, keyboard bindings and complete launch requests");
   Check(loaded.console == preferences.console && loaded.hotkeys == preferences.hotkeys,
         "Hardware choices and all hotkey alternatives survive a profile restart");
@@ -212,6 +215,27 @@ void FailedReplacement(const fs::path &directory) {
   Check(PreferencesFile(path).Load().volume == 41,
         "Saving can be retried after the filesystem is fixed");
 }
+void LegacyStateHotkeys(const fs::path &directory) {
+  using snes::frontend::DesktopCommand;
+  const auto path = directory / "legacy-hotkeys.cfg";
+  Write(path, "Cupid-SNES preferences 1\nhotkey.pause.0.key \"" + std::to_string(SDL_SCANCODE_F2) +
+                  "\"\nhotkey.pause.0.modifiers \"0\"\n");
+  auto migrated = PreferencesFile(path).Load();
+  Check(migrated.hotkeys.bindings[size_t(DesktopCommand::Pause)][0].scancode == SDL_SCANCODE_F2 &&
+            migrated.hotkeys.bindings[size_t(DesktopCommand::QuickSave)][0].scancode ==
+                SDL_SCANCODE_UNKNOWN &&
+            migrated.hotkeys.bindings[size_t(DesktopCommand::QuickLoad)][0].scancode ==
+                SDL_SCANCODE_F4,
+        "Existing hotkeys take precedence over newly introduced defaults");
+  migrated.stateSlot = 10;
+  bool rejected = false;
+  try {
+    migrated.Validate();
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  Check(rejected, "Invalid selected state slot rejects");
+}
 void RecentRequests() {
   Preferences preferences;
   for (unsigned index = 0; index < 12; ++index) {
@@ -283,6 +307,7 @@ int main() {
     BadInput(directory);
     LegacyInput(directory);
     FailedReplacement(directory);
+    LegacyStateHotkeys(directory);
     RecentRequests();
     RelativeDirectories(directory);
     DeviceOverrides();

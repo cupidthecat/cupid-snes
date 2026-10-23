@@ -335,6 +335,9 @@ struct PreferencesDialog::Impl {
     ImGui::InputText("##saves", &draft.saveDirectory);
     ImGui::TextWrapped("Changing this folder keeps the loaded game's battery data. Future saves "
                        "replace matching filenames in the new folder.");
+    ImGui::TextUnformatted("State directory (blank uses a states folder beside the game)");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##states", &draft.stateDirectory);
     ImGui::Spacing();
     ImGui::TextUnformatted("Preferences file");
     ImGui::TextWrapped("%s", file.c_str());

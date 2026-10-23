@@ -7,6 +7,7 @@ add_library(snes_frontend_support STATIC
   src/SaveRamFile.cpp
   src/storage/AtomicFile.cpp
   src/storage/BatteryStorage.cpp
+  src/storage/StateStorage.cpp
   src/settings/Preferences.cpp
   src/settings/ConsoleDevices.cpp
   src/input/Hotkeys.cpp
@@ -16,6 +17,7 @@ add_library(snes_frontend_support STATIC
   src/desktop/FileDialogs.cpp
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp
+  src/desktop/StateManagerDialog.cpp
   src/desktop/DesktopUi.cpp
 )
 target_include_directories(snes_frontend_support PUBLIC src)

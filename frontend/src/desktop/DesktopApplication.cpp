@@ -82,6 +82,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     SdlInputProvider input(preferences.input);
     Session session(std::move(config), {&video, &audio, &input}, devices);
     session.SetSaveDirectory(preferencesFile.ResolvePath(preferences.saveDirectory));
+    session.SetStateDirectory(preferencesFile.ResolvePath(preferences.stateDirectory));
     struct SaveOnExit {
       Session &session;
       ~SaveOnExit() {
@@ -105,6 +106,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     bool focusPaused = false;
     bool audioMuted = preferences.mute;
     bool preferencesActive = false, preferencesWasPaused = false;
+    bool statesActive = false, statesWasPaused = false;
     bool errorActive = false, errorWasPaused = false;
     unsigned steps = 0;
     uint64_t presentationTime = 0;
@@ -120,6 +122,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         title += " (Paused)";
       SDL_SetWindowTitle(video.Window(), title.c_str());
       menu.Update(session.Machine() != nullptr, paused);
+      menu.UpdateStates(preferences.stateSlot, session.CanUndoState(), session.CanRedoState());
       ui.SetStatus(session.Machine() ? title : "Ready - Open a game from File");
     };
     const auto resetPresentation = [&] {
@@ -146,6 +149,33 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       errorActive = true;
       setPaused(true);
       ui.ShowError(error.what());
+    };
+    const auto capturedState = [&] {
+      video.PresentPending();
+      picturePending = false;
+      pacer.Reset();
+      if (paused || focusPaused)
+        audio.Clear();
+      refresh();
+    };
+    const auto restoredState = [&] {
+      audio.Clear();
+      pacer.Reset();
+      picturePending = false;
+      steps = 0;
+      devices = session.Devices().ports;
+      input.ResetSampling();
+      video.SetGunAim({}, 0);
+      const auto &picture = session.Machine()->LastFrame();
+      if (picture.pixels.empty())
+        video.ClearPicture();
+      else {
+        video.Present(picture);
+        video.PresentPending();
+      }
+      if (!paused && !focusPaused)
+        audio.Resume();
+      refresh();
     };
     const auto open = [&](const LaunchRequest &request) {
       session.Open(request);
@@ -201,12 +231,14 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       const bool nextMuted = next.mute || (next.muteUnfocused && !WindowFocused(video.Window()));
       try {
         session.SetSaveDirectory(preferencesFile.ResolvePath(next.saveDirectory), [&] {
-          if (deviceChanged)
-            audio.SelectDevice(next.audioDevice);
-          video.SetPresentation(presentation(next));
-          audio.SetVolume(next.volume, nextMuted);
-          input.SetBindings(next.input);
-          preferencesFile.Save(next);
+          session.SetStateDirectory(preferencesFile.ResolvePath(next.stateDirectory), [&] {
+            if (deviceChanged)
+              audio.SelectDevice(next.audioDevice);
+            video.SetPresentation(presentation(next));
+            audio.SetVolume(next.volume, nextMuted);
+            input.SetBindings(next.input);
+            preferencesFile.Save(next);
+          });
         });
       } catch (...) {
         const auto original = std::current_exception();
@@ -241,7 +273,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
 
     const auto execute = [&](DesktopCommand command) {
       try {
-        if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() || ui.ErrorOpen()) &&
+        if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() ||
+                          ui.StateManager().Active() || ui.ErrorOpen()) &&
                          command != DesktopCommand::Quit))
           return;
         using Command = DesktopCommand;
@@ -295,7 +328,57 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           else
             video.ShowIdle();
         } else if (session.Machine()) {
+          if ((command >= Command::Slot0 && command <= Command::Slot9) ||
+              command == Command::PreviousSlot || command == Command::NextSlot) {
+            auto next = preferences;
+            if (command == Command::PreviousSlot)
+              next.stateSlot =
+                  (next.stateSlot + StateStorage::quickSlots - 1) % StateStorage::quickSlots;
+            else if (command == Command::NextSlot)
+              next.stateSlot = (next.stateSlot + 1) % StateStorage::quickSlots;
+            else
+              next.stateSlot = unsigned(command) - unsigned(Command::Slot0);
+            preferencesFile.Save(next);
+            preferences.stateSlot = next.stateSlot;
+            refresh();
+            ui.SetStatus("Quick slot " + std::to_string(next.stateSlot + 1));
+            return;
+          }
           switch (command) {
+          case Command::QuickSave: {
+            session.SaveState(session.States()->Path(StateStorage::Quick(preferences.stateSlot)));
+            capturedState();
+            ui.SetStatus("Saved quick slot " + std::to_string(preferences.stateSlot + 1));
+            break;
+          }
+          case Command::QuickLoad:
+            session.LoadState(session.States()->Path(StateStorage::Quick(preferences.stateSlot)));
+            restoredState();
+            ui.SetStatus("Loaded quick slot " + std::to_string(preferences.stateSlot + 1));
+            break;
+          case Command::UndoState:
+            session.UndoState();
+            restoredState();
+            ui.SetStatus("State load undone");
+            break;
+          case Command::RedoState:
+            session.RedoState();
+            restoredState();
+            ui.SetStatus("State load redone");
+            break;
+          case Command::StateManager:
+            statesWasPaused = paused;
+            steps = 0;
+            setPaused(true);
+            try {
+              ui.StateManager().Open(*session.States(), session.CanUndoState(),
+                                     session.CanRedoState());
+              statesActive = true;
+            } catch (...) {
+              setPaused(statesWasPaused);
+              throw;
+            }
+            break;
           case Command::Unload:
             session.Close();
             resetPresentation();
@@ -367,7 +450,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           for (const auto command : menu.GamepadCommands(event, enabled))
             execute(command);
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
-                   !ui.PreferencesEditor().Active() && !ui.ErrorOpen()) {
+                   !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
+                   !ui.ErrorOpen()) {
           try {
             LaunchRequest request;
             request.paths[0] = event.drop.data;
@@ -409,6 +493,44 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         preferencesActive = false;
         input.ResetSampling();
         setPaused(preferencesWasPaused);
+      }
+      if (const auto action = ui.StateManager().TakeAction()) {
+        try {
+          using Kind = StateManagerDialog::Action::Kind;
+          switch (action->kind) {
+          case Kind::Save:
+            session.SaveState(session.States()->Path(action->key));
+            capturedState();
+            break;
+          case Kind::Load:
+            session.LoadState(session.States()->Path(action->key));
+            restoredState();
+            break;
+          case Kind::Undo:
+            session.UndoState();
+            restoredState();
+            break;
+          case Kind::Redo:
+            session.RedoState();
+            restoredState();
+            break;
+          case Kind::Rename:
+            session.States()->Rename(action->key, action->name);
+            break;
+          case Kind::Remove:
+            session.States()->Remove(action->key);
+            break;
+          }
+          ui.StateManager().Completed(session.CanUndoState(), session.CanRedoState());
+        } catch (const std::exception &error) {
+          ui.StateManager().Rejected(error.what());
+        }
+      }
+      if (statesActive && !ui.StateManager().Active()) {
+        statesActive = false;
+        input.ResetSampling();
+        setPaused(statesWasPaused);
+        refresh();
       }
       if (errorActive && !ui.ErrorOpen()) {
         errorActive = false;
@@ -455,8 +577,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           audio.Resume();
         refresh();
       }
-      if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() || ui.ErrorOpen() ||
-          ((paused || focusPaused) && !steps)) {
+      if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
+          ui.StateManager().Active() || ui.ErrorOpen() || ((paused || focusPaused) && !steps)) {
         if (uiFrame)
           video.Redraw();
         SDL_Delay(2);

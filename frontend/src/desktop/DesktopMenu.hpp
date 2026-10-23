@@ -13,6 +13,7 @@ public:
   DesktopMenu();
   ~DesktopMenu();
   void Update(bool loaded, bool paused);
+  void UpdateStates(unsigned slot, bool undo, bool redo);
   void SetRecent(std::span<const LaunchRequest> requests);
   void Draw(bool enabled = true);
   std::optional<DesktopCommand> TakeCommand();

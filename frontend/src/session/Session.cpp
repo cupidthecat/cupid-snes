@@ -37,6 +37,8 @@ struct Session::State {
   LaunchRequest request;
   std::unique_ptr<core::Emulator> machine;
   std::unique_ptr<BatteryStorage> battery;
+  std::unique_ptr<StateStorage> states;
+  std::vector<uint8_t> undo, redo;
 };
 
 Session::Session(core::Emulator::Config config, Outputs outputs,
@@ -90,6 +92,74 @@ void Session::SetSaveDirectory(std::filesystem::path directory,
   }
 }
 
+void Session::SetStateDirectory(std::filesystem::path directory,
+                                const std::function<void()> &persist) {
+  if (directory.native().find(std::filesystem::path::value_type(0)) !=
+      std::filesystem::path::string_type::npos)
+    throw std::invalid_argument("State directory contains a null character");
+  if (!directory.empty()) {
+    directory = std::filesystem::weakly_canonical(std::filesystem::absolute(directory));
+    std::filesystem::create_directories(directory);
+    if (!std::filesystem::is_directory(directory))
+      throw std::runtime_error("State path must be a directory: " + core::PathText(directory));
+  }
+  std::unique_ptr<StateStorage> next;
+  if (state_)
+    next = std::make_unique<StateStorage>(state_->request, directory);
+  if (persist)
+    persist();
+  stateDirectory_ = std::move(directory);
+  if (state_)
+    state_->states = std::move(next);
+}
+
+const StateStorage *Session::States() const noexcept {
+  return state_ ? state_->states.get() : nullptr;
+}
+void Session::SaveState(const std::filesystem::path &path) {
+  if (!state_)
+    throw std::runtime_error("Saving a state requires a loaded game");
+  auto bytes = state_->machine->CaptureState();
+  StateFile::Write(path, bytes, state_->machine->LastFrame());
+}
+void Session::LoadState(const std::filesystem::path &path) {
+  const auto file = StateFile::Read(path);
+  RestoreState(file.machine, RestoreAction::Load);
+}
+bool Session::CanUndoState() const noexcept {
+  return state_ && !state_->undo.empty();
+}
+bool Session::CanRedoState() const noexcept {
+  return state_ && !state_->redo.empty();
+}
+void Session::UndoState() {
+  if (!CanUndoState())
+    throw std::runtime_error("There is no state load to undo");
+  RestoreState(state_->undo, RestoreAction::Undo);
+}
+void Session::RedoState() {
+  if (!CanRedoState())
+    throw std::runtime_error("There is no state load to redo");
+  RestoreState(state_->redo, RestoreAction::Redo);
+}
+void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action) {
+  if (!state_)
+    throw std::runtime_error("Loading a state requires a loaded game");
+  auto &machine = *state_->machine;
+  auto prepared = machine.PrepareStateRestore(bytes);
+  auto previous = machine.CaptureState();
+  prepared.Commit();
+  if (action == RestoreAction::Undo) {
+    state_->redo = std::move(previous);
+    state_->undo.clear();
+  } else {
+    state_->undo = std::move(previous);
+    state_->redo.clear();
+  }
+  // The restored port packets already contain their device and player wiring.
+  devices_ = machine.GetAutoJoypad().Ports().Devices();
+}
+
 void Session::Open(const LaunchRequest &request) {
   Flush();
   auto next = std::make_unique<State>();
@@ -128,6 +198,7 @@ void Session::Open(const LaunchRequest &request) {
     throw std::runtime_error(error.empty() ? "Cannot load the selected cartridge" : error);
   next->battery = std::make_unique<BatteryStorage>(request, machine, saveDirectory_);
   next->battery->Load(machine);
+  next->states = std::make_unique<StateStorage>(request, stateDirectory_);
   machine.AttachVideoOutput(outputs_.video);
   machine.AttachAudioOutput(outputs_.audio);
   machine.AttachInputProvider(outputs_.input);
