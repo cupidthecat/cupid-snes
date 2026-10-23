@@ -122,14 +122,6 @@ std::string FormatCheat(const CheatCode &code, CheatSystem system) {
          (code.compare ? HexText(*code.compare, 2) + "?" : std::string{}) + HexText(code.value, 2);
 }
 
-uint8_t SubstituteCheat(std::span<const CheatCode> codes, uint32_t address,
-                        uint8_t value) noexcept {
-  for (const auto &code : codes)
-    if (code.address == address && (!code.compare || *code.compare == value))
-      return code.value;
-  return value;
-}
-
 void CheatEngine::Set(std::span<const CheatCode> codes, const Reader &read, const Writer &write) {
   if (codes.size() > 4096)
     throw std::invalid_argument("At most 4096 active cheat codes are supported");

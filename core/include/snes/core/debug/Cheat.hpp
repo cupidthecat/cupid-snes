@@ -21,7 +21,13 @@ struct CheatCode {
 // A group accepts one code per line, or codes separated by '+'.
 std::vector<CheatCode> DecodeCheats(std::string_view text, CheatSystem system);
 std::string FormatCheat(const CheatCode &code, CheatSystem system);
-uint8_t SubstituteCheat(std::span<const CheatCode> codes, uint32_t address, uint8_t value) noexcept;
+inline uint8_t SubstituteCheat(std::span<const CheatCode> codes, uint32_t address,
+                               uint8_t value) noexcept {
+  for (const auto &code : codes)
+    if (code.address == address && (!code.compare || *code.compare == value))
+      return code.value;
+  return value;
+}
 
 class CheatEngine {
 public:
