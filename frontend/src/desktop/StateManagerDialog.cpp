@@ -36,17 +36,23 @@ struct StateManagerDialog::Impl {
   std::vector<StateStorage::Entry> entries;
   std::optional<Action> action, confirmation;
   std::optional<StateStorage::Key> desiredSelection;
+  std::optional<StateStorage::Key> previewRequest;
+  std::optional<core::VideoFrame> pendingPreview;
   std::string name, error;
   int selected = -1;
   bool active = false, opening = false, quick = false, undo = false, redo = false;
   bool refreshPending = false;
+  bool previewCurrent = false, previewLoading = false, retirePreview = false;
 
   ~Impl() {
     SDL_DestroyTexture(preview);
   }
   void Select(int index) {
     selected = index;
-    SDL_DestroyTexture(std::exchange(preview, nullptr));
+    previewCurrent = previewLoading = false;
+    retirePreview = true;
+    previewRequest.reset();
+    pendingPreview.reset();
     error.clear();
     if (index < 0 || size_t(index) >= entries.size())
       return;
@@ -54,16 +60,29 @@ struct StateManagerDialog::Impl {
     name = entry.key.name;
     if (!entry.bytes)
       return;
+    previewRequest = entry.key;
+    previewLoading = true;
+  }
+  bool Selected(const StateStorage::Key &key) const {
+    return active && selected >= 0 && size_t(selected) < entries.size() &&
+           entries[size_t(selected)].key == key;
+  }
+  void ApplyPreview() {
+    if (retirePreview) {
+      SDL_DestroyTexture(std::exchange(preview, nullptr));
+      retirePreview = false;
+    }
+    auto picture = std::exchange(pendingPreview, {});
+    if (!picture || picture->pixels.empty())
+      return;
     try {
-      const auto file = StateFile::Read(storage->Path(entry.key));
-      if (file.preview.pixels.empty())
-        return;
       preview = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC,
-                                  int(file.preview.width), int(file.preview.height));
-      if (!preview || !SDL_UpdateTexture(preview, nullptr, file.preview.pixels.data(),
-                                         int(file.preview.width * sizeof(uint32_t))))
+                                  int(picture->width), int(picture->height));
+      if (!preview || !SDL_UpdateTexture(preview, nullptr, picture->pixels.data(),
+                                         int(picture->width * sizeof(uint32_t))))
         throw std::runtime_error(SDL_GetError());
       SDL_SetTextureScaleMode(preview, SDL_SCALEMODE_LINEAR);
+      previewCurrent = true;
     } catch (const std::exception &failure) {
       error = failure.what();
       SDL_DestroyTexture(std::exchange(preview, nullptr));
@@ -110,13 +129,13 @@ void StateManagerDialog::Open(const StateStorage &storage, bool undo, bool redo)
   self.storage = storage;
   self.quick = false;
   self.selected = -1;
+  self.action.reset();
+  self.desiredSelection.reset();
   self.Refresh();
   self.name = "New state";
   self.undo = undo;
   self.redo = redo;
   self.confirmation.reset();
-  self.action.reset();
-  self.desiredSelection.reset();
   self.refreshPending = false;
   self.active = self.opening = true;
 }
@@ -127,14 +146,7 @@ void StateManagerDialog::Draw() {
   auto &self = *impl_;
   if (!self.active)
     return;
-  if (self.refreshPending) {
-    self.refreshPending = false;
-    try {
-      self.Refresh();
-    } catch (const std::exception &failure) {
-      self.error = failure.what();
-    }
-  }
+  self.ApplyPreview();
   const auto *viewport = ImGui::GetMainViewport();
   if (self.opening) {
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, {0.5f, 0.5f});
@@ -186,9 +198,11 @@ void StateManagerDialog::Draw() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted("Preview");
         const float width = std::min(220.0f, ImGui::GetContentRegionAvail().x);
-        if (self.preview)
+        if (self.previewCurrent && self.preview)
           ImGui::Image(ImTextureID(reinterpret_cast<uintptr_t>(self.preview)),
                        {width, width * 240 / 256});
+        else if (self.previewLoading)
+          ImGui::TextUnformatted("Reading preview...");
         else
           ImGui::TextWrapped("No picture is available for this state.");
         ImGui::EndTable();
@@ -271,6 +285,40 @@ std::optional<StateManagerDialog::Action> StateManagerDialog::TakeAction() {
   if (impl_->action && impl_->action->kind == Action::Kind::Rename)
     impl_->desiredSelection = StateStorage::Key{false, impl_->action->name};
   return std::exchange(impl_->action, {});
+}
+std::optional<StateStorage::Key> StateManagerDialog::TakePreview() {
+  auto &self = *impl_;
+  if (!self.active) {
+    self.previewRequest.reset();
+    return {};
+  }
+  if (self.refreshPending) {
+    self.refreshPending = false;
+    try {
+      self.Refresh();
+    } catch (const std::exception &failure) {
+      self.error = failure.what();
+      self.previewRequest.reset();
+      self.previewLoading = false;
+    }
+  }
+  return std::exchange(self.previewRequest, {});
+}
+void StateManagerDialog::PreviewReady(const StateStorage::Key &key, core::VideoFrame picture) {
+  auto &self = *impl_;
+  if (!self.Selected(key))
+    return;
+  self.pendingPreview = std::move(picture);
+  self.retirePreview = true;
+  self.previewLoading = false;
+}
+void StateManagerDialog::PreviewRejected(const StateStorage::Key &key, std::string error) {
+  auto &self = *impl_;
+  if (!self.Selected(key))
+    return;
+  self.previewLoading = false;
+  if (self.error.empty())
+    self.error = std::move(error);
 }
 void StateManagerDialog::Completed(bool undo, bool redo) {
   impl_->undo = undo;

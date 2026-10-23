@@ -79,7 +79,7 @@ void Quit() {
   event.type = SDL_EVENT_QUIT;
   Push(event);
 }
-void Click(SDL_WindowID window, float x, float y) {
+void Click(SDL_WindowID window, float x, float y, bool settle = true) {
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_MOTION;
   event.motion.windowID = window;
@@ -98,7 +98,8 @@ void Click(SDL_WindowID window, float x, float y) {
   event.button.down = false;
   Push(event);
   std::this_thread::sleep_for(std::chrono::milliseconds(80));
-  Ready();
+  if (settle)
+    Ready();
 }
 Preferences Profile(const fs::path &path) {
   struct Request {
@@ -719,6 +720,352 @@ void CancelWorkflow(const fs::path &directory, const fs::path &pictures) {
   Check(recent.size() == 1 && recent[0].paths[0] == request.paths[0],
         "Busy file drops never replace the loaded session");
 }
+uint32_t PreviewPixel(SDL_WindowID window) {
+  struct Request {
+    SDL_WindowID window;
+    uint32_t pixel = 0;
+  } request{window};
+  Check(SDL_RunOnMainThread(
+            [](void *userdata) {
+              auto &request = *static_cast<Request *>(userdata);
+              const auto *manager =
+                  ImGui::GetCurrentContext() ? ImGui::FindWindowByName("State Manager") : nullptr;
+              auto *window = SDL_GetWindowFromID(request.window);
+              auto *renderer = window ? SDL_GetRenderer(window) : nullptr;
+              if (!manager || !manager->Active || !renderer)
+                return;
+              auto *surface = SDL_RenderReadPixels(renderer, nullptr);
+              if (!surface)
+                return;
+              const auto display = ImGui::GetIO().DisplaySize;
+              const int x = int((manager->Pos.x + manager->Size.x - 120) * surface->w / display.x);
+              const int y = int((manager->Pos.y + 160) * surface->h / display.y);
+              Uint8 r = 0, g = 0, b = 0, a = 0;
+              if (SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a))
+                request.pixel = uint32_t(a) << 24 | uint32_t(b) << 16 | uint32_t(g) << 8 | r;
+              SDL_DestroySurface(surface);
+            },
+            &request, true),
+        "Preview pixels are read on the UI thread");
+  return request.pixel;
+}
+std::string ReadUiText() {
+  struct Request {
+    std::atomic<bool> done{false};
+    ImGuiID begin = 0, end = 0;
+    std::string text;
+  } request;
+  Check(SDL_RunOnMainThread(
+            [](void *userdata) {
+              auto &request = *static_cast<Request *>(userdata);
+              auto *context = ImGui::GetCurrentContext();
+              ImGuiContextHook begin;
+              begin.Type = ImGuiContextHookType_NewFramePost;
+              begin.Callback = [](ImGuiContext *, ImGuiContextHook *) { ImGui::LogToBuffer(); };
+              request.begin = ImGui::AddContextHook(context, &begin);
+              ImGuiContextHook end;
+              end.Type = ImGuiContextHookType_EndFramePre;
+              end.UserData = &request;
+              end.Callback = [](ImGuiContext *context, ImGuiContextHook *hook) {
+                auto &request = *static_cast<Request *>(hook->UserData);
+                request.text = context->LogBuffer.c_str();
+                ImGui::LogFinish();
+                ImGui::RemoveContextHook(context, request.begin);
+                ImGui::RemoveContextHook(context, request.end);
+                request.done = true;
+              };
+              request.end = ImGui::AddContextHook(context, &end);
+            },
+            &request, true),
+        "UI text observer is installed on the owning thread");
+  Wait([&] { return request.done.load(); }, "A complete UI frame reaches the text observer");
+  return request.text;
+}
+void PreviewWorkflow(const fs::path &directory, const fs::path &pictures) {
+  const auto rom = directory / "preview-game.sfc";
+  {
+    const auto image = Image();
+    std::ofstream file(rom, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(image.data()), std::streamsize(image.size()));
+    Check(bool(file), "Write preview workflow cartridge");
+  }
+  LaunchRequest request;
+  request.paths[0] = snes::core::PathText(rom);
+  StateStorage storage(request);
+  const auto large = storage.Path({false, "A large state"});
+  const auto small = storage.Path({false, "B small state"});
+  constexpr uint32_t largeColor = 0xff33aa11, smallColor = 0xffdd4411;
+  {
+    std::vector<uint8_t> machine(StateFile::maximumMachineBytes, 0x36);
+    StateFile::Write(large, machine, {1, 1, {largeColor}});
+  }
+  StateFile::Write(small, std::vector<uint8_t>(48, 0x79), {1, 1, {smallColor}});
+  const auto modified = fs::last_write_time(large);
+  const auto profile = directory / "preview-preferences.cfg";
+  PreferencesFile preferencesFile(profile);
+  auto preferences = preferencesFile.Load();
+  preferences.focus = FocusBehavior::AllowInput;
+  preferencesFile.Save(preferences);
+  if (!SDL_getenv("SNES_TEST_WINDOW"))
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+  SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  Check(SDL_Init(SDL_INIT_EVENTS), SDL_GetError());
+  std::atomic<SDL_WindowID> window{0};
+  std::atomic<bool> returned{false};
+  Check(SDL_AddEventWatch(WindowCreated, &window), SDL_GetError());
+  ErrorCapture errors;
+  std::exception_ptr failure;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return window.load() || returned.load(); },
+           "Preview application creates a window");
+      Check(!returned, "Preview application stays open");
+      Wait(
+          [&] {
+            const auto color = ReadPicture(window).center;
+            return Profile(profile).recent.size() == 1 && color != 0xff000000 &&
+                   color != 0xff1e1816;
+          },
+          "Preview guest presents a completed picture");
+      Key(window, SDL_SCANCODE_P, SDLK_P);
+      Key(window, SDL_SCANCODE_F2, SDLK_F2);
+      const auto before = StateFile::Read(storage.Path(StateStorage::Quick(0))).machine;
+      SDL_Event open{};
+      open.type = SDL_EVENT_KEY_DOWN;
+      open.key.windowID = window;
+      open.key.scancode = SDL_SCANCODE_F3;
+      open.key.key = SDLK_F3;
+      Push(open);
+      open.type = SDL_EVENT_KEY_UP;
+      Push(open);
+      Wait([] { return ReadProgress().active; },
+           "Large preview read displays cancellable progress");
+      if (!pictures.empty())
+        ReadPicture(window, pictures / "state-preview-progress.bmp");
+      Key(window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+      Check(fs::last_write_time(large) == modified && PreviewPixel(window) != largeColor,
+            "Cancelled preview leaves its source intact and publishes no picture");
+      Key(window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+      Key(window, SDL_SCANCODE_F2, SDLK_F2);
+      Check(StateFile::Read(storage.Path(StateStorage::Quick(0))).machine == before,
+            "Cancelled preview leaves the paused machine unchanged");
+      Key(window, SDL_SCANCODE_F3, SDLK_F3);
+      Wait([&] { return PreviewPixel(window) == largeColor; },
+           "Validated large preview reaches the renderer");
+      const auto picture = ReadPicture(window);
+      const float left = float(picture.width - 700) / 2, top = float(picture.height - 570) / 2;
+      Click(window, left + 70, top + 140);
+      Wait([&] { return PreviewPixel(window) == smallColor; },
+           "Selection replaces the previous preview safely");
+      Click(window, left + 70, top + 140);
+      Check(ReadUiText().find("does not match") != std::string::npos,
+            "Successful preview reading preserves a rejected load's visible error");
+      if (!pictures.empty())
+        ReadPicture(window, pictures / "state-preview-load-error.bmp");
+      {
+        std::fstream file(large, std::ios::in | std::ios::out | std::ios::binary);
+        file.seekp(64 + 65537);
+        file.put(0x51);
+        file.close();
+        Check(bool(file), "Change a machine byte outside the preview");
+      }
+      Click(window, left + 70, top + 90);
+      Check(PreviewPixel(window) != largeColor && PreviewPixel(window) != smallColor,
+            "Checksum failure clears the old picture and never publishes unchecked pixels");
+      Check(ReadUiText().find("checksum") != std::string::npos,
+            "Preview checksum errors remain visible inside the manager");
+      if (!pictures.empty())
+        ReadPicture(window, pictures / "state-preview-error.bmp");
+      {
+        std::fstream file(large, std::ios::in | std::ios::out | std::ios::binary);
+        file.seekp(64 + 65537);
+        file.put(0x36);
+        file.close();
+        Check(bool(file), "Repair preview fixture");
+      }
+      Click(window, left + 70, top + 90);
+      Wait([&] { return PreviewPixel(window) == largeColor; },
+           "Selecting a repaired state retries its preview");
+      if (!pictures.empty())
+        ReadPicture(window, pictures / "state-preview-ready.bmp");
+      Key(window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+      Key(window, SDL_SCANCODE_F2, SDLK_F2);
+      Check(StateFile::Read(storage.Path(StateStorage::Quick(0))).machine == before,
+            "Preview reading, selection and recovery do not advance or restore execution");
+      Quit();
+    } catch (...) {
+      failure = std::current_exception();
+      if (!returned)
+        Quit();
+    }
+  });
+  const auto result = RunDesktop({}, {}, request, profile);
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0 && errors.Empty(),
+        "Preview cancellation and file errors remain inside the manager");
+}
+void CaptureFocus(const fs::path &directory, FocusBehavior behavior) {
+  if (!SDL_getenv("SNES_TEST_WINDOW"))
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+  SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  Check(SDL_Init(SDL_INIT_GAMEPAD), SDL_GetError());
+  struct Pad {
+    SDL_Joystick *joystick = nullptr;
+    SDL_JoystickID id = 0;
+    std::atomic<SDL_WindowID> window{0};
+    std::atomic<bool> held{false}, hide{false}, hidden{false};
+    Pad() {
+      SDL_VirtualJoystickDesc descriptor;
+      SDL_INIT_INTERFACE(&descriptor);
+      descriptor.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+      descriptor.name = "Capture focus gamepad";
+      descriptor.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+      descriptor.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+      descriptor.userdata = this;
+      descriptor.Update = [](void *userdata) {
+        auto &self = *static_cast<Pad *>(userdata);
+        if (!self.joystick)
+          return;
+        SDL_SetJoystickVirtualButton(self.joystick, SDL_GAMEPAD_BUTTON_SOUTH, self.held);
+        SDL_SetJoystickVirtualButton(self.joystick, SDL_GAMEPAD_BUTTON_EAST, self.held);
+        if (self.hide && ImGui::GetCurrentContext()) {
+          const auto *progress = ImGui::FindWindowByName("State operation");
+          if (progress && progress->Active)
+            if (auto *window = SDL_GetWindowFromID(self.window)) {
+              SDL_HideWindow(window);
+              self.hidden = true;
+              self.hide = false;
+            }
+        }
+      };
+      id = SDL_AttachVirtualJoystick(&descriptor);
+      joystick = SDL_OpenJoystick(id);
+      Check(id != 0 && joystick, "Attach capture focus gamepad");
+    }
+    ~Pad() {
+      if (SDL_WasInit(SDL_INIT_JOYSTICK)) {
+        SDL_CloseJoystick(joystick);
+        SDL_DetachVirtualJoystick(id);
+      }
+    }
+  } pad;
+  const auto rom = directory / ("focus-" + std::to_string(int(behavior)) + ".sfc");
+  auto image = Image();
+  std::vector<uint8_t> program{0x78};
+  const auto write = [&](uint16_t address, uint8_t value) {
+    program.insert(program.end(), {0xa9, value, 0x8d, uint8_t(address), uint8_t(address >> 8)});
+  };
+  write(0x2100, 0x80);
+  write(0x2121, 0);
+  write(0x2122, 0x1f);
+  write(0x2122, 0);
+  write(0x2100, 0x0f);
+  write(0x4200, 1);
+  program.insert(program.end(), {0xad, 0x19, 0x42, 0x29, 0x10, 0xf0, 0xf9});
+  for (unsigned channel = 0; channel < 8; ++channel) {
+    const uint16_t base = uint16_t(0x4300 + channel * 16);
+    for (unsigned byte = 0; byte < 7; ++byte)
+      write(uint16_t(base + byte), byte == 1 ? 0x22 : byte == 4 ? 0x7e : 0);
+  }
+  write(0x420b, 0xff);
+  program.push_back(0xdb);
+  std::copy(program.begin(), program.end(), image.begin());
+  {
+    std::ofstream file(rom, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(image.data()), std::streamsize(image.size()));
+    Check(bool(file), "Write focus capture DMA program");
+  }
+  auto profile = rom;
+  profile.replace_extension(".cfg");
+  PreferencesFile file(profile);
+  auto preferences = file.Load();
+  preferences.focus = behavior;
+  preferences.console.ports[1] = snes::core::ControllerDevice::SuperScope;
+  preferences.input.players[0].buttons = {};
+  preferences.input.players[0].buttons[4][0] = {InputBinding::Kind::GamepadButton,
+                                                SDL_GAMEPAD_BUTTON_SOUTH};
+  preferences.input.players[0].buttons[10][0] = {InputBinding::Kind::GamepadButton,
+                                                 SDL_GAMEPAD_BUTTON_EAST};
+  file.Save(preferences);
+  LaunchRequest request;
+  request.paths[0] = snes::core::PathText(rom);
+  StateStorage storage(request);
+  const auto saved = storage.Path(StateStorage::Quick(0));
+  Check(SDL_AddEventWatch(WindowCreated, &pad.window), SDL_GetError());
+  std::atomic<bool> returned{false};
+  std::exception_ptr failure;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return pad.window.load() || returned.load(); },
+           "Focus application creates a window");
+      Check(!returned, "Focus application stays open");
+      Wait(
+          [&] {
+            const auto color = ReadPicture(pad.window).center;
+            return color == 0xff0000ff || color == 0xff00ff00;
+          },
+          "DMA guest waits for its start button");
+      Key(pad.window, SDL_SCANCODE_P, SDLK_P);
+      Check(SDL_RunOnMainThread(
+                [](void *userdata) {
+                  auto *window = SDL_GetWindowFromID(static_cast<Pad *>(userdata)->window);
+                  int width = 0, height = 0;
+                  SDL_GetWindowSize(window, &width, &height);
+                  SDL_WarpMouseInWindow(window, width / 2.0f, height / 2.0f);
+                },
+                &pad, true),
+            "Place pointer aim inside the game picture before capture");
+      pad.held = true;
+      Key(pad.window, SDL_SCANCODE_N, SDLK_N);
+      Key(pad.window, SDL_SCANCODE_N, SDLK_N);
+      pad.hide = true;
+      Key(pad.window, SDL_SCANCODE_F2, SDLK_F2);
+      Check(pad.hidden && fs::exists(saved), "Focus changes while capture is servicing progress");
+      Check(SDL_RunOnMainThread(
+                [](void *userdata) {
+                  auto *window = SDL_GetWindowFromID(static_cast<Pad *>(userdata)->window);
+                  if (window)
+                    SDL_ShowWindow(window);
+                },
+                &pad, true),
+            "Restore the hidden test window");
+      const auto state = StateFile::Read(saved);
+      snes::core::Emulator machine;
+      std::string error;
+      Check(machine.LoadCartridgeFromFile(request.paths[0], &error),
+            "Open focus continuation target");
+      machine.RestoreState(state.machine);
+      Check(machine.CurrentFrame() > 8, "Capture drains the long DMA across display fields");
+      auto &ports = machine.GetAutoJoypad().Ports();
+      ports.SetGunCallback({});
+      ports.SetLatch(true);
+      ports.SetLatch(false);
+      uint8_t offscreen = 0;
+      for (unsigned bit = 0; bit <= 6; ++bit)
+        offscreen = ports.Read(1);
+      Check((offscreen & 1) != 0, "Pointer aim captured after focus loss remains offscreen");
+      const auto next = machine.StepFrame();
+      Check(next.latchedInput.a == (behavior == FocusBehavior::AllowInput),
+            "Capture applies the selected focus policy to fields sampled after focus loss");
+      Quit();
+    } catch (...) {
+      failure = std::current_exception();
+      if (!returned)
+        Quit();
+    }
+  });
+  const auto result = RunDesktop({}, {}, request, profile);
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0, "Focus capture application exits normally");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -738,16 +1085,25 @@ int main(int argc, char **argv) {
   } cleanup{directory};
   try {
     const bool cancelOnly = argc > 1 && std::string_view(argv[1]) == "--cancel-only";
-    const int pictureIndex = cancelOnly ? 2 : 1;
+    const bool previewOnly = argc > 1 && std::string_view(argv[1]) == "--preview-only";
+    const bool focusOnly = argc > 1 && std::string_view(argv[1]) == "--focus-only";
+    const int pictureIndex = cancelOnly || previewOnly || focusOnly ? 2 : 1;
     const auto pictures =
         argc > pictureIndex ? snes::core::FilePath(argv[pictureIndex]) : fs::path{};
     if (!pictures.empty())
       fs::create_directories(pictures);
-    if (!cancelOnly) {
+    if (!cancelOnly && !previewOnly && !focusOnly) {
       Workflow(directory, pictures);
       TurboFields(directory);
     }
-    CancelWorkflow(directory, pictures);
+    if (!previewOnly && !focusOnly)
+      CancelWorkflow(directory, pictures);
+    if (!cancelOnly && !focusOnly)
+      PreviewWorkflow(directory, pictures);
+    if (!cancelOnly && !previewOnly)
+      for (auto behavior :
+           {FocusBehavior::Pause, FocusBehavior::BlockInput, FocusBehavior::AllowInput})
+        CaptureFocus(directory, behavior);
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

@@ -40,6 +40,8 @@ Capture finishes in-flight instructions and DMA while retaining any picture, inp
 
 State operations show progress while checking media, reading or writing files, and preparing the machine. Cancel or Escape stops the operation before replacing a state file or restoring execution. Cancellation preserves the loaded game, existing files, pause setting, and undo history. Capture may already have completed pending fields; those fields and their input and output remain part of the running game. Game commands are unavailable while progress is open. Closing the application cancels the operation, then exits after it unwinds.
 
+Selecting a state validates its preview without restoring or advancing the game. Large previews show progress. Cancel or Escape keeps the manager open; select the state again to retry. Damaged files show an error instead of unchecked pixels. Preview completion preserves errors from a rejected load. Focus settings also apply during capture: fields sampled after focus loss receive blocked input unless background input is allowed. Capture still finishes pending hardware work before saving a checkpoint.
+
 Preferences > Paths selects the state directory. A blank setting uses a `states` folder beside the game. Each launch has its own subfolder, derived from its cartridge mode, all canonical asset paths, and competition DIP setting. Handheld games and different slot/pack combinations therefore keep separate collections. Changing the directory changes future state destinations without moving existing files or replacing the loaded machine. See [State files](state-files.md) for the format and filename rules.
 
 ## Battery files

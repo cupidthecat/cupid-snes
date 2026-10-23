@@ -18,6 +18,8 @@ struct StateFile {
 
   static StateFile Read(const std::filesystem::path &path,
                         const core::StateOperation &operation = {});
+  static core::VideoFrame ReadPreview(const std::filesystem::path &path,
+                                      const core::StateOperation &operation = {});
   static void Write(const std::filesystem::path &path, std::span<const uint8_t> machine,
                     const core::VideoFrame &picture, const core::StateOperation &operation = {});
 };

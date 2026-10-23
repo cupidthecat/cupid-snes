@@ -7,6 +7,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <fstream>
 #include <stdexcept>
 #include <system_error>
 
@@ -60,32 +61,76 @@ std::string Identity(const LaunchRequest &request) {
   }
   return text;
 }
+StateFile ReadState(const std::filesystem::path &path, bool retainMachine,
+                    const core::StateOperation &operation) {
+  const auto label = operation ? core::PathText(path.filename()) : std::string{};
+  operation.Report(core::StatePhase::ReadFile, 0, 0, label);
+  if (!std::filesystem::exists(path))
+    throw std::runtime_error("Unsupported or missing state file: " + core::PathText(path));
+  const auto size = std::filesystem::file_size(path);
+  if (size > maximumFileBytes)
+    throw std::runtime_error("File is too large: " + core::PathText(path));
+  std::array<uint8_t, headerSize> header;
+  std::ifstream file(path, std::ios::binary);
+  if (size < headerSize || !file.read(reinterpret_cast<char *>(header.data()), header.size()) ||
+      !std::equal(magic.begin(), magic.end(), header.begin()) || Get(header, 8, 4) != 1)
+    throw std::runtime_error("Unsupported or missing state file: " + core::PathText(path));
+  const auto machineSize = Get(header, 12, 4);
+  const auto width = Get(header, 24, 4), height = Get(header, 28, 4);
+  if (machineSize < 48 || machineSize > StateFile::maximumMachineBytes ||
+      !((width == 0 && height == 0) || (width == previewWidth && height == previewHeight)) ||
+      size != headerSize + machineSize + width * height * sizeof(uint32_t))
+    throw std::runtime_error("Invalid state file size or preview");
+  StateFile result;
+  result.created = Get(header, 16, 8);
+  if (retainMachine)
+    result.machine.resize(size_t(machineSize));
+  result.preview.width = uint32_t(width);
+  result.preview.height = uint32_t(height);
+  result.preview.pixels.resize(size_t(width * height));
+  core::detail::Sha256Hasher hash;
+  hash.Update(std::span(header).first(32));
+  std::array<uint8_t, 65536> buffer;
+  uint64_t consumed = headerSize;
+  const auto read = [&](size_t count, auto consume) {
+    for (size_t offset = 0; offset < count;) {
+      operation.Report(core::StatePhase::ReadFile, consumed, size, label);
+      const auto part = std::min(buffer.size(), count - offset);
+      if (!file.read(reinterpret_cast<char *>(buffer.data()), std::streamsize(part)))
+        throw std::runtime_error("Cannot read file: " + core::PathText(path));
+      const auto bytes = std::span(buffer).first(part);
+      hash.Update(bytes);
+      consume(offset, bytes);
+      offset += part;
+      consumed += part;
+    }
+  };
+  read(size_t(machineSize), [&](size_t offset, auto bytes) {
+    if (retainMachine)
+      std::copy(bytes.begin(), bytes.end(), result.machine.begin() + offset);
+  });
+  read(result.preview.pixels.size() * sizeof(uint32_t), [&](size_t offset, auto bytes) {
+    for (size_t index = 0; index < bytes.size(); index += 4)
+      result.preview.pixels[(offset + index) / 4] = uint32_t(Get(bytes, index, 4));
+  });
+  if (file.peek() != std::char_traits<char>::eof())
+    throw std::runtime_error("Unexpected data after state file");
+  operation.Report(core::StatePhase::ReadFile, size, size, label);
+  operation.Report(core::StatePhase::Validate, size, size, label);
+  const auto digest = hash.Finish();
+  if (!std::equal(digest.begin(), digest.end(), header.begin() + 32))
+    throw std::runtime_error("State file checksum does not match");
+  return result;
+}
 } // namespace
 
 StateFile StateFile::Read(const std::filesystem::path &path,
                           const core::StateOperation &operation) {
-  const auto bytes = ReadFile(path, maximumFileBytes, operation);
-  if (bytes.size() < headerSize || !std::equal(magic.begin(), magic.end(), bytes.begin()) ||
-      Get(bytes, 8, 4) != 1)
-    throw std::runtime_error("Unsupported or missing state file: " + core::PathText(path));
-  const auto machineSize = Get(bytes, 12, 4);
-  const auto width = Get(bytes, 24, 4), height = Get(bytes, 28, 4);
-  if (machineSize < 48 || machineSize > maximumMachineBytes ||
-      !((width == 0 && height == 0) || (width == previewWidth && height == previewHeight)) ||
-      bytes.size() != headerSize + machineSize + width * height * sizeof(uint32_t))
-    throw std::runtime_error("Invalid state file size or preview");
-  const auto digest = Digest(bytes, operation, core::StatePhase::Validate);
-  if (!std::equal(digest.begin(), digest.end(), bytes.begin() + 32))
-    throw std::runtime_error("State file checksum does not match");
-  StateFile result;
-  result.created = Get(bytes, 16, 8);
-  result.machine.assign(bytes.begin() + headerSize, bytes.begin() + headerSize + machineSize);
-  result.preview.width = uint32_t(width);
-  result.preview.height = uint32_t(height);
-  result.preview.pixels.reserve(size_t(width * height));
-  for (size_t offset = headerSize + size_t(machineSize); offset < bytes.size(); offset += 4)
-    result.preview.pixels.push_back(uint32_t(Get(bytes, offset, 4)));
-  return result;
+  return ReadState(path, true, operation);
+}
+core::VideoFrame StateFile::ReadPreview(const std::filesystem::path &path,
+                                        const core::StateOperation &operation) {
+  return ReadState(path, false, operation).preview;
 }
 
 void StateFile::Write(const std::filesystem::path &path, std::span<const uint8_t> machine,

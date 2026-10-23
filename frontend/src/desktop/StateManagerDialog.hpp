@@ -19,6 +19,9 @@ public:
   bool Active() const noexcept;
   void Draw();
   std::optional<Action> TakeAction();
+  std::optional<StateStorage::Key> TakePreview();
+  void PreviewReady(const StateStorage::Key &key, core::VideoFrame picture);
+  void PreviewRejected(const StateStorage::Key &key, std::string error);
   void Completed(bool undo, bool redo);
   void Rejected(std::string error);
 

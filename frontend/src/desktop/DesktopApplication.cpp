@@ -177,6 +177,29 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         audio.Resume();
       refresh();
     };
+    const auto updateFocus = [&](bool busy) {
+      const bool focused = WindowFocused(video.Window());
+      input.SetEnabled(focused || preferences.focus == FocusBehavior::AllowInput);
+      if (core::IsLightGun(devices[1]))
+        input.SetGunViewport(video.InputViewport(), focused);
+      const bool muted = preferences.mute || (preferences.muteUnfocused && !focused);
+      if (audioMuted != muted) {
+        audio.SetVolume(preferences.volume, muted);
+        audioMuted = muted;
+      }
+      const bool suspend = !focused && preferences.focus == FocusBehavior::Pause;
+      if (focusPaused != suspend) {
+        focusPaused = suspend;
+        if (!busy) {
+          resetPresentation();
+          if (!focusPaused && !paused && session.Machine())
+            audio.Resume();
+        } else if (focusPaused)
+          audio.Clear();
+        refresh();
+      }
+      return focused;
+    };
     const auto runStateOperation = [&](const char *title, bool restoring, auto perform) {
       const bool relativeMouse = SDL_GetWindowRelativeMouseMode(video.Window());
       audio.Pause();
@@ -197,6 +220,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             ui.CancelStateOperation();
           (void)menu.GamepadCommands(event, false);
         }
+        updateFocus(true);
         const auto now = SDL_GetTicksNS();
         if (now >= nextProgressFrame || ui.StateOperationCancelled()) {
           ui.Frame();
@@ -618,6 +642,20 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           ui.StateManager().Rejected(error.what());
         }
       }
+      if (const auto key = ui.StateManager().TakePreview()) {
+        try {
+          core::VideoFrame picture;
+          if (runStateOperation("Reading state preview", false, [&](const auto &operation) {
+                picture = StateFile::ReadPreview(session.States()->Path(*key), operation);
+              }))
+            ui.StateManager().PreviewReady(*key, std::move(picture));
+          else
+            ui.StateManager().PreviewRejected(
+                *key, "Preview cancelled. Select the state again to retry.");
+        } catch (const std::exception &error) {
+          ui.StateManager().PreviewRejected(*key, error.what());
+        }
+      }
       if (statesActive && !ui.StateManager().Active()) {
         statesActive = false;
         input.ResetSampling();
@@ -652,28 +690,14 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         continue;
       }
       auto *emulator = session.Machine();
-      const bool focused = WindowFocused(video.Window());
-      const bool suspend = !focused && preferences.focus == FocusBehavior::Pause;
-      input.SetEnabled(focused || preferences.focus == FocusBehavior::AllowInput);
+      const bool focused = updateFocus(false);
       input.SetUiCapture(ui.WantsKeyboard(), ui.WantsPointer());
-      const bool muted = preferences.mute || (preferences.muteUnfocused && !focused);
-      if (audioMuted != muted) {
-        audio.SetVolume(preferences.volume, muted);
-        audioMuted = muted;
-      }
       const bool capture = emulator && focused && !paused && !dialogs.Active() &&
                            !ui.WantsPointer() &&
                            (devices[0] == core::ControllerDevice::Mouse ||
                             devices[1] == core::ControllerDevice::Mouse);
       if (SDL_GetWindowRelativeMouseMode(video.Window()) != capture)
         SDL_SetWindowRelativeMouseMode(video.Window(), capture);
-      if (focusPaused != suspend) {
-        focusPaused = suspend;
-        resetPresentation();
-        if (!focusPaused && !paused && emulator)
-          audio.Resume();
-        refresh();
-      }
       if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
           ui.StateManager().Active() || ui.ErrorOpen() || ((paused || focusPaused) && !steps)) {
         if (uiFrame)
@@ -698,7 +722,6 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         continue;
       }
       if (core::IsLightGun(devices[1])) {
-        input.SetGunViewport(video.InputViewport(), focused);
         const unsigned count = devices[1] == core::ControllerDevice::Justifiers ? 2 : 1;
         std::array<core::LightGunState, 2> aim;
         for (unsigned gun = 0; gun < count; ++gun)

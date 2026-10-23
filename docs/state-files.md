@@ -6,6 +6,8 @@ A state requires the same cartridge hardware, ROM/firmware, and streamed media. 
 
 File reads, writes, checksums, and streamed-media checks support cancellation. A cancelled write closes and removes its temporary file while preserving the destination. A cancelled load leaves the previous undo history available. Media is checked again before a prepared restore releases suspended execution. No cancellation callback runs after a file replacement or state publication.
 
+Preview reads validate the same header, exact file length, and complete checksum as full reads. They stream the machine payload without retaining it and keep only the decoded thumbnail. Cancelling or rejecting a preview does not publish its pixels or change the machine.
+
 ## Version 1 envelope
 
 All integer fields use unsigned little-endian encoding. The fixed header is 64 bytes.

@@ -65,6 +65,8 @@ void Files(const fs::path &directory) {
             file.preview.height == 240 && file.preview.pixels.front() == 0xff123456 &&
             file.preview.pixels.back() == 0xff654321,
         "State envelope retains bytes, timestamp and a portable preview");
+  Check(StateFile::ReadPreview(path).pixels == file.preview.pixels,
+        "Preview-only reading retains the same validated pixels");
   const auto original = ReadFile(path, 1024 * 1024);
   for (size_t offset : {size_t(0), size_t(8), size_t(12), size_t(16), size_t(24), size_t(28),
                         size_t(32), size_t(64), original.size() - 1}) {
@@ -72,17 +74,22 @@ void Files(const fs::path &directory) {
     changed[offset] ^= 0x80;
     Write(path, changed);
     Reject([&] { StateFile::Read(path); }, "Changed header, machine or preview rejects");
+    Reject([&] { StateFile::ReadPreview(path); }, "Preview reading validates the complete file");
   }
   Write(path, std::span(original).first(63));
   Reject([&] { StateFile::Read(path); }, "Truncated header rejects");
+  Reject([&] { StateFile::ReadPreview(path); }, "Preview reading rejects truncated headers");
   Write(path, std::span(original).first(original.size() - 1));
   Reject([&] { StateFile::Read(path); }, "Truncated preview rejects");
+  Reject([&] { StateFile::ReadPreview(path); }, "Preview reading rejects truncated pictures");
   auto trailer = original;
   trailer.push_back(0);
   Write(path, trailer);
   Reject([&] { StateFile::Read(path); }, "Unexpected trailer rejects");
+  Reject([&] { StateFile::ReadPreview(path); }, "Preview reading rejects trailers");
   StateFile::Write(path, machine, {});
   Check(StateFile::Read(path).preview.pixels.empty(), "Power-on state has no fabricated preview");
+  Check(StateFile::ReadPreview(path).pixels.empty(), "Preview reader retains absent pictures");
   Reject([&] { StateFile::Read(directory / "missing.cst"); }, "Missing file rejects");
   const auto huge = directory / "oversized.cst";
   {
@@ -91,6 +98,47 @@ void Files(const fs::path &directory) {
     sparse.put(0);
   }
   Reject([&] { StateFile::Read(huge); }, "Oversized file rejects before allocation");
+  Reject([&] { StateFile::ReadPreview(huge); }, "Oversized preview rejects before reading payload");
+}
+void StreamedReads(const fs::path &directory) {
+  using namespace snes::core;
+  const auto path = directory / "streamed.cst";
+  VideoFrame picture{3, 1, {0xff123456, 0xffabcdef, 0xff987654}};
+  for (size_t size : {48u, 65535u, 65536u, 65537u, 131071u, 131073u}) {
+    std::vector<uint8_t> machine(size);
+    for (size_t index = 0; index < size; ++index)
+      machine[index] = uint8_t(index * 17 + index / 127);
+    StateFile::Write(path, machine, picture);
+    const auto file = StateFile::Read(path);
+    Check(file.machine == machine && StateFile::ReadPreview(path).pixels == file.preview.pixels,
+          "Unaligned machine extents and preview chunk boundaries retain exact values");
+  }
+  const auto original = ReadFile(path, 1024 * 1024);
+  for (bool preview : {false, true}) {
+    for (auto phase : {StatePhase::ReadFile, StatePhase::Validate}) {
+      uint64_t completed = 0;
+      const StateOperation operation([&](const StateProgress &progress) {
+        Check(progress.completed <= progress.total, "Stream progress stays within its file");
+        if (progress.phase == StatePhase::ReadFile) {
+          Check(progress.completed >= completed, "Stream progress counts increasing file bytes");
+          completed = progress.completed;
+        }
+        return progress.phase != phase || progress.completed < 65536;
+      });
+      Cancelled([&] {
+        if (preview)
+          StateFile::ReadPreview(path, operation);
+        else
+          StateFile::Read(path, operation);
+      });
+      Check(ReadFile(path, original.size()) == original,
+            "Cancelled reads leave source bytes intact");
+    }
+  }
+  auto corrupt = original;
+  corrupt[64 + 65537] ^= 1;
+  Write(path, corrupt);
+  Reject([&] { StateFile::ReadPreview(path); }, "Preview integrity covers skipped machine bytes");
 }
 void Catalog(const fs::path &directory) {
   LaunchRequest request;
@@ -316,6 +364,7 @@ int main(int argc, char **argv) {
   } cleanup{directory};
   try {
     Files(directory);
+    StreamedReads(directory);
     Catalog(directory);
     CancelFiles(directory);
     Workflow(directory, argc > 1 ? snes::core::FilePath(argv[1]) : fs::path{},
