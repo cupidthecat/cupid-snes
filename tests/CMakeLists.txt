@@ -48,6 +48,10 @@ add_executable(snes_gameboy_state_tests test_gameboy_state.cpp)
 target_link_libraries(snes_gameboy_state_tests PRIVATE snes_core)
 snes_add_check(snes_gameboy_state_tests snes_gameboy_state_tests)
 
+add_executable(snes_cartridge_state_tests test_cartridge_state.cpp)
+target_link_libraries(snes_cartridge_state_tests PRIVATE snes_core)
+snes_add_check(snes_cartridge_state_tests snes_cartridge_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )

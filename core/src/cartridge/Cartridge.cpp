@@ -882,6 +882,13 @@ void Cartridge::SetGameBoyAudioOutput(GameBoyAudioSink output) {
     gameBoy_->SetAudioOutput(std::move(output));
 }
 
+bool Cartridge::SetGameBoyTimeSource(std::function<uint64_t()> source) {
+  if (!gameBoy_)
+    return false;
+  gameBoy_->SetTimeSource(std::move(source));
+  return true;
+}
+
 void Cartridge::SetGameBoyMixedAudioOutput(std::function<void(float, float)> output) {
   if (gameBoy_)
     gameBoy_->SetMixedAudioOutput(std::move(output));

@@ -1,4 +1,5 @@
 #include "snes/core/Cartridge.hpp"
+#include "snes/core/detail/Sha256.hpp"
 
 #include <algorithm>
 
@@ -30,6 +31,7 @@ void Cartridge::ApplyBiosCompatibility() {
 void Cartridge::InitializeBroadcast(std::span<const uint8_t> pack) {
   bsx_.reset();
   memoryPack_.assign(pack.begin(), pack.end());
+  memoryPackIdentity_ = std::make_unique<std::array<uint8_t, 32>>(detail::Sha256(memoryPack_));
   memoryPackReadOnly_ = MaskRomPack(memoryPack_);
   bsx_ = std::make_unique<Bsx>(rom_, memoryPack_, sram_);
   bsx_->SetTimeSource(CurrentBroadcastTime);
@@ -76,6 +78,8 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
       return std::nullopt;
     }
     cart->memoryPack_ = std::move(expansion);
+    cart->memoryPackIdentity_ =
+        std::make_unique<std::array<uint8_t, 32>>(detail::Sha256(cart->memoryPack_));
     cart->memoryPackReadOnly_ =
         cart->memoryPack_.size() == 0x80000 || MaskRomPack(cart->memoryPack_);
     if (!cart->memoryPack_.empty())
@@ -101,6 +105,8 @@ std::optional<Cartridge> Cartridge::FromBroadcastCartridge(std::span<const uint8
   }
   cart->header_.mapping = lo ? MappingType::BroadcastLoRom : MappingType::BroadcastHiRom;
   cart->memoryPack_ = std::move(normalizedPack);
+  cart->memoryPackIdentity_ =
+      std::make_unique<std::array<uint8_t, 32>>(detail::Sha256(cart->memoryPack_));
   const auto &bytes = cart->memoryPack_;
   if (!bytes.empty()) {
     cart->memoryPackReadOnly_ = MaskRomPack(bytes);

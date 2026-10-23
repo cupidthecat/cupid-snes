@@ -32,6 +32,9 @@
 #include <vector>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 class PowerOnState;
 namespace gameboy {
 class Adapter;
@@ -139,6 +142,9 @@ public:
   ~Cartridge();
   Cartridge(Cartridge &&) noexcept;
   Cartridge &operator=(Cartridge &&) noexcept;
+  // Complete an outstanding SA-1 operation before capturing state.
+  void SynchronizeState();
+  void SerializeState(detail::StateArchive &archive);
   static std::optional<Cartridge> FromRomImage(std::span<const uint8_t> romImage,
                                                RomNormalizationInfo *normalization,
                                                const CartridgeDatabase *database,
@@ -208,6 +214,7 @@ public:
   bool MapCompetitionCpu(MemoryBus &bus, uint8_t slot) const;
   bool MapGameBoy(MemoryBus &bus, uint8_t slot) const;
   void SetGameBoyAudioOutput(GameBoyAudioSink output);
+  bool SetGameBoyTimeSource(std::function<uint64_t()> source);
   void SetGameBoyMixedAudioOutput(std::function<void(float left, float right)> output);
   void WriteGameBoyConsoleAudio(int16_t left, int16_t right);
   void SetGameBoyConsoleAudioRate(uint32_t rate);
@@ -283,6 +290,8 @@ private:
   std::unique_ptr<NecDsp> necDsp_;
   std::unique_ptr<CompetitionBoard> competition_;
   std::unique_ptr<gameboy::Adapter> gameBoy_;
+  std::unique_ptr<std::array<uint8_t, 32>> stateRomIdentity_;
+  std::unique_ptr<std::array<uint8_t, 32>> memoryPackIdentity_;
 };
 
 } // namespace snes::core

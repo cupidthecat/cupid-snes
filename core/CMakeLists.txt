@@ -12,6 +12,7 @@ add_library(snes_core
   src/state/Sha256.cpp
   src/state/ClockState.cpp
   src/state/CartridgeMemoryState.cpp
+  src/state/CartridgeState.cpp
   src/state/DecoderState.cpp
   src/state/Spc7110State.cpp
   src/state/CommandDspState.cpp
