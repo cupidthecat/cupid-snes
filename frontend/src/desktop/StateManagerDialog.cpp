@@ -11,7 +11,12 @@
 namespace snes::frontend {
 namespace {
 std::string Date(std::filesystem::file_time_type time) {
-  const auto stamp = std::chrono::system_clock::to_time_t(std::chrono::file_clock::to_sys(time));
+#ifdef _MSC_VER
+  const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
+#else
+  const auto system = std::chrono::file_clock::to_sys(time);
+#endif
+  const auto stamp = std::chrono::system_clock::to_time_t(system);
   std::tm local{};
 #ifdef _WIN32
   localtime_s(&local, &stamp);
