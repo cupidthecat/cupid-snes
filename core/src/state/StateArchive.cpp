@@ -26,13 +26,25 @@ void StateArchive::WriteUnsigned(uint64_t value, size_t bytes) {
     output_.push_back(uint8_t(value >> (8 * byte)));
 }
 uint64_t StateArchive::ReadUnsigned(size_t bytes) {
+  const auto block = ReadBlock(bytes);
+  uint64_t value = 0;
+  for (size_t byte = 0; byte < bytes; ++byte)
+    value |= uint64_t(block[byte]) << (8 * byte);
+  return value;
+}
+void StateArchive::WriteBlock(std::span<const uint8_t> bytes) {
+  Require(bytes.size() <= MaximumBytes - output_.size(),
+          "Machine state exceeds the supported size");
+  if (!bytes.empty())
+    output_.insert(output_.end(), bytes.begin(), bytes.end());
+}
+std::span<const uint8_t> StateArchive::ReadBlock(size_t bytes) {
   Require(!plan_->committed, "Machine state has already been restored");
   Require(!plan_->failed, "Machine state validation has failed");
   Require(bytes <= Remaining(), "Truncated machine state value");
-  uint64_t value = 0;
-  for (size_t byte = 0; byte < bytes; ++byte)
-    value |= uint64_t(input_[position_++]) << (8 * byte);
-  return value;
+  const auto block = input_.subspan(position_, bytes);
+  position_ += bytes;
+  return block;
 }
 void StateArchive::PatchLength(size_t position, size_t length) {
   Require(length <= std::numeric_limits<uint32_t>::max(), "Machine state section is too large");

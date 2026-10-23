@@ -174,10 +174,11 @@ jobs:
           snes_sdl_input_tests snes_battery_directory_tests
           snes_state_archive_tests snes_processor_state_tests
           snes_audio_state_tests
+          snes_ppu_state_tests
       - name: Test shared UI and host services
         run: >-
           ctest --test-dir out/build/linux --output-on-failure --parallel 2 --timeout 120 --no-tests=error
-          -R '^snes_(state_archive_tests|processor_state_tests|audio_state_tests|desktop_tests|desktop_application_tests|preferences_tests|session_tests|battery_directory_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
+          -R '^snes_(state_archive_tests|processor_state_tests|audio_state_tests|ppu_state_tests|desktop_tests|desktop_application_tests|preferences_tests|session_tests|battery_directory_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
       - name: Test X11 desktop integration
         run: xvfb-run -a env SDL_VIDEODRIVER=x11 SNES_TEST_WINDOW=1 out/build/linux/tests/snes_desktop_tests
       - name: Test native application gamepad shortcuts

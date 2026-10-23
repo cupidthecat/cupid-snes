@@ -7,6 +7,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <limits>
@@ -56,7 +57,7 @@ public:
   template <class T>
     requires(std::is_arithmetic_v<T>)
   T Number(T &value) {
-    Operation operation(*this);
+    Operation operation(*this, false);
     if (!Reading()) {
       WriteNumber(value);
       return value;
@@ -69,7 +70,7 @@ public:
   template <class T>
     requires(std::is_arithmetic_v<T>)
   T Bounded(T &value, T minimum, T maximum) {
-    Operation operation(*this);
+    Operation operation(*this, false);
     const auto next = Number(value);
     Require(next >= minimum && next <= maximum, "Machine state value is out of range");
     return next;
@@ -78,7 +79,7 @@ public:
   template <class T>
     requires(std::is_enum_v<T>)
   T Enumeration(T &value, T minimum, T maximum) {
-    Operation operation(*this);
+    Operation operation(*this, false);
     using U = std::underlying_type_t<T>;
     U next = static_cast<U>(value);
     if (Reading())
@@ -95,7 +96,7 @@ public:
   template <class T>
     requires(std::is_arithmetic_v<T>)
   void Expect(T expected) {
-    Operation operation(*this);
+    Operation operation(*this, false);
     if (!Reading())
       WriteNumber(expected);
     else
@@ -107,6 +108,30 @@ public:
     requires(std::is_arithmetic_v<T>)
   void Fixed(std::span<T> values) {
     Operation operation(*this);
+    if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> &&
+                  std::endian::native == std::endian::little) {
+      static_assert(std::numeric_limits<std::make_unsigned_t<T>>::digits == sizeof(T) * 8);
+      if (!Reading()) {
+        Require(values.size() <= (MaximumBytes - output_.size()) / sizeof(T),
+                "Machine state exceeds the supported size");
+        WriteBlock({reinterpret_cast<const uint8_t *>(values.data()), values.size_bytes()});
+        return;
+      }
+      Require(values.size() <= Remaining() / sizeof(T), "Truncated machine state array");
+      const auto bytes = ReadBlock(values.size_bytes());
+      if (values.empty())
+        return;
+      if (mode_ == Mode::Scratch) {
+        std::memcpy(values.data(), bytes.data(), bytes.size());
+        return;
+      }
+      ReserveStaging(values.size(), sizeof(T));
+      auto next = std::make_shared<std::vector<T>>(values.size());
+      std::memcpy(next->data(), bytes.data(), bytes.size());
+      plan_->changes.emplace_back(
+          [values, next]() noexcept { std::copy(next->begin(), next->end(), values.begin()); });
+      return;
+    }
     if (!Reading()) {
       for (const auto value : values)
         WriteNumber(value);
@@ -218,10 +243,16 @@ public:
 private:
   struct Operation {
     StateArchive &archive;
-    int exceptions = std::uncaught_exceptions();
-    explicit Operation(StateArchive &owner) : archive(owner) {}
+    bool watching;
+    int exceptions;
+    // Scratch scalars cannot allocate; their validation already poisons errors.
+    // Staging and allocating operations still watch for escaping exceptions.
+    explicit Operation(StateArchive &owner, bool allocates = true)
+        : archive(owner),
+          watching(owner.mode_ != Mode::Write && (allocates || owner.mode_ == Mode::Stage)),
+          exceptions(watching ? std::uncaught_exceptions() : 0) {}
     ~Operation() {
-      if (std::uncaught_exceptions() > exceptions)
+      if (watching && std::uncaught_exceptions() > exceptions)
         archive.Invalidate();
     }
   };
@@ -237,6 +268,8 @@ private:
   void Require(bool condition, const char *message);
   void Invalidate() noexcept;
   void WriteUnsigned(uint64_t value, size_t bytes);
+  void WriteBlock(std::span<const uint8_t> bytes);
+  std::span<const uint8_t> ReadBlock(size_t bytes);
   uint64_t ReadUnsigned(size_t bytes);
   void PatchLength(size_t position, size_t length);
   void WriteCount(size_t count, size_t maximumElements);

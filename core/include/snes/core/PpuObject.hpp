@@ -14,6 +14,7 @@ public:
   };
 
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   // Repeated calls for the same line leave its latched rotation unchanged.
   void BeginLine(uint16_t line, const Ppu::ObjectIO &io);
   // Consume eight-clock evaluation edges through H=1016 and successive

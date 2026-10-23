@@ -208,6 +208,74 @@ void ValidationAndLimits() {
   Check(live == 7, "Device validation does not change live state");
 }
 
+void MemoryBlocks() {
+  std::array<int16_t, 3> words{-32768, -2, 32767};
+  std::array<uint64_t, 2> clocks{0x0102030405060708, UINT64_MAX};
+  std::array<bool, 3> flags{false, true, false};
+  std::array<float, 2> samples{1.5f, -0.0f};
+  StateArchive writer;
+  writer.Array(words);
+  writer.Array(clocks);
+  writer.Array(flags);
+  writer.Array(samples);
+  const std::vector<uint8_t> expected{0, 0x80, 0xfe, 0xff, 0xff, 0x7f, 8,    7,    6,    5,    4, 3,
+                                      2, 1,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 1,
+                                      0, 0,    0,    0xc0, 0x3f, 0,    0,    0,    0x80};
+  Check(writer.Bytes() == expected,
+        "Memory blocks preserve signed bits, little-endian words and canonical scalar arrays");
+  for (size_t size = 0; size <= expected.size(); ++size) {
+    std::array<int16_t, 3> nextWords{11, 13, 17};
+    std::array<uint64_t, 2> nextClocks{19, 23};
+    std::array<bool, 3> nextFlags{true, false, true};
+    std::array<float, 2> nextSamples{29, 31};
+    StateArchive reader(std::span<const uint8_t>(expected).first(size));
+    const auto read = [&] {
+      reader.Array(nextWords);
+      reader.Array(nextClocks);
+      reader.Array(nextFlags);
+      reader.Array(nextSamples);
+    };
+    if (size < expected.size()) {
+      Reject(read, "Every truncated memory-block prefix is rejected");
+      Reject([&] { reader.Commit(); }, "A short later array cannot publish earlier blocks");
+      Check(nextWords[0] == 11 && nextClocks[0] == 19 && nextFlags[0] && nextSamples[0] == 29,
+            "Truncated blocks leave all live arrays intact");
+    } else {
+      read();
+      Check(nextWords[0] == 11 && nextSamples[0] == 29,
+            "Complete arrays remain staged until commit");
+      reader.Commit();
+      Check(nextWords == words && nextClocks == clocks && nextFlags == flags &&
+                nextSamples == samples && std::signbit(nextSamples[1]),
+            "Memory-block restore retains exact integer and floating-point bits");
+    }
+  }
+  std::array<uint16_t, 0> empty;
+  StateArchive emptyWriter;
+  emptyWriter.Array(empty);
+  StateArchive emptyReader(emptyWriter.Bytes());
+  emptyReader.Array(empty);
+  emptyReader.Commit();
+  Reject([&] { emptyReader.Array(empty); }, "Empty blocks cannot read after commit");
+
+  struct Pair {
+    uint8_t first = 5;
+    bool second = false;
+  } live;
+  const std::array<uint8_t, 2> invalid{7, 2};
+  StateArchive caught(invalid);
+  caught.Object(live, [](auto &fields, auto &next) {
+    fields.Number(next.first);
+    try {
+      fields.Number(next.second);
+    } catch (const std::runtime_error &) {
+    }
+  });
+  Reject([&] { caught.Commit(); }, "Catching a scratch scalar error cannot rescue its restore");
+  Check(live.first == 5 && !live.second,
+        "Scratch validation poisons the archive without needing a per-scalar exception guard");
+}
+
 void RestorePreparation() {
   std::array<uint8_t, 1> bytes{7};
   uint8_t live = 8, observed = 0;
@@ -266,6 +334,7 @@ int main() {
     PortableNumbers();
     StructuredChanges();
     ValidationAndLimits();
+    MemoryBlocks();
     RestorePreparation();
     EntropyContinuation();
   } catch (const std::exception &error) {

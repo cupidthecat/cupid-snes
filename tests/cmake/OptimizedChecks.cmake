@@ -4,6 +4,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_state_archive_tests
   snes_processor_state_tests
   snes_audio_state_tests
+  snes_ppu_state_tests
   snes_gameboy_cpu_tests
   snes_gameboy_host_tests
   snes_gameboy_clocked_io_tests
