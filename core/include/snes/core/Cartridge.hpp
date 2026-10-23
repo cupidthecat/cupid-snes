@@ -158,7 +158,8 @@ public:
   static std::optional<Cartridge> FromSuperGameBoy(std::span<const uint8_t> bios,
                                                    std::span<const uint8_t> game,
                                                    std::span<const uint8_t> boot,
-                                                   std::string *error = nullptr);
+                                                   std::string *error = nullptr,
+                                                   std::function<uint64_t()> timeSource = {});
   static std::optional<Cartridge> FromBroadcastCartridge(std::span<const uint8_t> base,
                                                          std::span<const uint8_t> pack,
                                                          std::string *error = nullptr);

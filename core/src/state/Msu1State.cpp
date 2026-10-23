@@ -57,6 +57,12 @@ bool Msu1::Stream::SerializeState(detail::StateArchive &archive, const std::file
                        "MSU-1 checkpoint media content differs");
     }
   }
+  if (prepared)
+    archive.RecheckBeforeRestore([prepared, size = next.mediaSize, identity = next.identity]() {
+      const auto &key = prepared->Fingerprint();
+      if (key.size != size || key.digest != identity)
+        throw std::runtime_error("MSU-1 checkpoint media changed before restore");
+    });
   archive.BeforeRestore(
       [this, prepared = std::move(prepared)]() noexcept { resource_ = prepared; });
   return next.opened;

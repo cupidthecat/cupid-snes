@@ -68,9 +68,12 @@ void StateArchive::ReserveStaging(size_t count, size_t bytes) {
   plan_->bytes += count * bytes;
 }
 void StateArchive::Commit() {
+  Operation operation(*this);
   Require(root_ && mode_ == Mode::Stage && !plan_->committed && !plan_->failed,
           "Machine state restore cannot be committed here");
   Require(Remaining() == 0, "Unexpected data at the end of machine state");
+  for (auto &verify : plan_->verifications)
+    verify();
   for (auto &prepare : plan_->preparations)
     prepare();
   for (auto &change : plan_->changes)
@@ -78,5 +81,6 @@ void StateArchive::Commit() {
   plan_->committed = true;
   plan_->changes.clear();
   plan_->preparations.clear();
+  plan_->verifications.clear();
 }
 } // namespace snes::core::detail

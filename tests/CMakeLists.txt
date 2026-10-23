@@ -24,6 +24,10 @@ add_executable(snes_smp_state_boundary_tests test_smp_state_boundary.cpp)
 target_link_libraries(snes_smp_state_boundary_tests PRIVATE snes_core)
 snes_add_check(snes_smp_state_boundary_tests snes_smp_state_boundary_tests)
 
+add_executable(snes_emulator_state_tests test_emulator_state.cpp)
+target_link_libraries(snes_emulator_state_tests PRIVATE snes_core)
+snes_add_check(snes_emulator_state_tests snes_emulator_state_tests)
+
 add_executable(snes_ppu_state_tests test_ppu_state.cpp)
 target_link_libraries(snes_ppu_state_tests PRIVATE snes_core)
 snes_add_check(snes_ppu_state_tests snes_ppu_state_tests)

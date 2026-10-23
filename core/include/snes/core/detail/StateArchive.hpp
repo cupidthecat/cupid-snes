@@ -40,6 +40,15 @@ public:
     return input_.size() - position_;
   }
   void Commit();
+  // Recheck host resources before releasing any suspended execution. Failure
+  // invalidates the plan without publishing its staged machine state.
+  template <class Verify> void RecheckBeforeRestore(Verify verify) {
+    Operation operation(*this);
+    if (!Reading())
+      return;
+    Require(mode_ == Mode::Stage, "Restore rechecks require a live hardware object");
+    plan_->verifications.emplace_back(std::move(verify));
+  }
   // Release suspended host execution only after the entire input validates.
   // These callbacks run before any staged field is assigned.
   template <class Prepare> void BeforeRestore(Prepare prepare) {
@@ -258,6 +267,7 @@ private:
   };
   enum class Mode { Write, Stage, Scratch };
   struct RestorePlan {
+    std::vector<std::function<void()>> verifications;
     std::vector<std::function<void()>> preparations;
     std::vector<std::function<void()>> changes;
     size_t bytes = 0;

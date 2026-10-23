@@ -459,7 +459,8 @@ std::optional<Cartridge> Cartridge::FromRomImage(std::span<const uint8_t> romIma
 std::optional<Cartridge> Cartridge::FromSuperGameBoy(std::span<const uint8_t> bios,
                                                      std::span<const uint8_t> game,
                                                      std::span<const uint8_t> boot,
-                                                     std::string *error) {
+                                                     std::string *error,
+                                                     std::function<uint64_t()> timeSource) {
   auto cartridge = FromRomImage(bios, nullptr, nullptr, error);
   if (!cartridge)
     return std::nullopt;
@@ -468,6 +469,8 @@ std::optional<Cartridge> Cartridge::FromSuperGameBoy(std::span<const uint8_t> bi
       *error = "The base image is not a Super Game Boy BIOS";
     return std::nullopt;
   }
+  if (timeSource)
+    cartridge->gameBoy_->SetTimeSource(std::move(timeSource));
   if (!cartridge->gameBoy_->Load(game, boot, error))
     return std::nullopt;
   return cartridge;

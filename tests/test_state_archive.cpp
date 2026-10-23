@@ -327,6 +327,41 @@ void EntropyContinuation() {
     Reject([&] { bad.Commit(); }, "Invalid startup entropy cannot be restored");
   }
 }
+
+void ResourceRechecks() {
+  const std::array<uint8_t, 1> bytes{7};
+  uint8_t live = 8;
+  bool resourceMatches = false;
+  unsigned preparations = 0, checks = 0;
+  StateArchive reader(bytes);
+  reader.Number(live);
+  reader.BeforeRestore([&]() noexcept { ++preparations; });
+  reader.RecheckBeforeRestore([&]() {
+    ++checks;
+    if (!resourceMatches)
+      throw std::runtime_error("Changed resource");
+  });
+  Reject([&] { reader.Commit(); }, "A changed resource rejects before discarding execution");
+  Check(live == 8 && checks == 1 && preparations == 0,
+        "A failing final recheck publishes no fields or execution preparations");
+  resourceMatches = true;
+  Reject([&] { reader.Commit(); }, "A rejected resource cannot rescue an earlier plan");
+  Check(checks == 1 && live == 8 && preparations == 0,
+        "A failed recheck poisons the plan without rerunning checks");
+  StateArchive valid(bytes);
+  valid.Number(live);
+  valid.BeforeRestore([&]() noexcept {
+    if (checks == 2)
+      ++preparations;
+  });
+  valid.RecheckBeforeRestore([&]() { ++checks; });
+  valid.Commit();
+  Check(live == 7 && preparations == 1 && checks == 2,
+        "All resource rechecks precede execution preparation and field publication");
+  StateArchive writer;
+  writer.RecheckBeforeRestore([&]() { ++checks; });
+  Check(checks == 2, "Writing state never rechecks host resources");
+}
 } // namespace
 
 int main() {
@@ -337,6 +372,7 @@ int main() {
     MemoryBlocks();
     RestorePreparation();
     EntropyContinuation();
+    ResourceRechecks();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

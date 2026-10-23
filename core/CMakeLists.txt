@@ -1,6 +1,7 @@
 add_library(snes_core
   src/state/StateArchive.cpp
   src/state/SystemState.cpp
+  src/state/EmulatorState.cpp
   src/state/ProcessorState.cpp
   src/state/AudioState.cpp
   src/state/DspState.cpp
@@ -113,6 +114,7 @@ add_library(snes_core
   src/dma/Dma.cpp
   src/timing/Timing.cpp
   src/system/Emulator.cpp
+  src/system/FrameExecution.cpp
   src/system/Compatibility.cpp
   src/system/ExecutionContext.cpp
   src/system/Logging.cpp

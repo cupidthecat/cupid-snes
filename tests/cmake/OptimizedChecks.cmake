@@ -7,6 +7,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_processor_state_tests
   snes_audio_state_tests
   snes_smp_state_boundary_tests
+  snes_emulator_state_tests
   snes_ppu_state_tests
   snes_system_state_tests
   snes_cartridge_memory_state_tests
