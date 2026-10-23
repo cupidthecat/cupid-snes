@@ -239,4 +239,5 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::puts("CPU debugger application checks passed");
+  return 0;
 }

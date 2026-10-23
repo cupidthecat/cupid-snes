@@ -284,4 +284,5 @@ int main() {
     return 1;
   }
   std::puts("CPU debugger checks passed");
+  return 0;
 }
