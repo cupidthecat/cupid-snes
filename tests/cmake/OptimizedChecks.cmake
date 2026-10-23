@@ -10,6 +10,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_spc7110_state_tests
   snes_command_dsp_state_tests
   snes_arm_state_tests
+  snes_cx4_state_tests
   snes_gameboy_cpu_tests
   snes_gameboy_host_tests
   snes_gameboy_clocked_io_tests

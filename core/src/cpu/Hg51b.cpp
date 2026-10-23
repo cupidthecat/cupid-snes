@@ -8,6 +8,7 @@ void Hg51b::Reset() {
   state_.registers = {};
   state_.control = {};
   idleCycle_ = false;
+  continuation_ = {};
 }
 
 bool Hg51b::LoadDataRom(std::span<const uint8_t> bytes) {
@@ -100,109 +101,195 @@ unsigned Hg51b::Wait(uint32_t address) const {
   return IsRam(address) ? 1 + state_.control.ramWait : 0;
 }
 
-bool Hg51b::CacheReady() {
+void Hg51b::ReturnCache(CacheReturn next, bool ready) {
+  if (!ready && next != CacheReturn::Finish)
+    Halt();
+  switch (next) {
+  case CacheReturn::Finish:
+    continuation_.phase = Phase::Finish;
+    break;
+  case CacheReturn::Instruction:
+    continuation_.phase = ready ? Phase::LatchOpcode : Phase::Finish;
+    break;
+  case CacheReturn::Execute:
+    continuation_.phase = Phase::InstructionClock;
+    break;
+  case CacheReturn::Skip:
+    continuation_.phase = Phase::SkipClock;
+    break;
+  }
+}
+
+void Hg51b::BeginCache(CacheReturn next) {
   auto &cache = state_.control.cache;
-  uint32_t address = (cache.base + state_.registers.bank * 512) & Mask;
+  const uint32_t address = (cache.base + state_.registers.bank * 512) & Mask;
+  continuation_.cacheReturn = next;
   if (!cache.preload) {
     if (cache.address[cache.page] == address) {
       cache.loading = false;
-      return true;
+      ReturnCache(next, true);
+      return;
     }
     cache.page ^= 1;
     if (cache.address[cache.page] == address) {
       cache.loading = false;
-      return true;
+      ReturnCache(next, true);
+      return;
     }
     if (cache.locked[cache.page])
       cache.page ^= 1;
     if (cache.locked[cache.page]) {
       cache.loading = false;
-      return false;
+      ReturnCache(next, false);
+      return;
     }
   }
   cache.preload = false;
   cache.address[cache.page] = address;
-  for (unsigned word = 0; word < 256; ++word) {
-    Cycle(Wait(address));
-    state_.program[cache.page][word] = ReadExternal(address);
-    address = (address + 1) & Mask;
-    Cycle(Wait(address));
-    state_.program[cache.page][word] |= uint16_t(ReadExternal(address)) << 8;
-    address = (address + 1) & Mask;
-  }
-  cache.loading = false;
-  return true;
+  continuation_.cacheAddress = address;
+  continuation_.cacheWord = 0;
+  continuation_.phase = Phase::CacheLow;
+  Cycle(Wait(address));
 }
 
-void Hg51b::Next() {
+void Hg51b::Next(CacheReturn next) {
   auto &r = state_.registers;
-  if (++r.counter)
+  if (++r.counter) {
+    ReturnCache(next, true);
     return;
+  }
   auto &cache = state_.control.cache;
   if (cache.page == 1) {
     Halt();
+    ReturnCache(next, true);
     return;
   }
   cache.page = 1;
   if (cache.locked[1]) {
     Halt();
+    ReturnCache(next, true);
     return;
   }
   r.bank = r.page;
-  if (!CacheReady())
-    Halt();
-}
-
-void Hg51b::Transfer() {
-  auto &dma = state_.control.dma;
-  const unsigned length = dma.length;
-  for (unsigned offset = 0; offset < length; ++offset) {
-    const uint32_t source = (dma.source + offset) & Mask;
-    const uint32_t target = (dma.target + offset) & Mask;
-    if ((IsRom(source) && IsRom(target)) || (IsRam(source) && IsRam(target))) {
-      state_.control.locked = true;
-      return;
-    }
-    Cycle(Wait(source));
-    const auto value = ReadExternal(source);
-    Cycle(Wait(target));
-    WriteExternal(target, value);
-  }
-  dma.active = false;
+  BeginCache(next);
 }
 
 void Hg51b::RunStep() {
   auto &c = state_.control;
-  if (c.locked) {
+  auto &work = continuation_;
+  // Ordinary cache hits keep their direct path. The saved phases still describe
+  // every clock return, including a worker rebuilt halfway through this path.
+  if (work.phase == Phase::Begin && !c.locked && !c.suspended && !c.cache.loading &&
+      !c.dma.active && !c.halted && !c.cache.preload && state_.registers.counter != 255 &&
+      c.cache.address[c.cache.page] == ((c.cache.base + state_.registers.bank * 512) & Mask)) {
+    work.cacheReturn = CacheReturn::Instruction;
+    work.opcode = state_.program[c.cache.page][state_.registers.counter++];
+    work.phase = Phase::ExecuteOpcode;
     Cycle(1);
-  } else if (c.suspended) {
-    if (!c.suspendClocks)
-      Cycle(1);
-    else {
-      Cycle(c.suspendClocks);
+    work.phase = Phase::Finish;
+    Execute(work.opcode);
+    if (work.phase == Phase::Finish) {
+      work.phase = Phase::Begin;
+      return;
+    }
+  }
+  for (;;) {
+    switch (work.phase) {
+    case Phase::Begin:
+      if (c.locked) {
+        work.phase = Phase::Finish;
+        Cycle(1);
+      } else if (c.suspended) {
+        work.phase = c.suspendClocks ? Phase::ClearSuspend : Phase::Finish;
+        Cycle(c.suspendClocks ? c.suspendClocks : 1);
+      } else if (c.cache.loading) {
+        BeginCache(CacheReturn::Finish);
+      } else if (c.dma.active) {
+        work.dmaLength = c.dma.length;
+        work.dmaOffset = 0;
+        work.phase = Phase::DmaNext;
+      } else if (c.halted) {
+        idleCycle_ = true;
+        work.phase = Phase::ClearIdle;
+        Cycle(1);
+      } else {
+        BeginCache(CacheReturn::Instruction);
+      }
+      break;
+    case Phase::Finish:
+      work.phase = Phase::Begin;
+      return;
+    case Phase::ClearSuspend:
       c.suspendClocks = 0;
       c.suspended = false;
-    }
-  } else if (c.cache.loading) {
-    CacheReady();
-  } else if (c.dma.active) {
-    Transfer();
-  } else if (c.halted) {
-    struct ClearIdle {
-      bool &value;
-      ~ClearIdle() {
-        value = false;
+      work.phase = Phase::Finish;
+      break;
+    case Phase::ClearIdle:
+      idleCycle_ = false;
+      work.phase = Phase::Finish;
+      break;
+    case Phase::CacheLow:
+      state_.program[c.cache.page][work.cacheWord] = ReadExternal(work.cacheAddress);
+      work.cacheAddress = (work.cacheAddress + 1) & Mask;
+      work.phase = Phase::CacheHigh;
+      Cycle(Wait(work.cacheAddress));
+      break;
+    case Phase::CacheHigh:
+      state_.program[c.cache.page][work.cacheWord] |= uint16_t(ReadExternal(work.cacheAddress))
+                                                      << 8;
+      work.cacheAddress = (work.cacheAddress + 1) & Mask;
+      if (++work.cacheWord != 256) {
+        work.phase = Phase::CacheLow;
+        Cycle(Wait(work.cacheAddress));
+      } else {
+        c.cache.loading = false;
+        ReturnCache(work.cacheReturn, true);
       }
-    } clear{idleCycle_};
-    idleCycle_ = true;
-    Cycle(1);
-  } else if (!CacheReady()) {
-    Halt();
-  } else {
-    const auto instruction = state_.program[c.cache.page][state_.registers.counter];
-    Next();
-    Cycle(1);
-    Execute(instruction);
+      break;
+    case Phase::DmaNext:
+      if (work.dmaOffset == work.dmaLength) {
+        c.dma.active = false;
+        work.phase = Phase::Finish;
+        break;
+      }
+      work.dmaSource = (c.dma.source + work.dmaOffset) & Mask;
+      work.dmaTarget = (c.dma.target + work.dmaOffset) & Mask;
+      if ((IsRom(work.dmaSource) && IsRom(work.dmaTarget)) ||
+          (IsRam(work.dmaSource) && IsRam(work.dmaTarget))) {
+        c.locked = true;
+        work.phase = Phase::Finish;
+        break;
+      }
+      work.phase = Phase::DmaRead;
+      Cycle(Wait(work.dmaSource));
+      break;
+    case Phase::DmaRead:
+      work.dmaValue = ReadExternal(work.dmaSource);
+      work.phase = Phase::DmaWrite;
+      Cycle(Wait(work.dmaTarget));
+      break;
+    case Phase::DmaWrite:
+      WriteExternal(work.dmaTarget, work.dmaValue);
+      ++work.dmaOffset;
+      work.phase = Phase::DmaNext;
+      break;
+    case Phase::LatchOpcode:
+      work.opcode = state_.program[c.cache.page][state_.registers.counter];
+      Next(CacheReturn::Execute);
+      break;
+    case Phase::InstructionClock:
+      work.phase = Phase::ExecuteOpcode;
+      Cycle(1);
+      break;
+    case Phase::ExecuteOpcode:
+      work.phase = Phase::Finish;
+      Execute(work.opcode);
+      break;
+    case Phase::SkipClock:
+      work.phase = Phase::Finish;
+      Cycle(1);
+      break;
+    }
   }
 }
 
@@ -338,8 +425,7 @@ void Hg51b::Execute(uint16_t op) {
   } else if (group == 9) {
     constexpr uint8_t flags[]{Overflow, Carry, Zero, Negative};
     if (bool(r.flags & flags[high & 3]) == bool(op & 1)) {
-      Next();
-      Cycle(1);
+      Next(CacheReturn::Skip);
     }
   } else if (group == 15) {
     const uint32_t address = state_.stack[0];

@@ -6,6 +6,9 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Cx4 {
 public:
@@ -14,6 +17,7 @@ public:
     return (address & 0x40e000) == 0x006000;
   }
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint32_t address) const;
   void Write(uint32_t address, uint8_t value);
 
