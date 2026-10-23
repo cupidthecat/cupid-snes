@@ -838,14 +838,16 @@ void CancelPicker(SdlVideoOutput &video) {
   dialogs.Begin(snes::frontend::LaunchRequest::Kind::Cartridge);
   dialogs.Cancel();
   std::optional<snes::frontend::FileDialogs::Result> result;
-  const auto deadline = SDL_GetTicks() + 5000;
+  // Windows can take several seconds to initialize the shell dialog under load.
+  // Cancellation is acknowledged only after that asynchronous setup completes.
+  const auto deadline = SDL_GetTicks() + 30000;
   while (!result && SDL_GetTicks() < deadline) {
     SDL_PumpEvents();
     result = dialogs.Poll();
     if (!result)
       SDL_Delay(1);
   }
-  Check(result.has_value(), "Native picker did not acknowledge cancellation within five seconds");
+  Check(result.has_value(), "Native picker did not acknowledge cancellation within thirty seconds");
   Check(!result->request && result->error.empty() && !dialogs.Active(),
         "Immediate cancellation waits for the native picker callback before releasing its parent");
 #else
