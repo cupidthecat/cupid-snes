@@ -40,6 +40,10 @@ add_executable(snes_cx4_state_tests test_cx4_state.cpp)
 target_link_libraries(snes_cx4_state_tests PRIVATE snes_core)
 snes_add_check(snes_cx4_state_tests snes_cx4_state_tests)
 
+add_executable(snes_superfx_state_tests test_superfx_state.cpp)
+target_link_libraries(snes_superfx_state_tests PRIVATE snes_core)
+snes_add_check(snes_superfx_state_tests snes_superfx_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )
