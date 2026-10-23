@@ -15,10 +15,15 @@
 #include <utility>
 #include <vector>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Cartridge {
 public:
+  void SerializeState(detail::StateArchive &archive);
   using TimeSource = std::function<uint64_t()>;
   bool Load(std::span<const uint8_t> image, std::string *error = nullptr);
   // Reset mapper controls while retaining the battery clock polling phase.
@@ -77,6 +82,7 @@ private:
   Huc3Clock huc3Clock_;
   Tpp1 tpp1_;
   std::vector<uint8_t> rom_, ram_;
+  std::optional<std::array<uint8_t, 32>> stateIdentity_;
   Mapper mapper_ = Mapper::None;
   TimeSource timeSource_;
   std::array<uint8_t, 5> rtc_{}, latched_{};

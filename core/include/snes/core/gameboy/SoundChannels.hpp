@@ -4,10 +4,15 @@
 #include <array>
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class SoundChannels {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Signal {
     uint8_t level = 0;
     bool dacEnabled = false, channelEnabled = false;

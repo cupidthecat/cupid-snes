@@ -7,10 +7,15 @@
 #include <cstdint>
 #include <functional>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Host : public Video::Output {
 public:
+  void SerializeState(detail::StateArchive &archive);
   explicit Host(std::function<void()> resetHandheld = {});
   void Reset();
   uint8_t Read(uint32_t address);

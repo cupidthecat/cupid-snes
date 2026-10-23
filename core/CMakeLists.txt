@@ -22,6 +22,12 @@ add_library(snes_core
   src/state/Hg51bState.cpp
   src/state/Cx4State.cpp
   src/state/SuperFxState.cpp
+  src/state/gameboy/CpuState.cpp
+  src/state/gameboy/PeripheralState.cpp
+  src/state/gameboy/CartridgeState.cpp
+  src/state/gameboy/VideoState.cpp
+  src/state/gameboy/AudioState.cpp
+  src/state/gameboy/MachineState.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp

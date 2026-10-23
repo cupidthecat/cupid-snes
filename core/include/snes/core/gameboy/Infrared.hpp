@@ -3,10 +3,15 @@
 
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Infrared {
 public:
+  void SerializeState(detail::StateArchive &archive);
   void Reset() noexcept;
   void SetInput(bool on) noexcept {
     input_ = on;

@@ -10,10 +10,15 @@ namespace snes::core {
 class MemoryBus;
 }
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Adapter final : private Audio::Output {
 public:
+  void SerializeState(detail::StateArchive &archive);
   using AudioSink = std::function<void(int16_t left, int16_t right, uint32_t sampleRate)>;
 
   explicit Adapter(bool secondModel);
@@ -23,6 +28,9 @@ public:
             std::string *error = nullptr);
   void Reset();
   void InitializeStartup(std::shared_ptr<StartupState> state);
+  void SetTimeSource(Cartridge::TimeSource source) {
+    machine_.GameCartridge().SetTimeSource(std::move(source));
+  }
   void SetPal(bool pal) noexcept;
   void Advance(uint32_t masterClocks, bool synchronize = true);
   uint8_t Read(uint32_t address);

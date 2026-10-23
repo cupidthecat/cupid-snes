@@ -4,9 +4,14 @@
 #include <cstdint>
 #include <span>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 class MotionEeprom {
 public:
+  void SerializeState(detail::StateArchive &archive);
   void Reset() noexcept;
   void SetMotion(double x, double y) noexcept;
   uint8_t Read(uint16_t address) const noexcept;

@@ -3,10 +3,15 @@
 
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class ClockedIo {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Bus {
     virtual ~Bus() = default;
     virtual void RequestInterrupt(uint8_t mask) = 0;

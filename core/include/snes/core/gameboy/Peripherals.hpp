@@ -5,10 +5,15 @@
 #include "snes/core/gameboy/Machine.hpp"
 #include "snes/core/gameboy/Video.hpp"
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Peripherals final : public Machine::Devices {
 public:
+  void SerializeState(detail::StateArchive &archive);
   Peripherals(Video::Output &video, Audio::Output &audio) : video_(video), audio_(audio) {}
   void Reset(bool secondModel) override;
   void Reset(bool secondModel, bool preserveAudio) override;
