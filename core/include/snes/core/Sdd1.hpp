@@ -9,6 +9,9 @@
 #include <vector>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class MemoryBus;
 class Sdd1Decoder;
@@ -19,6 +22,8 @@ public:
   ~Sdd1();
 
   void Reset();
+  // The cartridge owns the ROM identity and SRAM contents.
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint32_t address, uint8_t openBus);
   void Write(uint32_t address, uint8_t value);
   void ObserveDmaWrite(uint32_t address, uint8_t value);

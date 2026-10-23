@@ -7,11 +7,15 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class St011 {
 public:
   explicit St011(std::span<uint8_t> ram) : ram_(ram) {}
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint32_t address) const;
   void Write(uint32_t address, uint8_t value);
   std::span<const uint8_t, 81> Board() const {
@@ -33,6 +37,7 @@ class St018 {
 public:
   explicit St018(std::span<uint8_t> ram) : ram_(ram) {}
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint32_t address);
   void Write(uint32_t address, uint8_t value);
   unsigned PendingOutput() const {

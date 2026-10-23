@@ -10,6 +10,9 @@ add_library(snes_core
   src/state/TimingState.cpp
   src/state/InputState.cpp
   src/state/Sha256.cpp
+  src/state/ClockState.cpp
+  src/state/CartridgeMemoryState.cpp
+  src/state/DecoderState.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp

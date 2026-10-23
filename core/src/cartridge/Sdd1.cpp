@@ -1,5 +1,6 @@
 #include "snes/core/Sdd1.hpp"
 #include "snes/core/MemoryBus.hpp"
+#include "snes/core/detail/StateArchive.hpp"
 
 #include <array>
 #include <bit>
@@ -45,6 +46,26 @@ std::optional<size_t> SaveAddress(uint32_t address) {
 
 class Sdd1Decoder {
 public:
+  void SerializeState(detail::StateArchive &archive) {
+    archive.Object(*this, [](auto &fields, auto &decoder) {
+      fields.Number(decoder.inputOffset_);
+      fields.Number(decoder.header_);
+      fields.Bounded(decoder.bitsLeft_, 0u, 8u);
+      fields.Bounded(decoder.pairs_, 0u, 31u);
+      fields.Number(decoder.odd_);
+      fields.Number(decoder.oddPending_);
+      fields.Array(decoder.predictions_, [](auto &predictionFields, auto &prediction) {
+        predictionFields.Bounded(prediction.state, 0u, 32u);
+        predictionFields.Bounded(prediction.bit, 0u, 1u);
+      });
+      fields.Array(decoder.runs_, [](auto &runFields, auto &run) {
+        runFields.Bounded(run.zeros, 0u, 128u);
+        runFields.Number(run.one);
+      });
+      fields.Array(decoder.history_);
+    });
+  }
+
   void Initialize(const std::function<uint8_t(uint32_t)> &reader, uint32_t address) {
     *this = {};
     inputOffset_ = address;
@@ -141,6 +162,20 @@ Sdd1::Sdd1(std::span<const uint8_t> rom, std::span<uint8_t> ram)
     : rom_(rom), ram_(ram), decoder_(std::make_unique<Sdd1Decoder>()) {}
 
 Sdd1::~Sdd1() = default;
+
+void Sdd1::SerializeState(detail::StateArchive &archive) {
+  archive.Expect(uint64_t(rom_.size()));
+  archive.Expect(uint64_t(ram_.size()));
+  archive.Number(hardEnable_);
+  archive.Number(softEnable_);
+  archive.Array(banks_);
+  archive.Array(channels_, [](auto &fields, auto &channel) {
+    fields.Bounded(channel.address, 0u, 0xffffffu);
+    fields.Number(channel.remaining);
+  });
+  archive.Number(streaming_);
+  decoder_->SerializeState(archive);
+}
 
 void Sdd1::Reset() {
   hardEnable_ = softEnable_ = 0;

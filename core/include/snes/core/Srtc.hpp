@@ -9,12 +9,16 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 class Srtc {
 public:
   using Clock = std::function<int64_t()>;
   static constexpr size_t SaveSize = 24;
   explicit Srtc(Clock clock = {});
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void Advance(uint32_t masterClocks);
   void SetPal(bool pal);
   uint8_t Read();
