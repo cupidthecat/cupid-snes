@@ -13,6 +13,7 @@ add_library(snes_core
   src/state/ClockState.cpp
   src/state/CartridgeMemoryState.cpp
   src/state/CartridgeState.cpp
+  src/state/Msu1State.cpp
   src/state/DecoderState.cpp
   src/state/Spc7110State.cpp
   src/state/CommandDspState.cpp
@@ -56,6 +57,8 @@ add_library(snes_core
   src/cartridge/NecDsp.cpp
   src/cartridge/NecDspBoard.cpp
   src/cartridge/Msu1.cpp
+  src/cartridge/msu1/Resource.cpp
+  src/cartridge/msu1/Stream.cpp
   src/cartridge/BsMemory.cpp
   src/cartridge/BroadcastCartridge.cpp
   src/cartridge/Sdd1.cpp

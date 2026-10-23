@@ -4,7 +4,7 @@
 #include <bit>
 
 namespace snes::core::detail {
-std::array<uint8_t, 32> Sha256(std::span<const uint8_t> bytes) {
+void Sha256Hasher::Block(std::span<const uint8_t, 64> input) noexcept {
   constexpr std::array<uint32_t, 64> constants{
       0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
       0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
@@ -16,58 +16,76 @@ std::array<uint8_t, 32> Sha256(std::span<const uint8_t> bytes) {
       0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
       0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
       0xc67178f2};
-  std::array<uint32_t, 8> state{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-  const auto block = [&](std::span<const uint8_t, 64> input) {
-    std::array<uint32_t, 64> words{};
-    for (unsigned index = 0; index < 16; ++index)
-      for (unsigned byte = 0; byte < 4; ++byte)
-        words[index] = (words[index] << 8) | input[index * 4 + byte];
-    for (unsigned index = 16; index < words.size(); ++index) {
-      const auto x = words[index - 15], y = words[index - 2];
-      const auto first = std::rotr(x, 7) ^ std::rotr(x, 18) ^ (x >> 3);
-      const auto second = std::rotr(y, 17) ^ std::rotr(y, 19) ^ (y >> 10);
-      words[index] = words[index - 16] + first + words[index - 7] + second;
-    }
-    auto [a, b, c, d, e, f, g, h] = state;
-    for (unsigned index = 0; index < words.size(); ++index) {
-      const auto sumE = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
-      const auto choice = (e & f) ^ (~e & g);
-      const auto first = h + sumE + choice + constants[index] + words[index];
-      const auto sumA = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
-      const auto majority = (a & b) ^ (a & c) ^ (b & c);
-      h = g;
-      g = f;
-      f = e;
-      e = d + first;
-      d = c;
-      c = b;
-      b = a;
-      a = first + sumA + majority;
-    }
-    const std::array<uint32_t, 8> result{a, b, c, d, e, f, g, h};
-    for (unsigned index = 0; index < state.size(); ++index)
-      state[index] += result[index];
-  };
-  const auto bitLength = uint64_t(bytes.size()) * 8;
+  std::array<uint32_t, 64> words{};
+  for (unsigned index = 0; index < 16; ++index)
+    for (unsigned byte = 0; byte < 4; ++byte)
+      words[index] = (words[index] << 8) | input[index * 4 + byte];
+  for (unsigned index = 16; index < words.size(); ++index) {
+    const auto x = words[index - 15], y = words[index - 2];
+    const auto first = std::rotr(x, 7) ^ std::rotr(x, 18) ^ (x >> 3);
+    const auto second = std::rotr(y, 17) ^ std::rotr(y, 19) ^ (y >> 10);
+    words[index] = words[index - 16] + first + words[index - 7] + second;
+  }
+  auto [a, b, c, d, e, f, g, h] = state_;
+  for (unsigned index = 0; index < words.size(); ++index) {
+    const auto sumE = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
+    const auto choice = (e & f) ^ (~e & g);
+    const auto first = h + sumE + choice + constants[index] + words[index];
+    const auto sumA = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
+    const auto majority = (a & b) ^ (a & c) ^ (b & c);
+    h = g;
+    g = f;
+    f = e;
+    e = d + first;
+    d = c;
+    c = b;
+    b = a;
+    a = first + sumA + majority;
+  }
+  const std::array<uint32_t, 8> result{a, b, c, d, e, f, g, h};
+  for (unsigned index = 0; index < state_.size(); ++index)
+    state_[index] += result[index];
+}
+void Sha256Hasher::Update(std::span<const uint8_t> bytes) noexcept {
+  length_ += uint64_t(bytes.size());
+  if (used_) {
+    const auto count = std::min(bytes.size(), tail_.size() - used_);
+    std::copy_n(bytes.begin(), count, tail_.begin() + used_);
+    used_ += count;
+    bytes = bytes.subspan(count);
+    if (used_ != tail_.size())
+      return;
+    Block(tail_);
+    used_ = 0;
+  }
   while (bytes.size() >= 64) {
-    block(bytes.first<64>());
+    Block(bytes.first<64>());
     bytes = bytes.subspan(64);
   }
-  std::array<uint8_t, 64> tail{};
-  std::copy(bytes.begin(), bytes.end(), tail.begin());
-  tail[bytes.size()] = 0x80;
-  if (bytes.size() >= 56) {
-    block(tail);
-    tail.fill(0);
+  std::copy(bytes.begin(), bytes.end(), tail_.begin());
+  used_ = bytes.size();
+}
+std::array<uint8_t, 32> Sha256Hasher::Finish() const noexcept {
+  auto next = *this;
+  std::fill(next.tail_.begin() + next.used_, next.tail_.end(), 0);
+  next.tail_[next.used_] = 0x80;
+  if (next.used_ >= 56) {
+    next.Block(next.tail_);
+    next.tail_.fill(0);
   }
+  const auto bitLength = length_ * 8;
   for (unsigned byte = 0; byte < 8; ++byte)
-    tail[63 - byte] = uint8_t(bitLength >> (byte * 8));
-  block(tail);
+    next.tail_[63 - byte] = uint8_t(bitLength >> (byte * 8));
+  next.Block(next.tail_);
   std::array<uint8_t, 32> digest{};
-  for (unsigned index = 0; index < state.size(); ++index)
+  for (unsigned index = 0; index < next.state_.size(); ++index)
     for (unsigned byte = 0; byte < 4; ++byte)
-      digest[index * 4 + byte] = uint8_t(state[index] >> (24 - byte * 8));
+      digest[index * 4 + byte] = uint8_t(next.state_[index] >> (24 - byte * 8));
   return digest;
+}
+std::array<uint8_t, 32> Sha256(std::span<const uint8_t> bytes) {
+  Sha256Hasher hasher;
+  hasher.Update(bytes);
+  return hasher.Finish();
 }
 } // namespace snes::core::detail

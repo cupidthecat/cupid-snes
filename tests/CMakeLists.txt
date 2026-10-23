@@ -1,5 +1,13 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_sha256_tests test_sha256.cpp)
+target_link_libraries(snes_sha256_tests PRIVATE snes_core)
+snes_add_check(snes_sha256_tests snes_sha256_tests)
+
+add_executable(snes_msu1_state_tests test_msu1_state.cpp)
+target_link_libraries(snes_msu1_state_tests PRIVATE snes_core)
+snes_add_check(snes_msu1_state_tests snes_msu1_state_tests)
+
 add_executable(snes_state_archive_tests test_state_archive.cpp)
 target_link_libraries(snes_state_archive_tests PRIVATE snes_core)
 snes_add_check(snes_state_archive_tests snes_state_archive_tests)
