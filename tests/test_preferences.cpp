@@ -235,6 +235,16 @@ void LegacyStateHotkeys(const fs::path &directory) {
     rejected = true;
   }
   Check(rejected, "Invalid selected state slot rejects");
+  Write(path, "Cupid-SNES preferences 1\nhotkey.pause.0.key \"" + std::to_string(SDL_SCANCODE_F8) +
+                  "\"\nhotkey.pause.0.modifiers \"0\"\nhotkey.reset.0.key \"" +
+                  std::to_string(SDL_SCANCODE_C) + "\"\nhotkey.reset.0.modifiers \"3\"\n");
+  const auto cheats = PreferencesFile(path).Load();
+  Check(cheats.hotkeys.bindings[size_t(DesktopCommand::Pause)][0].scancode == SDL_SCANCODE_F8 &&
+            cheats.hotkeys.bindings[size_t(DesktopCommand::ToggleCheats)][0].scancode ==
+                SDL_SCANCODE_UNKNOWN &&
+            cheats.hotkeys.bindings[size_t(DesktopCommand::CheatEditor)][0].scancode ==
+                SDL_SCANCODE_UNKNOWN,
+        "Existing assignments suppress colliding new cheat defaults");
 }
 void RecentRequests() {
   Preferences preferences;

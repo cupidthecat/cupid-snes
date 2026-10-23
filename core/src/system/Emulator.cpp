@@ -121,6 +121,7 @@ void Emulator::AddTraceSink(ITraceSink *sink) {
 void Emulator::ReplaceCartridge(Cartridge &&cartridge) {
   InvalidatePreparedRestores();
   StopFrameExecution();
+  cheats_.Forget();
   if (cartridge_)
     if (auto storage = cartridge_->CaptureCx4Storage())
       cx4Storage_ = std::move(*storage);

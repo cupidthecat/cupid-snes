@@ -1050,4 +1050,11 @@ void SuperFx::WriteCpu(uint32_t address, uint8_t value) {
     impl_->ram[Mirror(offset, impl_->ram.size())] = value;
 }
 
+std::optional<size_t> SuperFx::CheatRomOffset(uint32_t address) const {
+  size_t offset = 0;
+  if (impl_->CpuRomAddress(address & 0xffffff, offset))
+    return offset;
+  return {};
+}
+
 } // namespace snes::core

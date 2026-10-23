@@ -39,6 +39,9 @@ struct Session::State {
   std::unique_ptr<BatteryStorage> battery;
   std::unique_ptr<StateStorage> states;
   std::vector<uint8_t> undo, redo;
+  CheatBook cheats;
+  std::filesystem::path cheatPath;
+  std::string cheatError;
 };
 
 Session::Session(core::Emulator::Config config, Outputs outputs,
@@ -200,6 +203,13 @@ void Session::Open(const LaunchRequest &request) {
   next->battery = std::make_unique<BatteryStorage>(request, machine, saveDirectory_);
   next->battery->Load(machine);
   next->states = std::make_unique<StateStorage>(request, stateDirectory_);
+  next->cheatPath = StateStorage(request).Directory() / "cheats.ccht";
+  try {
+    next->cheats = CheatStorage::Read(next->cheatPath, machine.CheatsSystem());
+    machine.SetCheats(next->cheats.Compile(machine.CheatsSystem()));
+  } catch (const std::exception &failure) {
+    next->cheatError = failure.what();
+  }
   machine.AttachVideoOutput(outputs_.video);
   machine.AttachAudioOutput(outputs_.audio);
   machine.AttachInputProvider(outputs_.input);
@@ -210,6 +220,37 @@ void Session::Flush() {
   if (!state_)
     return;
   state_->battery->Flush(*state_->machine);
+}
+
+const CheatBook *Session::Cheats() const noexcept {
+  return state_ ? &state_->cheats : nullptr;
+}
+const std::string &Session::CheatError() const noexcept {
+  static const std::string empty;
+  return state_ ? state_->cheatError : empty;
+}
+std::filesystem::path Session::CheatPath() const {
+  return state_ ? state_->cheatPath : std::filesystem::path{};
+}
+void Session::SaveCheats(CheatBook book, bool replaceUnreadable) {
+  if (!state_)
+    throw std::runtime_error("Cheats require a loaded game");
+  if (!state_->cheatError.empty() && !replaceUnreadable)
+    throw std::runtime_error("Reload the unreadable cheat file or confirm its replacement");
+  const auto system = state_->machine->CheatsSystem();
+  const auto codes = book.Compile(system);
+  CheatStorage::Write(state_->cheatPath, book, system);
+  state_->machine->SetCheats(codes);
+  state_->cheats = std::move(book);
+  state_->cheatError.clear();
+}
+void Session::ReloadCheats() {
+  if (!state_)
+    throw std::runtime_error("Cheats require a loaded game");
+  auto book = CheatStorage::Read(state_->cheatPath, state_->machine->CheatsSystem());
+  state_->machine->SetCheats(book.Compile(state_->machine->CheatsSystem()));
+  state_->cheats = std::move(book);
+  state_->cheatError.clear();
 }
 
 void Session::Close() {

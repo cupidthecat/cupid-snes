@@ -112,6 +112,8 @@ Hotkeys::Hotkeys() {
   set(DesktopCommand::NextSlot, SDL_SCANCODE_F7);
   set(DesktopCommand::UndoState, SDL_SCANCODE_Z, KeyChord::Control);
   set(DesktopCommand::RedoState, SDL_SCANCODE_Y, KeyChord::Control);
+  set(DesktopCommand::CheatEditor, SDL_SCANCODE_C, KeyChord::Control | KeyChord::Shift);
+  set(DesktopCommand::ToggleCheats, SDL_SCANCODE_F8);
 }
 std::optional<DesktopCommand> Hotkeys::Match(const SDL_KeyboardEvent &key) const {
   if (key.type != SDL_EVENT_KEY_DOWN || key.repeat || key.scancode == SDL_SCANCODE_UNKNOWN)

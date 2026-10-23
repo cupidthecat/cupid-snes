@@ -19,6 +19,7 @@
 #include "snes/core/St010.hpp"
 #include "snes/core/St018Processor.hpp"
 #include "snes/core/SuperFx.hpp"
+#include "snes/core/debug/Cheat.hpp"
 #include <memory>
 
 #include <array>
@@ -182,6 +183,9 @@ public:
 
   uint8_t Read(uint32_t cpuAddress, uint8_t openBus = 0xff) const;
   void Write(uint32_t cpuAddress, uint8_t value);
+  void PrepareCheats();
+  void WriteCheat(uint32_t cpuAddress, uint8_t value);
+  void SetHandheldCheats(std::span<const CheatCode> codes);
 
   void ObserveDmaWrite(uint32_t address, uint8_t value);
 
@@ -248,6 +252,7 @@ public:
 
 private:
   void ApplyBiosCompatibility();
+  static size_t MirrorOffset(size_t offset, size_t size);
   void InitializeBroadcast(std::span<const uint8_t> pack = {});
 
   static std::vector<uint8_t> RemoveCopierHeader(std::span<const uint8_t> rom, bool *removed);

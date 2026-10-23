@@ -107,6 +107,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     bool audioMuted = preferences.mute;
     bool preferencesActive = false, preferencesWasPaused = false;
     bool statesActive = false, statesWasPaused = false;
+    bool cheatsActive = false, cheatsWasPaused = false;
     bool errorActive = false, errorWasPaused = false;
     unsigned steps = 0;
     uint64_t presentationTime = 0;
@@ -124,6 +125,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       menu.Update(session.Machine() != nullptr, paused);
       menu.UpdateStates(preferences.stateSlot, session.CanUndoState(), session.CanRedoState());
       ui.SetStatus(session.Machine() ? title : "Ready - Open a game from File");
+      if (!session.CheatError().empty())
+        ui.SetStatus(title + " - Cheat file unavailable; open Tools > Cheats");
     };
     const auto resetPresentation = [&] {
       audio.Clear();
@@ -354,9 +357,10 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
 
     const auto execute = [&](DesktopCommand command) {
       try {
-        if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() ||
-                          ui.StateManager().Active() || ui.ErrorOpen()) &&
-                         command != DesktopCommand::Quit))
+        if (!running ||
+            ((dialogs.Active() || ui.PreferencesEditor().Active() || ui.StateManager().Active() ||
+              ui.CheatsEditor().Active() || ui.ErrorOpen()) &&
+             command != DesktopCommand::Quit))
           return;
         using Command = DesktopCommand;
         if (command >= Command::Recent0 && command <= Command::Recent9) {
@@ -426,6 +430,26 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             return;
           }
           switch (command) {
+          case Command::ToggleCheats: {
+            auto book = *session.Cheats();
+            book.enabled = !book.enabled;
+            session.SaveCheats(std::move(book));
+            ui.SetStatus(session.Cheats()->enabled ? "Cheats enabled" : "Cheats disabled");
+            break;
+          }
+          case Command::CheatEditor:
+            cheatsWasPaused = paused;
+            steps = 0;
+            setPaused(true);
+            try {
+              ui.CheatsEditor().Open(*session.Cheats(), session.Machine()->CheatsSystem(),
+                                     session.CheatPath(), session.CheatError());
+              cheatsActive = true;
+            } catch (...) {
+              setPaused(cheatsWasPaused);
+              throw;
+            }
+            break;
           case Command::QuickSave: {
             if (!runStateOperation("Saving state", false, [&](const auto &operation) {
                   session.SaveState(
@@ -546,7 +570,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             execute(command);
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                    !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
-                   !ui.ErrorOpen()) {
+                   !ui.CheatsEditor().Active() && !ui.ErrorOpen()) {
           try {
             LaunchRequest request;
             request.paths[0] = event.drop.data;
@@ -588,6 +612,28 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         } catch (const std::exception &error) {
           ui.PreferencesEditor().Rejected(error.what());
         }
+      }
+      if (auto changes = ui.CheatsEditor().TakeChanges()) {
+        try {
+          session.SaveCheats(std::move(changes->book), changes->replaceUnreadable);
+          ui.CheatsEditor().Applied(*session.Cheats());
+        } catch (const std::exception &error) {
+          ui.CheatsEditor().Rejected(error.what());
+        }
+      }
+      if (ui.CheatsEditor().TakeReload()) {
+        try {
+          session.ReloadCheats();
+          ui.CheatsEditor().Open(*session.Cheats(), session.Machine()->CheatsSystem(),
+                                 session.CheatPath());
+        } catch (const std::exception &error) {
+          ui.CheatsEditor().Rejected(error.what());
+        }
+      }
+      if (cheatsActive && !ui.CheatsEditor().Active()) {
+        cheatsActive = false;
+        input.ResetSampling();
+        setPaused(cheatsWasPaused);
       }
       if (preferencesActive && !ui.PreferencesEditor().Active()) {
         preferencesActive = false;
@@ -699,7 +745,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       if (SDL_GetWindowRelativeMouseMode(video.Window()) != capture)
         SDL_SetWindowRelativeMouseMode(video.Window(), capture);
       if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
-          ui.StateManager().Active() || ui.ErrorOpen() || ((paused || focusPaused) && !steps)) {
+          ui.StateManager().Active() || ui.CheatsEditor().Active() || ui.ErrorOpen() ||
+          ((paused || focusPaused) && !steps)) {
         if (uiFrame)
           video.Redraw();
         SDL_Delay(2);

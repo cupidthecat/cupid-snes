@@ -152,6 +152,11 @@ void DesktopMenu::Draw(bool enabled) {
     self.Item("Screenshot", C::Screenshot, self.loaded);
     ImGui::EndMenu();
   }
+  if (ImGui::BeginMenu("Tools", enabled)) {
+    self.Item("Cheats...", C::CheatEditor, self.loaded);
+    self.Item("Toggle Cheats", C::ToggleCheats, self.loaded);
+    ImGui::EndMenu();
+  }
   ImGui::EndMainMenuBar();
 }
 

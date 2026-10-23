@@ -17,9 +17,7 @@
 
 namespace snes::core {
 
-namespace {
-
-size_t MirrorOffset(size_t offset, size_t size) {
+size_t Cartridge::MirrorOffset(size_t offset, size_t size) {
   if (size == 0) {
     return 0;
   }
@@ -37,6 +35,8 @@ size_t MirrorOffset(size_t offset, size_t size) {
   }
   return base + offset;
 }
+
+namespace {
 
 bool IsFastRegion(uint32_t cpuAddress) {
   const auto bank = static_cast<uint8_t>(cpuAddress >> 16);

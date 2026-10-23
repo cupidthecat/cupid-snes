@@ -1,6 +1,9 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_cheat_tests
+  snes_cheat_storage_tests
+  snes_cheat_application_tests
   snes_sha256_tests
   snes_msu1_state_tests
   snes_state_archive_tests

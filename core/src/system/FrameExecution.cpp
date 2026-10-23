@@ -81,6 +81,9 @@ FrameStepResult Emulator::FinishFrame() {
   if (videoOutput_)
     videoOutput_->Present(frame);
 
+  if (!cheats_.Empty())
+    cheats_.Refresh([this](uint32_t address, uint8_t value) { bus_.WriteCheat(address, value); });
+
   // Update counters
   masterCycles_ = timing_.MasterClocksElapsed();
   ++frameIndex_;

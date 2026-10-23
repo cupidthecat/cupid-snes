@@ -58,6 +58,15 @@ void MemoryBus::Write(uint32_t address, uint8_t value) {
   writers_[slot](address, value);
 }
 
+void MemoryBus::WriteCheat(uint32_t address, uint8_t value) {
+  address &= 0xffffff;
+  const auto slot = lookup_[address];
+  if (cheatCartridge_ && slot == cartridgeSlot_)
+    cheatCartridge_->WriteCheat(address, value);
+  else
+    writers_[slot](address, value);
+}
+
 // Bus speed calculation
 //
 // Bus cycle duration follows the selected address region.
@@ -146,6 +155,8 @@ void MemoryBus::MapRegions(
 // Reset
 
 void MemoryBus::Reset() {
+  cheatCartridge_ = nullptr;
+  cartridgeSlot_ = 0;
   // Clear all lookup entries to slot 0 (open bus)
   std::memset(lookup_.get(), 0, kAddressSpace);
 
@@ -304,6 +315,8 @@ void MemoryBus::MapCartridge(Cartridge &cart) {
   uint8_t cartSlot = RegisterHandler(
       [&cart](uint32_t addr, uint8_t openBus) -> uint8_t { return cart.Read(addr, openBus); },
       [&cart](uint32_t addr, uint8_t data) { cart.Write(addr, data); });
+  cheatCartridge_ = &cart;
+  cartridgeSlot_ = cartSlot;
 
   // Map cartridge ROM based on mapping type.
   // We map the entire ROM-accessible regions; the Cartridge::Read/Write

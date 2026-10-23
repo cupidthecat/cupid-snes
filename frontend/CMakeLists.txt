@@ -1,6 +1,7 @@
 include(${PROJECT_SOURCE_DIR}/cmake/ImGui.cmake)
 
 add_library(snes_frontend_support STATIC
+  src/cheats/CheatBook.cpp
   src/SdlVideoOutput.cpp
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp
@@ -14,6 +15,7 @@ add_library(snes_frontend_support STATIC
   src/input/InputBindings.cpp
   src/session/Session.cpp
   src/desktop/DesktopMenu.cpp
+  src/desktop/CheatDialog.cpp
   src/desktop/FileDialogs.cpp
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp

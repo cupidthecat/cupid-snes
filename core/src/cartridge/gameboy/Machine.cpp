@@ -1,6 +1,7 @@
 #include "snes/core/gameboy/Machine.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace snes::core::gameboy {
 namespace {
@@ -23,6 +24,7 @@ bool Machine::Load(std::span<const uint8_t> image, std::span<const uint8_t> boot
   }
   if (!cartridge_.Load(image, error))
     return false;
+  cheats_.clear();
   std::copy(boot.begin(), boot.end(), boot_.begin());
   Reset();
   return true;
@@ -72,6 +74,14 @@ uint8_t Machine::ReadMemory(uint16_t address) {
 void Machine::WriteMemory(uint16_t address, uint8_t value) {
   Synchronize();
   WriteData(address, value, Access::Cpu);
+}
+
+void Machine::SetCheats(std::span<const CheatCode> codes) {
+  if (codes.size() > 4096 || std::any_of(codes.begin(), codes.end(),
+                                         [](const auto &code) { return code.address > 0xffff; }))
+    throw std::invalid_argument("Invalid handheld cheat list");
+  std::vector<CheatCode> next(codes.begin(), codes.end());
+  cheats_.swap(next);
 }
 
 void Machine::Advance(unsigned clocks) {
@@ -172,7 +182,7 @@ uint8_t Machine::ReadData(uint16_t address, Access access) {
   }
   if (driven)
     DriveData(address, value);
-  return value;
+  return cheats_.empty() ? value : SubstituteCheat(cheats_, address, value);
 }
 
 void Machine::Write(uint16_t address, uint8_t value) {

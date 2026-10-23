@@ -1,6 +1,7 @@
 // Handheld processor, address bus, timer, and cartridge execution.
 #pragma once
 
+#include "snes/core/debug/Cheat.hpp"
 #include "snes/core/gameboy/Cartridge.hpp"
 #include "snes/core/gameboy/ClockedIo.hpp"
 #include "snes/core/gameboy/Cpu.hpp"
@@ -68,6 +69,7 @@ public:
   void AdvanceHardware(unsigned clocks);
   uint8_t ReadMemory(uint16_t address);
   void WriteMemory(uint16_t address, uint8_t value);
+  void SetCheats(std::span<const CheatCode> codes);
   const Cpu::State &CpuState() const noexcept {
     return cpu_.GetState();
   }
@@ -88,6 +90,7 @@ private:
   Cpu cpu_{*this};
   ClockedIo timer_{*this};
   Cartridge cartridge_;
+  std::vector<CheatCode> cheats_;
   std::shared_ptr<StartupState> startup_ = std::make_shared<StartupState>();
   std::array<uint8_t, 8192> ram_{};
   std::array<uint8_t, 127> highRam_{};

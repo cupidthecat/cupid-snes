@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -35,6 +36,7 @@ public:
   static bool Selects(uint32_t cpuAddress) noexcept;
   uint8_t ReadCpu(uint32_t cpuAddress, uint8_t openBus = 0xff);
   void WriteCpu(uint32_t cpuAddress, uint8_t value);
+  std::optional<size_t> CheatBiosOffset(uint32_t address) const;
   bool CpuIrqPending() const noexcept;
   std::span<uint8_t> Psram() noexcept;
   std::vector<uint8_t> FlashMetadata() const;

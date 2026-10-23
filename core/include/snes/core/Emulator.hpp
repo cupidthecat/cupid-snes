@@ -241,6 +241,8 @@ public:
   bool Initialized() const noexcept {
     return initialized_;
   }
+  CheatSystem CheatsSystem() const noexcept;
+  void SetCheats(std::span<const CheatCode> codes);
 
 private:
   /// Wire all subsystem callbacks and map the bus.
@@ -300,6 +302,7 @@ private:
   AutoJoypad autoJoypad_;
   Timing timing_;
   MemoryBus bus_;
+  CheatEngine cheats_;
   std::unique_ptr<SnesCpu> cpu_; // created in InitSubsystems()
   std::unique_ptr<detail::ExecutionContext> execution_;
   bool singleInstruction_ = false;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CheatDialog.hpp"
 #include "DesktopMenu.hpp"
 #include "PreferencesDialog.hpp"
 #include "StateManagerDialog.hpp"
@@ -23,6 +24,7 @@ public:
   DesktopMenu &Menu();
   PreferencesDialog &PreferencesEditor();
   StateManagerDialog &StateManager();
+  CheatDialog &CheatsEditor();
   void SetStatus(std::string text);
   void ShowError(std::string text);
   bool ErrorOpen() const;

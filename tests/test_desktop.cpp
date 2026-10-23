@@ -57,6 +57,7 @@ void CustomShortcuts() {
   using snes::frontend::Hotkeys;
   using snes::frontend::KeyChord;
   Hotkeys hotkeys;
+  hotkeys.bindings[size_t(DesktopCommand::ToggleCheats)] = {};
   auto &pause = hotkeys.bindings[size_t(DesktopCommand::Pause)];
   pause = {{{SDL_SCANCODE_F8, KeyChord::Control | KeyChord::Shift},
             {SDL_SCANCODE_F8, KeyChord::Alt},

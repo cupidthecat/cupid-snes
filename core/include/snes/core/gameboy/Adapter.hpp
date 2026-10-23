@@ -27,6 +27,9 @@ public:
   bool Load(std::span<const uint8_t> image, std::span<const uint8_t> boot,
             std::string *error = nullptr);
   void Reset();
+  void SetCheats(std::span<const CheatCode> codes) {
+    machine_.SetCheats(codes);
+  }
   void InitializeStartup(std::shared_ptr<StartupState> state);
   void SetTimeSource(Cartridge::TimeSource source) {
     machine_.GameCartridge().SetTimeSource(std::move(source));

@@ -1,5 +1,17 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_cheat_tests test_cheats.cpp)
+target_link_libraries(snes_cheat_tests PRIVATE snes_core)
+snes_add_check(snes_cheat_tests snes_cheat_tests)
+
+add_executable(snes_cheat_storage_tests test_cheat_storage.cpp)
+target_link_libraries(snes_cheat_storage_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_cheat_storage_tests snes_cheat_storage_tests)
+
+add_executable(snes_cheat_application_tests test_cheat_application.cpp)
+target_link_libraries(snes_cheat_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
+snes_add_check(snes_cheat_application_tests snes_cheat_application_tests)
+
 add_executable(snes_sha256_tests test_sha256.cpp)
 target_link_libraries(snes_sha256_tests PRIVATE snes_core)
 snes_add_check(snes_sha256_tests snes_sha256_tests)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LaunchRequest.hpp"
+#include "cheats/CheatBook.hpp"
 #include "settings/ConsoleDevices.hpp"
 #include "snes/core/Emulator.hpp"
 #include "storage/StateStorage.hpp"
@@ -41,6 +42,11 @@ public:
   void SetStateDirectory(std::filesystem::path directory,
                          const std::function<void()> &persist = {});
   const StateStorage *States() const noexcept;
+  const CheatBook *Cheats() const noexcept;
+  const std::string &CheatError() const noexcept;
+  std::filesystem::path CheatPath() const;
+  void SaveCheats(CheatBook book, bool replaceUnreadable = false);
+  void ReloadCheats();
   void SaveState(const std::filesystem::path &path, const core::StateOperation &operation = {});
   void LoadState(const std::filesystem::path &path, const core::StateOperation &operation = {});
   bool CanUndoState() const noexcept;

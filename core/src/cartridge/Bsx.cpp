@@ -219,6 +219,13 @@ void Bsx::WriteCpu(uint32_t address, uint8_t value) {
   }
 }
 
+std::optional<size_t> Bsx::CheatBiosOffset(uint32_t address) const {
+  const auto target = impl_->Locate(address & 0xffffff);
+  if (target.kind == Impl::Region::Bios && !impl_->bios.empty())
+    return Fold(target.offset, impl_->bios.size());
+  return {};
+}
+
 bool Bsx::LoadStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> payload) {
   return impl_->receiver.LoadStream(channel, sequence, payload);
 }
