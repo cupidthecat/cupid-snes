@@ -9,6 +9,7 @@
 
 namespace snes::core {
 class Emulator;
+class Cartridge;
 
 struct MemoryRegion {
   std::string key, label;
@@ -26,9 +27,13 @@ public:
   static std::vector<MemoryRegion> Regions(const Emulator &machine);
   static std::vector<uint8_t> Read(const Emulator &machine, std::string_view region, size_t offset,
                                    size_t count);
+  // Current mapped storage and readable mapper state. Consuming or unknown ports are unavailable.
+  static std::optional<uint8_t> PeekCpu(const Emulator &machine, uint32_t address);
 
 private:
   struct View;
   static std::vector<View> Views(const Emulator &machine);
+  static std::optional<uint8_t> PeekCartridge(const Cartridge &cartridge, uint32_t address,
+                                              uint8_t openBus);
 };
 } // namespace snes::core

@@ -43,6 +43,11 @@ void CpuDebuggerDialog::Open(CpuDebugger &debugger) {
   char address[8];
   std::snprintf(address, sizeof(address), "%02X%04X", unsigned(r.pb), unsigned(r.pc));
   first_ = until_ = address;
+  disassemblyAddress_ = address;
+  disassemblyStart_ = (uint32_t(r.pb) << 16) | r.pc;
+  followPc_ = cpuWidths_ = true;
+  selectedAddress_.reset();
+  focusClose_ = focusDisassembly_ = focusBreakpoint_ = focusFirst_ = false;
   last_.clear();
 }
 void CpuDebuggerDialog::Attempt(const std::function<void()> &action) {
@@ -63,6 +68,10 @@ void CpuDebuggerDialog::Breakpoints() {
   const bool running = debugger_->CurrentMode() != CpuDebugger::Mode::Paused;
   ImGui::BeginDisabled(running);
   ImGui::SetNextItemWidth(100);
+  if (focusFirst_) {
+    ImGui::SetKeyboardFocusHere();
+    focusFirst_ = false;
+  }
   ImGui::InputText("First (hex)", &first_);
   ImGui::SameLine();
   ImGui::SetNextItemWidth(100);
@@ -73,6 +82,10 @@ void CpuDebuggerDialog::Breakpoints() {
   ImGui::SameLine();
   ImGui::Checkbox("Write", &write_);
   ImGui::SameLine();
+  if (focusBreakpoint_ && !selected_) {
+    ImGui::SetKeyboardFocusHere();
+    focusBreakpoint_ = false;
+  }
   if (ImGui::Button("Add breakpoint"))
     Attempt([&] {
       const auto first = Address(first_);
@@ -86,10 +99,16 @@ void CpuDebuggerDialog::Breakpoints() {
       debugger_->EnableBreakpoint(*selected_, !debugger_->Breakpoints()[*selected_].enabled);
     });
   ImGui::SameLine();
+  if (focusBreakpoint_) {
+    ImGui::SetKeyboardFocusHere();
+    focusBreakpoint_ = false;
+  }
   if (ImGui::Button("Remove selected"))
     Attempt([&] {
       debugger_->RemoveBreakpoint(*selected_);
       selected_.reset();
+      focusFirst_ = true;
+      focusBreakpoint_ = false;
     });
   ImGui::EndDisabled();
   if (ImGui::BeginTable("Breakpoints", 3,
@@ -115,9 +134,19 @@ void CpuDebuggerDialog::Breakpoints() {
       ImGui::PopID();
       ++index;
     }
+    TableNavigation(focusBreakpoint_);
     ImGui::EndTable();
   }
   ImGui::EndDisabled();
+}
+void CpuDebuggerDialog::TableNavigation(bool &previous) {
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+      ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+    if (ImGui::GetIO().KeyShift)
+      previous = true;
+    else
+      focusClose_ = true;
+  }
 }
 void CpuDebuggerDialog::Trace() {
   const bool running = debugger_->CurrentMode() != CpuDebugger::Mode::Paused;
@@ -168,6 +197,103 @@ void CpuDebuggerDialog::Trace() {
         else
           ImGui::Text("%02X", unsigned(entry.value));
       }
+    ImGui::EndTable();
+  }
+}
+void CpuDebuggerDialog::Disassembly() {
+  const auto r = debugger_->Registers();
+  const auto pc = (uint32_t(r.pb) << 16) | r.pc;
+  const bool running = debugger_->CurrentMode() != CpuDebugger::Mode::Paused;
+  ImGui::BeginDisabled(running);
+  ImGui::SetNextItemWidth(100);
+  ImGui::InputText("Disassembly address (hex)", &disassemblyAddress_);
+  ImGui::SameLine();
+  if (ImGui::Button("Go to disassembly"))
+    Attempt([&] {
+      disassemblyStart_ = Address(disassemblyAddress_);
+      followPc_ = false;
+      selectedAddress_.reset();
+    });
+  if (ImGui::Checkbox("Follow PC", &followPc_))
+    selectedAddress_.reset();
+  ImGui::SameLine();
+  ImGui::Checkbox("Use CPU widths", &cpuWidths_);
+  if (cpuWidths_)
+    width_ = {r.e, bool(r.p & 0x20), bool(r.p & 0x10)};
+  ImGui::BeginDisabled(cpuWidths_);
+  ImGui::Checkbox("E", &width_.emulation);
+  if (width_.emulation)
+    width_.accumulator8 = width_.index8 = true;
+  ImGui::SameLine();
+  ImGui::BeginDisabled(width_.emulation);
+  ImGui::Checkbox("M (8-bit A)", &width_.accumulator8);
+  ImGui::SameLine();
+  ImGui::Checkbox("X (8-bit index)", &width_.index8);
+  ImGui::EndDisabled();
+  ImGui::EndDisabled();
+  ImGui::BeginDisabled(!selectedAddress_);
+  if (ImGui::Button("Add execution breakpoint"))
+    Attempt([&] {
+      debugger_->AddBreakpoint({*selectedAddress_, *selectedAddress_});
+      selected_ = debugger_->Breakpoints().size() - 1;
+    });
+  ImGui::SameLine();
+  if (focusDisassembly_) {
+    ImGui::SetKeyboardFocusHere();
+    focusDisassembly_ = false;
+  }
+  if (ImGui::Button("Run to selected"))
+    Attempt([&] { debugger_->Run(*selectedAddress_); });
+  ImGui::EndDisabled();
+  ImGui::EndDisabled();
+  ImGui::TextWrapped("Linear preview uses one E/M/X setting. Status changes and control flow can "
+                     "alter following instruction lengths. Unavailable bytes end the page.");
+  std::vector<CpuInstruction> rows;
+  try {
+    rows = debugger_->Disassemble(followPc_ ? pc : disassemblyStart_, 64, width_);
+  } catch (const std::exception &error) {
+    Rejected(error.what());
+  }
+  if (ImGui::BeginTable("Disassembly rows", 4,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                        {0, 0})) {
+    ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize(">FFFFFF").x);
+    ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("88 88 88 88").x + 12);
+    ImGui::TableSetupColumn("Instruction", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("Unavailable").x);
+    ImGui::TableSetupColumn("Operand", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
+    for (const auto &row : rows) {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::PushID(int(row.address));
+      char address[16];
+      std::snprintf(address, sizeof(address), "%c%06X",
+                    row.address == pc && debugger_->AtBoundary() ? '>' : ' ',
+                    unsigned(row.address));
+      if (ImGui::Selectable(address, selectedAddress_ == row.address,
+                            ImGuiSelectableFlags_SpanAllColumns))
+        selectedAddress_ = row.address;
+      ImGui::TableNextColumn();
+      std::string bytes;
+      for (unsigned index = 0; index < row.length; ++index) {
+        char text[8];
+        if (row.bytes[index])
+          std::snprintf(text, sizeof(text), "%02X ", unsigned(*row.bytes[index]));
+        else
+          std::snprintf(text, sizeof(text), "?? ");
+        bytes += text;
+      }
+      ImGui::TextUnformatted(bytes.c_str());
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(row.mnemonic.c_str());
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(row.operand.c_str());
+      ImGui::PopID();
+    }
+    TableNavigation(focusDisassembly_);
     ImGui::EndTable();
   }
 }
@@ -237,6 +363,10 @@ void CpuDebuggerDialog::Draw() {
           Breakpoints();
           ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Disassembly")) {
+          Disassembly();
+          ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Trace")) {
           Trace();
           ImGui::EndTabItem();
@@ -250,6 +380,10 @@ void CpuDebuggerDialog::Draw() {
                             ImGuiWindowFlags_NoNav))
         ImGui::TextWrapped("%s", message_.c_str());
       ImGui::EndChild();
+    }
+    if (focusClose_) {
+      ImGui::SetKeyboardFocusHere();
+      focusClose_ = false;
     }
     if (ImGui::Button("Close", {100, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
       active_ = false;

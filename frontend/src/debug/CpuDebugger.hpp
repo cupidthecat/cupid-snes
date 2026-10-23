@@ -1,4 +1,5 @@
 #pragma once
+#include "Disassembly.hpp"
 
 #include "snes/core/Emulator.hpp"
 #include "snes/core/Processor65816.hpp"
@@ -67,6 +68,8 @@ public:
   }
   const TraceEntry &TraceAt(size_t index) const;
   std::string ExportTrace() const;
+  std::vector<CpuInstruction> Disassemble(uint32_t address, size_t count,
+                                          CpuDecodeWidth width) const;
   static constexpr size_t traceCapacity = 16384;
   static constexpr size_t breakpointLimit = 256;
 

@@ -39,6 +39,8 @@ using BusWriteHandler = std::function<void(uint32_t addr, uint8_t data)>;
 
 // MemoryBus - 24-bit address space with fast lookup dispatch
 class MemoryBus : public ICpuBus {
+  friend class MemoryInspector;
+
 public:
   MemoryBus();
   ~MemoryBus() override;

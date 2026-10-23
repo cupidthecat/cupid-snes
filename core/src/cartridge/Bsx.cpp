@@ -198,6 +198,26 @@ uint8_t Bsx::ReadCpu(uint32_t address, uint8_t openBus) {
   }
 }
 
+std::optional<uint8_t> Bsx::PeekCpu(uint32_t address, uint8_t openBus) const {
+  const auto target = impl_->Locate(address & 0xffffff);
+  switch (target.kind) {
+  case Impl::Region::Radio:
+    return std::nullopt;
+  case Impl::Region::Mapper:
+    return impl_->ReadMapper(unsigned(target.offset));
+  case Impl::Region::Bios:
+    return impl_->bios.empty() ? openBus : impl_->bios[Fold(target.offset, impl_->bios.size())];
+  case Impl::Region::Psram:
+    return impl_->psram[target.offset];
+  case Impl::Region::Sram:
+    return impl_->sram.empty() ? openBus : impl_->sram[Fold(target.offset, impl_->sram.size())];
+  case Impl::Region::Pack:
+    return impl_->ReadPack(target.offset, openBus);
+  default:
+    return openBus;
+  }
+}
+
 void Bsx::WriteCpu(uint32_t address, uint8_t value) {
   address &= 0xffffff;
   const auto target = impl_->Locate(address);

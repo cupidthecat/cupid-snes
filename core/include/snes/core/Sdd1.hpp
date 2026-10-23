@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -25,6 +26,7 @@ public:
   // The cartridge owns the ROM identity and SRAM contents.
   void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint32_t address, uint8_t openBus);
+  std::optional<uint8_t> Peek(uint32_t address, uint8_t openBus) const;
   void Write(uint32_t address, uint8_t value);
   void ObserveDmaWrite(uint32_t address, uint8_t value);
   static void MapCpu(MemoryBus &bus, uint8_t slot, bool hasRam);

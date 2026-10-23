@@ -1,5 +1,6 @@
 #include "CpuDebugger.hpp"
 #include "snes/core/SnesCpu.hpp"
+#include "snes/core/debug/MemoryInspection.hpp"
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -27,6 +28,23 @@ uint64_t CpuDebugger::Clock() const noexcept {
 }
 bool CpuDebugger::AtBoundary() const noexcept {
   return machine_.AtInstructionBoundary();
+}
+std::vector<CpuInstruction> CpuDebugger::Disassemble(uint32_t address, size_t count,
+                                                     CpuDecodeWidth width) const {
+  Address(address);
+  if (count > 256)
+    throw std::length_error("Disassembly pages contain at most 256 rows");
+  std::vector<CpuInstruction> result;
+  result.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    result.push_back(Decode65816(address, width, [this](uint32_t target) {
+      return core::MemoryInspector::PeekCpu(machine_, target);
+    }));
+    address = result.back().next;
+    if (!result.back().available)
+      break;
+  }
+  return result;
 }
 void CpuDebugger::RequirePaused() const {
   if (mode_ != Mode::Paused)

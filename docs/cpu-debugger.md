@@ -23,3 +23,11 @@ Pause the debugger and enable **Capture trace** on the Trace tab. The next Step 
 The trace retains the most recent 16,384 entries and reports how many older entries were overwritten. Clear trace resets both counters. Capture runs only while debugger controls execute the machine.
 
 **Export trace** writes a tab-separated file in the current game's state folder under `traces`. It contains master clocks, addresses and bytes, plus registers for boundary rows. Rows run from the oldest retained entry to the newest. Failed exports leave the window available for retry.
+
+## Disassembly
+
+The Disassembly tab decodes all 256 console CPU opcodes from mapped memory. Follow PC tracks the current program address. Enter an address and choose Go to disassembly to inspect another location. Select a row to add an execution breakpoint or run to its address.
+
+Use CPU widths takes E, M and X from the current CPU state. Turn it off to select the widths manually. Emulation mode forces byte-sized accumulator and index operands. Each page uses one width setting; instructions that change status or control flow can change the lengths of subsequent instructions. Step to a new CPU boundary or adjust the widths to inspect that code. Block-move operands show source bank followed by destination bank.
+
+Peeks read current mapped storage without executing hardware, polling input, changing data latches or consuming device streams. Work RAM mirrors, cartridge ROM/RAM, active mapper windows and supported coprocessor storage retain their current mapping. Console I/O, private processor ports and consuming reads are unavailable. A missing byte appears as `??` and ends the page. No replacement opcode is invented for an unavailable address.

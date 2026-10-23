@@ -1,5 +1,9 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_disassembly_tests test_disassembly.cpp)
+target_link_libraries(snes_disassembly_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_disassembly_tests snes_disassembly_tests)
+
 add_executable(snes_cpu_debugger_tests test_cpu_debugger.cpp)
 target_link_libraries(snes_cpu_debugger_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_cpu_debugger_tests snes_cpu_debugger_tests)

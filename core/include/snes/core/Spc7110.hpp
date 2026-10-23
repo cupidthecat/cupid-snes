@@ -14,6 +14,8 @@ namespace detail {
 class StateArchive;
 }
 class Spc7110 {
+  friend class MemoryInspector;
+
 public:
   using Clock = std::function<int64_t()>;
   Spc7110(std::span<const uint8_t> rom, bool rtc, Clock clock = {});

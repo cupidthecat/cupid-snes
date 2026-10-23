@@ -235,6 +235,34 @@ uint8_t Sdd1::Read(uint32_t address, uint8_t openBus) {
   return ReadMmc(address);
 }
 
+std::optional<uint8_t> Sdd1::Peek(uint32_t address, uint8_t openBus) const {
+  address &= 0xffffff;
+  if ((address & 0x40fff0) == 0x4800) {
+    const auto port = address & 15;
+    if (port == 0)
+      return hardEnable_;
+    if (port == 1)
+      return softEnable_;
+    if (port >= 4 && port <= 7)
+      return banks_[port - 4];
+    return ReadRom(0x4800 | port);
+  }
+  if (const auto offset = SaveAddress(address); offset && !ram_.empty())
+    return ram_[Mirror(*offset, ram_.size())];
+  if ((address & 0x408000) == 0x008000) {
+    const auto mirror = address & 0x800000 ? 3 : 1;
+    if (banks_[mirror] & 0x80)
+      address &= ~0x200000u;
+    return ReadRom(((address >> 1) & 0x1f8000) | (address & 0x7fff));
+  }
+  if ((address & 0xc00000) != 0xc00000)
+    return openBus;
+  for (unsigned channel = 0; channel < channels_.size(); ++channel)
+    if ((hardEnable_ & softEnable_ & (1u << channel)) && channels_[channel].address == address)
+      return std::nullopt;
+  return ReadMmc(address);
+}
+
 void Sdd1::Write(uint32_t address, uint8_t value) {
   address &= 0xffffff;
   if ((address & 0x40fff0) == 0x4800) {

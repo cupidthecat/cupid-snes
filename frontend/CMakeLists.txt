@@ -5,6 +5,7 @@ add_library(snes_frontend_support STATIC
   src/debug/RamSearch.cpp
   src/debug/MemoryTools.cpp
   src/debug/CpuDebugger.cpp
+  src/debug/Disassembly.cpp
   src/SdlVideoOutput.cpp
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp

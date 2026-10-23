@@ -15,9 +15,11 @@ using namespace snes::tests::desktop;
 using namespace snes::frontend;
 namespace fs = std::filesystem;
 namespace {
+fs::path failurePictures;
 struct View {
   bool active = false, paused = false, focused = false, editing = false;
   float tabX = 0, tabY = 0;
+  float rowX = 0, rowY = 0;
   std::string selectedTab;
 };
 View Observe(SDL_WindowID id, const char *control = "", const char *tab = "",
@@ -44,6 +46,12 @@ View Observe(SDL_WindowID id, const char *control = "", const char *tab = "",
           const auto id = ImHashStr(control, 0, tabs->SelectedTabId);
           result.focused |= context.NavId == id;
           result.editing |= context.ActiveId == id;
+          if (auto *table =
+                  ImGui::TableFindByID(ImHashStr("Disassembly rows", 0, tabs->SelectedTabId))) {
+            result.rowX = table->OuterRect.Min.x + 20;
+            result.rowY = table->OuterRect.Min.y +
+                          (ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2) * 1.5f;
+          }
           for (auto &item : tabs->Tabs) {
             const std::string_view name = ImGui::TabBarGetTabName(tabs, &item);
             if (item.ID == tabs->SelectedTabId)
@@ -76,6 +84,8 @@ void Focus(SDL_WindowID window, const char *control) {
     std::fprintf(stderr, "Cannot focus debugger control: %s, nav=%08X active=%08X window=%s\n",
                  control, g.NavId, g.ActiveId, g.NavWindow ? g.NavWindow->Name : "");
   });
+  if (!failurePictures.empty())
+    Observe(window, "", "", failurePictures / "failure.bmp");
   throw std::runtime_error("Debugger controls accept keyboard navigation");
 }
 void Activate(SDL_WindowID window, const char *control) {
@@ -111,6 +121,7 @@ std::string Read(const fs::path &path) {
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 void Workflow(const fs::path &directory, const fs::path &pictures) {
+  failurePictures = pictures;
   auto image = snes::tests::cartridge_state::Image(0x20, 2, 32768);
   constexpr uint8_t program[]{0xa9, 0x5a, 0x8f, 0x34, 0x12, 0x7e, 0xea, 0x80, 0xf7};
   std::copy(std::begin(program), std::end(program), image.begin());
@@ -155,7 +166,22 @@ void Workflow(const fs::path &directory, const fs::path &pictures) {
       std::this_thread::sleep_for(std::chrono::milliseconds(150));
       Key(window, SDL_SCANCODE_F10);
       Key(window, SDL_SCANCODE_F10);
+      Tab(window, "Disassembly");
+      SetText(window, "Disassembly address (hex)", "1000000");
+      Activate(window, "Go to disassembly");
+      SetText(window, "Disassembly address (hex)", "008000");
+      Activate(window, "Go to disassembly");
+      if (!pictures.empty())
+        Observe(window, "", "", pictures / "cpu-disassembly.bmp");
+      const auto disassembly = Observe(window);
+      Check(disassembly.rowY > 0, "Disassembly has a visible instruction table");
+      OnMain([&] {
+        SDL_WarpMouseInWindow(SDL_GetWindowFromID(window), disassembly.rowX, disassembly.rowY);
+      });
+      Click(window, disassembly.rowX, disassembly.rowY);
+      Activate(window, "Add execution breakpoint");
       Tab(window, "Breakpoints");
+      Activate(window, "Remove selected");
       SetText(window, "First (hex)", "1000000");
       Activate(window, "Add breakpoint");
       SetText(window, "First (hex)", "7E1234");

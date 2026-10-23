@@ -35,6 +35,7 @@ public:
   void Advance(uint32_t masterClocks, bool synchronizeProcessor = true);
   static bool Selects(uint32_t cpuAddress) noexcept;
   uint8_t ReadCpu(uint32_t cpuAddress, uint8_t openBus = 0xff);
+  std::optional<uint8_t> PeekCpu(uint32_t address, uint8_t openBus) const;
   void WriteCpu(uint32_t cpuAddress, uint8_t value);
   std::optional<size_t> CheatBiosOffset(uint32_t address) const;
   bool CpuIrqPending() const noexcept;
