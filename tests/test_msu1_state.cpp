@@ -189,41 +189,47 @@ void CachedMediaChanges() {
     Select(chip, 1);
     (void)chip.Read(0x2001);
     (void)chip.Clock();
-    const auto saved = Capture(chip);
-    Check(Capture(chip) == saved, "Warm the media identity cache");
     const auto path = pcm ? media.Track(1) : media.Data();
     const auto timestamp = std::filesystem::last_write_time(path);
-    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
-    file.seekp(pcm ? 10000 : 19000);
-    file.put(char(0x71));
-    file.close();
-    Check(bool(file), "Modify media beyond the emulated read cache");
-    std::filesystem::last_write_time(path, timestamp);
-    const auto changed = Capture(chip);
-    const size_t key = pcm ? 8331 : 78;
-    if (std::equal(saved.begin() + key, saved.begin() + key + 32, changed.begin() + key)) {
-      if (!pcm) {
-        Seek(chip, 19000);
-        std::fprintf(stderr, "Held data byte after mutation: %u (expected 113)\n",
-                     unsigned(chip.Read(0x2001)));
-      }
-      Msu1 fresh;
-      Check(fresh.Open(media.rom), "Open a fresh media identity witness");
-      Select(fresh, 1);
-      const auto reopened = Capture(fresh);
-      std::fprintf(stderr, "Unchanged media identity after mutation; fresh handle differs: %u\n",
-                   unsigned(!std::equal(saved.begin() + key, saved.begin() + key + 32,
-                                        reopened.begin() + key)));
+    for (unsigned edit = 0; edit < 32; ++edit) {
+      position = unsigned(pcm) * 100 + edit;
+      const auto saved = Capture(chip);
+      Check(Capture(chip) == saved, "Warm the media identity cache");
+      const auto value = uint8_t(0x71 ^ edit);
+      std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+      file.seekp(pcm ? 10000 : 19000);
+      file.put(char(value));
+      file.close();
+      Check(bool(file), "Modify media beyond the emulated read cache");
+      std::filesystem::last_write_time(path, timestamp);
+      const auto changed = Capture(chip);
+      const size_t key = pcm ? 8331 : 78;
+      if (std::equal(saved.begin() + key, saved.begin() + key + 32, changed.begin() + key)) {
+        if (!pcm) {
+          Seek(chip, 19000);
+          std::fprintf(stderr, "Held data byte after mutation: %u (expected %u)\n",
+                       unsigned(chip.Read(0x2001)), unsigned(value));
+        }
+        Msu1 fresh;
+        Check(fresh.Open(media.rom), "Open a fresh media identity witness");
+        Select(fresh, 1);
+        const auto reopened = Capture(fresh);
+        std::fprintf(stderr, "Unchanged media identity after mutation; fresh handle differs: %u\n",
+                     unsigned(!std::equal(saved.begin() + key, saved.begin() + key + 32,
+                                          reopened.begin() + key)));
 #ifdef _WIN32
-      const auto timesAfter = FileTimes(path);
-      std::fprintf(stderr, "File times: saved write-count %lld, current write %lld, change %lld\n",
-                   (long long)timestamp.time_since_epoch().count(), (long long)timesAfter[0],
-                   (long long)timesAfter[1]);
+        const auto timesAfter = FileTimes(path);
+        std::fprintf(stderr,
+                     "File times: saved write-count %lld, current write %lld, change %lld\n",
+                     (long long)timestamp.time_since_epoch().count(), (long long)timesAfter[0],
+                     (long long)timesAfter[1]);
 #endif
-    }
-    Check(changed != saved,
+      }
+      Check(
+          changed != saved,
           "Changed bytes invalidate a cached digest even with the same size and modification time");
-    Reject(chip, saved);
+      Reject(chip, saved);
+    }
   }
 }
 void BusyMedia() {
