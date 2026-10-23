@@ -32,106 +32,112 @@
 namespace snes::core {
 
 class AutoJoypad {
-public:
-  AutoJoypad();
-  ~AutoJoypad() = default;
+  public:
+    AutoJoypad();
+    ~AutoJoypad() = default;
 
-  /// Reset all state to power-on defaults.
-  void Reset();
-  void SerializeState(detail::StateArchive &archive);
+    /// Reset all state to power-on defaults.
+    void Reset();
+    void SerializeState(detail::StateArchive& archive);
 
-  // Timing interface
+    // Timing interface
 
-  /// Called every 128 master clocks by the timing system.
-  /// Implements the 34-step state machine (counter 0..33).
-  /// @param h     Current H counter (master clocks, 0..hperiod-1)
-  /// @param v     Current V counter (scanline, 0..vperiod-1)
-  /// @param vdisp First VBlank scanline (225 or 240)
-  /// @param aligned256 True on the global 256-clock divider edge.
-  void Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256);
+    /// Called every 128 master clocks by the timing system.
+    /// Implements the 34-step state machine (counter 0..33).
+    /// @param h     Current H counter (master clocks, 0..hperiod-1)
+    /// @param v     Current V counter (scanline, 0..vperiod-1)
+    /// @param vdisp First VBlank scanline (225 or 240)
+    /// @param aligned256 True on the global 256-clock divider edge.
+    void Tick128(uint16_t h, uint16_t v, uint16_t vdisp, bool aligned256);
 
-  /// Called at V=0 (start of frame) to reset polling state.
-  /// Resets the polling counter to inactive at scanline zero.
-  void FrameBegin();
+    /// Called at V=0 (start of frame) to reset polling state.
+    /// Resets the polling counter to inactive at scanline zero.
+    void FrameBegin();
 
-  // $4200 NMITIMEN interaction
+    // $4200 NMITIMEN interaction
 
-  /// Set the auto-joypad poll enable flag (NMITIMEN bit 0).
-  /// If disabled during active polling (counter >= 2), aborts polling.
-  void SetAutoJoypadPoll(bool enabled);
+    /// Set the auto-joypad poll enable flag (NMITIMEN bit 0).
+    /// If disabled during active polling (counter >= 2), aborts polling.
+    void SetAutoJoypadPoll(bool enabled);
 
-  /// Returns the current auto-joypad poll enable state.
-  bool AutoJoypadPollEnabled() const noexcept {
-    return autoJoypadPoll_;
-  }
+    /// Returns the current auto-joypad poll enable state.
+    bool AutoJoypadPollEnabled() const noexcept {
+        return autoJoypadPoll_;
+    }
 
-  // Input source
+    // Input source
 
-  /// Snapshot a player's buttons (0 through 7) when the latch rises.
-  using InputCallback = std::function<InputState(int player)>;
-  void SetInputCallback(InputCallback cb) {
-    ports_.SetPadCallback(std::move(cb));
-  }
-  ControllerPorts &Ports() noexcept {
-    return ports_;
-  }
-  void SetManualLatch(bool high) {
-    manualLatch_ = high;
-    ports_.SetLatch(manualLatch_ || autoLatch_);
-  }
+    /// Snapshot a player's buttons (0 through 7) when the latch rises.
+    using InputCallback = std::function<InputState(int player)>;
 
-  // Output registers ($4218-$421F)
+    void SetInputCallback(InputCallback cb) {
+        ports_.SetPadCallback(std::move(cb));
+    }
 
-  uint16_t Joy1() const noexcept {
-    return joy1_;
-  }
-  uint16_t Joy2() const noexcept {
-    return joy2_;
-  }
-  uint16_t Joy3() const noexcept {
-    return joy3_;
-  }
-  uint16_t Joy4() const noexcept {
-    return joy4_;
-  }
+    ControllerPorts& Ports() noexcept {
+        return ports_;
+    }
 
-  // Status
+    void SetManualLatch(bool high) {
+        manualLatch_ = high;
+        ports_.SetLatch(manualLatch_ || autoLatch_);
+    }
 
-  /// Current state machine counter (0-33; 33 = inactive).
-  uint8_t Counter() const noexcept {
-    return counter_;
-  }
+    // Output registers ($4218-$421F)
 
-  /// Returns true if auto-joypad polling is enabled AND actively in progress.
-  /// Used for HVBJOY ($4212) bit 0.
-  bool IsPolling() const noexcept {
-    return autoJoypadPoll_ && counter_ < 33;
-  }
+    uint16_t Joy1() const noexcept {
+        return joy1_;
+    }
 
-  // Utility
+    uint16_t Joy2() const noexcept {
+        return joy2_;
+    }
 
-  /// Convert an InputState to the 16-bit SNES joypad register format.
-  /// D-pad opposition is enforced (Up+Down → neither, Left+Right → neither).
-  static uint16_t InputStateToSnesFormat(const InputState &input);
+    uint16_t Joy3() const noexcept {
+        return joy3_;
+    }
 
-private:
-  bool autoJoypadPoll_ = false; ///< NMITIMEN bit 0
-  uint8_t counter_ = 33;        ///< State machine (0..33; 33 = inactive)
+    uint16_t Joy4() const noexcept {
+        return joy4_;
+    }
 
-  // Controller packets and the two sources of the shared latch line.
-  ControllerPorts ports_;
-  bool manualLatch_ = false;
-  bool autoLatch_ = false;
+    // Status
 
-  // Two serial data bits per controller port.
-  uint8_t port1Data_ = 0;
-  uint8_t port2Data_ = 0;
+    /// Current state machine counter (0-33; 33 = inactive).
+    uint8_t Counter() const noexcept {
+        return counter_;
+    }
 
-  // Output registers
-  uint16_t joy1_ = 0;
-  uint16_t joy2_ = 0;
-  uint16_t joy3_ = 0;
-  uint16_t joy4_ = 0;
+    /// Returns true if auto-joypad polling is enabled AND actively in progress.
+    /// Used for HVBJOY ($4212) bit 0.
+    bool IsPolling() const noexcept {
+        return autoJoypadPoll_ && counter_ < 33;
+    }
+
+    // Utility
+
+    /// Convert an InputState to the 16-bit SNES joypad register format.
+    /// D-pad opposition is enforced (Up+Down → neither, Left+Right → neither).
+    static uint16_t InputStateToSnesFormat(const InputState& input);
+
+  private:
+    bool autoJoypadPoll_ = false; ///< NMITIMEN bit 0
+    uint8_t counter_ = 33;        ///< State machine (0..33; 33 = inactive)
+
+    // Controller packets and the two sources of the shared latch line.
+    ControllerPorts ports_;
+    bool manualLatch_ = false;
+    bool autoLatch_ = false;
+
+    // Two serial data bits per controller port.
+    uint8_t port1Data_ = 0;
+    uint8_t port2Data_ = 0;
+
+    // Output registers
+    uint16_t joy1_ = 0;
+    uint16_t joy2_ = 0;
+    uint16_t joy3_ = 0;
+    uint16_t joy4_ = 0;
 };
 
 } // namespace snes::core

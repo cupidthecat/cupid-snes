@@ -6,9 +6,10 @@
 
 namespace snes::tests {
 struct HashVector {
-  size_t size;
-  std::string_view digest;
+    size_t size;
+    std::string_view digest;
 };
+
 inline constexpr std::array<HashVector, 21> StreamHashVectors{{
     {0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
     {1, "19581e27de7ced00ff1ce50b2047e7a567c76b1cbaebabe5ef03f7c3017bb5b7"},

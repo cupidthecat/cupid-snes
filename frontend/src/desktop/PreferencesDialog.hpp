@@ -7,19 +7,19 @@
 
 namespace snes::frontend {
 class PreferencesDialog {
-public:
-  PreferencesDialog();
-  ~PreferencesDialog();
-  void Open(const Preferences &current, const std::filesystem::path &file);
-  bool ProcessEvent(const SDL_Event &event);
-  void Draw();
-  bool Active() const noexcept;
-  std::optional<Preferences> TakeChanges();
-  void Applied();
-  void Rejected(std::string error);
+  public:
+    PreferencesDialog();
+    ~PreferencesDialog();
+    void Open(const Preferences& current, const std::filesystem::path& file);
+    bool ProcessEvent(const SDL_Event& event);
+    void Draw();
+    bool Active() const noexcept;
+    std::optional<Preferences> TakeChanges();
+    void Applied();
+    void Rejected(std::string error);
 
-private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 } // namespace snes::frontend

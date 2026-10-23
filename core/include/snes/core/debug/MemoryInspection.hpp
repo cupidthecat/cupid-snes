@@ -12,28 +12,28 @@ class Emulator;
 class Cartridge;
 
 struct MemoryRegion {
-  std::string key, label;
-  size_t size = 0;
-  uint32_t base = 0;
-  std::optional<uint32_t> cheatBase;
-  CheatSystem cheatSystem = CheatSystem::Console;
-  bool readOnly = false;
+    std::string key, label;
+    size_t size = 0;
+    uint32_t base = 0;
+    std::optional<uint32_t> cheatBase;
+    CheatSystem cheatSystem = CheatSystem::Console;
+    bool readOnly = false;
 };
 
 class MemoryInspector {
-public:
-  // Read current storage without clocking devices, polling input or reading I/O ports.
-  // Offsets are physical bytes in the named region. Words use little-endian byte order.
-  static std::vector<MemoryRegion> Regions(const Emulator &machine);
-  static std::vector<uint8_t> Read(const Emulator &machine, std::string_view region, size_t offset,
-                                   size_t count);
-  // Current mapped storage and readable mapper state. Consuming or unknown ports are unavailable.
-  static std::optional<uint8_t> PeekCpu(const Emulator &machine, uint32_t address);
+  public:
+    // Read current storage without clocking devices, polling input or reading I/O ports.
+    // Offsets are physical bytes in the named region. Words use little-endian byte order.
+    static std::vector<MemoryRegion> Regions(const Emulator& machine);
+    static std::vector<uint8_t> Read(const Emulator& machine, std::string_view region,
+                                     size_t offset, size_t count);
+    // Current mapped storage and readable mapper state. Consuming or unknown ports are unavailable.
+    static std::optional<uint8_t> PeekCpu(const Emulator& machine, uint32_t address);
 
-private:
-  struct View;
-  static std::vector<View> Views(const Emulator &machine);
-  static std::optional<uint8_t> PeekCartridge(const Cartridge &cartridge, uint32_t address,
-                                              uint8_t openBus);
+  private:
+    struct View;
+    static std::vector<View> Views(const Emulator& machine);
+    static std::optional<uint8_t> PeekCartridge(const Cartridge& cartridge, uint32_t address,
+                                                uint8_t openBus);
 };
 } // namespace snes::core

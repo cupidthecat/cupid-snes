@@ -39,159 +39,164 @@ using BusWriteHandler = std::function<void(uint32_t addr, uint8_t data)>;
 
 // MemoryBus - 24-bit address space with fast lookup dispatch
 class MemoryBus : public ICpuBus {
-  friend class MemoryInspector;
+    friend class MemoryInspector;
 
-public:
-  MemoryBus();
-  ~MemoryBus() override;
+  public:
+    MemoryBus();
+    ~MemoryBus() override;
 
-  // Non-copyable (owns 16 MB+ of heap data)
-  MemoryBus(const MemoryBus &) = delete;
-  MemoryBus &operator=(const MemoryBus &) = delete;
+    // Non-copyable (owns 16 MB+ of heap data)
+    MemoryBus(const MemoryBus&) = delete;
+    MemoryBus& operator=(const MemoryBus&) = delete;
 
-  // ICpuBus interface - these are what SnesCpu calls
-  uint8_t Read(uint32_t address) override;
-  uint8_t ReadCpu(uint32_t address) override;
-  void Write(uint32_t address, uint8_t value) override;
-  uint8_t Speed(uint32_t address) const override;
-  // Host cheat writes use mapped devices without replacing the CPU data latch.
-  void WriteCheat(uint32_t address, uint8_t value);
-  // Observes mapped CPU and DMA accesses. Host cheat writes are excluded.
-  void SetAccessObserver(std::function<void(uint32_t, uint8_t, bool)> observer) {
-    accessObserver_ = std::move(observer);
-  }
+    // ICpuBus interface - these are what SnesCpu calls
+    uint8_t Read(uint32_t address) override;
+    uint8_t ReadCpu(uint32_t address) override;
+    void Write(uint32_t address, uint8_t value) override;
+    uint8_t Speed(uint32_t address) const override;
+    // Host cheat writes use mapped devices without replacing the CPU data latch.
+    void WriteCheat(uint32_t address, uint8_t value);
 
-  // Handler registration
+    // Observes mapped CPU and DMA accesses. Host cheat writes are excluded.
+    void SetAccessObserver(std::function<void(uint32_t, uint8_t, bool)> observer) {
+        accessObserver_ = std::move(observer);
+    }
 
-  /// Register a read/write handler pair and get back a slot ID (1-255).
-  /// Returns 0 on failure (all slots occupied).
-  uint8_t RegisterHandler(BusReadHandler reader, BusWriteHandler writer);
+    // Handler registration
 
-  /// Map a rectangular region of the address space to a handler slot.
-  /// bankLo/bankHi are inclusive bank numbers (0x00-0xFF).
-  /// addrLo/addrHi are inclusive offsets within each bank (0x0000-0xFFFF).
-  void MapRange(uint8_t bankLo, uint8_t bankHi, uint16_t addrLo, uint16_t addrHi, uint8_t slotId);
+    /// Register a read/write handler pair and get back a slot ID (1-255).
+    /// Returns 0 on failure (all slots occupied).
+    uint8_t RegisterHandler(BusReadHandler reader, BusWriteHandler writer);
 
-  /// Convenience: register + map in one call.  Returns the slot ID.
-  uint8_t Map(uint8_t bankLo, uint8_t bankHi, uint16_t addrLo, uint16_t addrHi,
-              BusReadHandler reader, BusWriteHandler writer);
+    /// Map a rectangular region of the address space to a handler slot.
+    /// bankLo/bankHi are inclusive bank numbers (0x00-0xFF).
+    /// addrLo/addrHi are inclusive offsets within each bank (0x0000-0xFFFF).
+    void MapRange(uint8_t bankLo, uint8_t bankHi, uint16_t addrLo, uint16_t addrHi, uint8_t slotId);
 
-  /// Map multiple disjoint bank ranges to the same handler slot.
-  /// Useful for WRAM mirrors, PPU, APU, etc.
-  void MapRegions(std::initializer_list<std::tuple<uint8_t, uint8_t, uint16_t, uint16_t>> regions,
-                  uint8_t slotId);
+    /// Convenience: register + map in one call.  Returns the slot ID.
+    uint8_t Map(uint8_t bankLo, uint8_t bankHi, uint16_t addrLo, uint16_t addrHi,
+                BusReadHandler reader, BusWriteHandler writer);
 
-  // Standard SNES component mapping helpers
+    /// Map multiple disjoint bank ranges to the same handler slot.
+    /// Useful for WRAM mirrors, PPU, APU, etc.
+    void MapRegions(std::initializer_list<std::tuple<uint8_t, uint8_t, uint16_t, uint16_t>> regions,
+                    uint8_t slotId);
 
-  /// Map a Cartridge's ROM and SRAM into the bus.  Must be called after
-  /// Reset() or whenever the cartridge changes.
-  void MapCartridge(Cartridge &cart);
+    // Standard SNES component mapping helpers
 
-  /// Map the 128 KB WRAM to its standard bus locations.
-  void MapWram();
+    /// Map a Cartridge's ROM and SRAM into the bus.  Must be called after
+    /// Reset() or whenever the cartridge changes.
+    void MapCartridge(Cartridge& cart);
 
-  /// Map CPU I/O registers ($4016-$4017, $4200-$421F) into the bus.
-  /// The CpuIoRegisters object must outlive the bus mapping.
-  void MapCpuIo(CpuIoRegisters &cpuIo);
+    /// Map the 128 KB WRAM to its standard bus locations.
+    void MapWram();
 
-  /// Map DMA channel registers ($4300-$437F) into the bus.
-  /// The DmaController object must outlive the bus mapping.
-  void MapDma(DmaController &dma);
+    /// Map CPU I/O registers ($4016-$4017, $4200-$421F) into the bus.
+    /// The CpuIoRegisters object must outlive the bus mapping.
+    void MapCpuIo(CpuIoRegisters& cpuIo);
 
-  /// Map PPU registers ($2100-$213F) into the bus.
-  /// The Ppu object must outlive the bus mapping.
-  void MapPpu(Ppu &ppu);
+    /// Map DMA channel registers ($4300-$437F) into the bus.
+    /// The DmaController object must outlive the bus mapping.
+    void MapDma(DmaController& dma);
 
-  /// Map APU communication ports ($2140-$217F) into the bus.
-  /// The Smp object must outlive the bus mapping.
-  /// $2140-$217F are all mirrors of 4 ports (addr & 3).
-  void MapApu(Smp &smp);
+    /// Map PPU registers ($2100-$213F) into the bus.
+    /// The Ppu object must outlive the bus mapping.
+    void MapPpu(Ppu& ppu);
 
-  /// Full reset: clear all mappings, reset WRAM, reset I/O state.
-  void Reset();
-  // Reset CPU-facing latches without changing memory or address dispatch.
-  void ResetRegisters();
-  void SerializeState(detail::StateArchive &archive);
+    /// Map APU communication ports ($2140-$217F) into the bus.
+    /// The Smp object must outlive the bus mapping.
+    /// $2140-$217F are all mirrors of 4 ports (addr & 3).
+    void MapApu(Smp& smp);
 
-  // WRAM direct access (for DMA, WMDATA, testing)
-  uint8_t *WramData() noexcept {
-    return wram_.data();
-  }
-  const uint8_t *WramData() const noexcept {
-    return wram_.data();
-  }
-  static constexpr size_t WramSize = 0x20000; // 128 KB
+    /// Full reset: clear all mappings, reset WRAM, reset I/O state.
+    void Reset();
+    // Reset CPU-facing latches without changing memory or address dispatch.
+    void ResetRegisters();
+    void SerializeState(detail::StateArchive& archive);
 
-  // CPU I/O state - MEMSEL (bus speed) flag
-  void SetFastRom(bool enabled) noexcept {
-    fastRom_ = enabled;
-  }
-  bool FastRom() const noexcept {
-    return fastRom_;
-  }
+    // WRAM direct access (for DMA, WMDATA, testing)
+    uint8_t* WramData() noexcept {
+        return wram_.data();
+    }
 
-  // Open bus MDR
-  //
-  // Every handler receives the same memory data latch. Reads of internal
-  // CPU registers ($00-3F,$80-BF:$4000-$43FF) preserve its value; other
-  // reads and all writes update it. Partially driven registers combine
-  // their own bits with this latch, even after another internal I/O read.
-  uint8_t OpenBus() const noexcept {
-    return mdr_;
-  }
-  void SetOpenBus(uint8_t v) noexcept override {
-    mdr_ = v;
-  }
+    const uint8_t* WramData() const noexcept {
+        return wram_.data();
+    }
 
-  // WMDATA address register ($2181-$2183 write, $2180 read/write)
-  uint32_t WmdataAddress() const noexcept {
-    return wmdataAddr_;
-  }
+    static constexpr size_t WramSize = 0x20000; // 128 KB
 
-private:
-  // 16 MB flat lookup: address → handler slot (0 = unmapped / open bus)
-  static constexpr size_t kAddressSpace = 16 * 1024 * 1024; // 0x100'0000
-  std::unique_ptr<uint8_t[]> lookup_;
+    // CPU I/O state - MEMSEL (bus speed) flag
+    void SetFastRom(bool enabled) noexcept {
+        fastRom_ = enabled;
+    }
 
-  // Handler slots (slot 0 is the open-bus fallback)
-  static constexpr int kMaxSlots = 256;
-  BusReadHandler readers_[kMaxSlots];
-  BusWriteHandler writers_[kMaxSlots];
-  int nextSlot_ = 1; // next free slot (0 is reserved for open bus)
-  Cartridge *cheatCartridge_ = nullptr;
-  uint8_t cartridgeSlot_ = 0;
-  std::function<void(uint32_t, uint8_t, bool)> accessObserver_;
+    bool FastRom() const noexcept {
+        return fastRom_;
+    }
 
-  // 128 KB WRAM
-  std::array<uint8_t, WramSize> wram_{};
+    // Open bus MDR
+    //
+    // Every handler receives the same memory data latch. Reads of internal
+    // CPU registers ($00-3F,$80-BF:$4000-$43FF) preserve its value; other
+    // reads and all writes update it. Partially driven registers combine
+    // their own bits with this latch, even after another internal I/O read.
+    uint8_t OpenBus() const noexcept {
+        return mdr_;
+    }
 
-  // WMDATA address auto-increment register
-  uint32_t wmdataAddr_ = 0;
+    void SetOpenBus(uint8_t v) noexcept override {
+        mdr_ = v;
+    }
 
-  // Open bus - global Memory Data Register
-  uint8_t mdr_ = 0;
+    // WMDATA address register ($2181-$2183 write, $2180 read/write)
+    uint32_t WmdataAddress() const noexcept {
+        return wmdataAddr_;
+    }
 
-  // CPU I/O: MEMSEL ($420D) bit 0 - ROM access speed toggle
-  bool fastRom_ = false;
+  private:
+    // 16 MB flat lookup: address → handler slot (0 = unmapped / open bus)
+    static constexpr size_t kAddressSpace = 16 * 1024 * 1024; // 0x100'0000
+    std::unique_ptr<uint8_t[]> lookup_;
 
-  // Internal handler IDs cached for WRAM so we can re-map quickly
-  uint8_t wramSlotLo_ = 0;   // for bank mirrors ($00-3F,$80-BF:0000-1FFF)
-  uint8_t wramSlotFull_ = 0; // for full banks ($7E-7F)
-  uint8_t wmdataSlot_ = 0;   // for WMDATA register
+    // Handler slots (slot 0 is the open-bus fallback)
+    static constexpr int kMaxSlots = 256;
+    BusReadHandler readers_[kMaxSlots];
+    BusWriteHandler writers_[kMaxSlots];
+    int nextSlot_ = 1; // next free slot (0 is reserved for open bus)
+    Cartridge* cheatCartridge_ = nullptr;
+    uint8_t cartridgeSlot_ = 0;
+    std::function<void(uint32_t, uint8_t, bool)> accessObserver_;
 
-  // Built-in handlers
+    // 128 KB WRAM
+    std::array<uint8_t, WramSize> wram_{};
 
-  // WRAM handlers - low mirror (8KB per bank, 0000-1FFF)
-  uint8_t readWramLow(uint32_t addr, uint8_t openBus);
-  void writeWramLow(uint32_t addr, uint8_t data);
+    // WMDATA address auto-increment register
+    uint32_t wmdataAddr_ = 0;
 
-  // WRAM handlers - full 128KB banks ($7E-7F)
-  uint8_t readWramFull(uint32_t addr, uint8_t openBus);
-  void writeWramFull(uint32_t addr, uint8_t data);
+    // Open bus - global Memory Data Register
+    uint8_t mdr_ = 0;
 
-  // WMDATA register ($2180 R/W, $2181-$2183 W)
-  uint8_t readWmdata(uint32_t addr, uint8_t openBus);
-  void writeWmdata(uint32_t addr, uint8_t data);
+    // CPU I/O: MEMSEL ($420D) bit 0 - ROM access speed toggle
+    bool fastRom_ = false;
+
+    // Internal handler IDs cached for WRAM so we can re-map quickly
+    uint8_t wramSlotLo_ = 0;   // for bank mirrors ($00-3F,$80-BF:0000-1FFF)
+    uint8_t wramSlotFull_ = 0; // for full banks ($7E-7F)
+    uint8_t wmdataSlot_ = 0;   // for WMDATA register
+
+    // Built-in handlers
+
+    // WRAM handlers - low mirror (8KB per bank, 0000-1FFF)
+    uint8_t readWramLow(uint32_t addr, uint8_t openBus);
+    void writeWramLow(uint32_t addr, uint8_t data);
+
+    // WRAM handlers - full 128KB banks ($7E-7F)
+    uint8_t readWramFull(uint32_t addr, uint8_t openBus);
+    void writeWramFull(uint32_t addr, uint8_t data);
+
+    // WMDATA register ($2180 R/W, $2181-$2183 W)
+    uint8_t readWmdata(uint32_t addr, uint8_t openBus);
+    void writeWmdata(uint32_t addr, uint8_t data);
 };
 
 } // namespace snes::core

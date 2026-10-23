@@ -26,83 +26,86 @@
 namespace snes::frontend {
 
 class SdlVideoOutput final : public snes::core::IVideoOutput {
-public:
-  struct Presentation {
-    int scale = 3;
-    bool aspectCorrection = false, integerScaling = true, linearFilter = false;
-  };
-  /// Configuration for window creation.
-  struct Config : Presentation {
-    std::string title = "SNES Emulator";
-    int baseW = 256; // Base width  (SNES visible)
-    int baseH = 224; // Base height (non-overscan)
-    bool vsync = true;
-    bool deferPresentation = false;
-    bool hidden = false;
-  };
+  public:
+    struct Presentation {
+        int scale = 3;
+        bool aspectCorrection = false, integerScaling = true, linearFilter = false;
+    };
 
-  explicit SdlVideoOutput();
-  explicit SdlVideoOutput(const Config &config);
-  ~SdlVideoOutput() override;
+    /// Configuration for window creation.
+    struct Config : Presentation {
+        std::string title = "SNES Emulator";
+        int baseW = 256; // Base width  (SNES visible)
+        int baseH = 224; // Base height (non-overscan)
+        bool vsync = true;
+        bool deferPresentation = false;
+        bool hidden = false;
+    };
 
-  // Non-copyable / non-movable (owns SDL resources)
-  SdlVideoOutput(const SdlVideoOutput &) = delete;
-  SdlVideoOutput &operator=(const SdlVideoOutput &) = delete;
+    explicit SdlVideoOutput();
+    explicit SdlVideoOutput(const Config& config);
+    ~SdlVideoOutput() override;
 
-  // IVideoOutput
-  void Present(const snes::core::VideoFrame &frame) override;
-  void PresentPending();
-  void Redraw();
-  void ShowIdle();
-  void ClearPicture();
-  void SaveScreenshot(const std::filesystem::path &path) const;
-  void SetPresentation(const Presentation &options);
-  void SetOverlay(std::function<void()> draw, int topInset = 0, int bottomInset = 0);
+    // Non-copyable / non-movable (owns SDL resources)
+    SdlVideoOutput(const SdlVideoOutput&) = delete;
+    SdlVideoOutput& operator=(const SdlVideoOutput&) = delete;
 
-  // State queries
+    // IVideoOutput
+    void Present(const snes::core::VideoFrame& frame) override;
+    void PresentPending();
+    void Redraw();
+    void ShowIdle();
+    void ClearPicture();
+    void SaveScreenshot(const std::filesystem::path& path) const;
+    void SetPresentation(const Presentation& options);
+    void SetOverlay(std::function<void()> draw, int topInset = 0, int bottomInset = 0);
 
-  /// Returns true if Init() succeeded (window + renderer created).
-  bool IsValid() const noexcept {
-    return renderer_ != nullptr;
-  }
+    // State queries
 
-  /// Access the underlying SDL window (e.g. for event handling).
-  SDL_Window *Window() const noexcept {
-    return window_;
-  }
-  SDL_Renderer *Renderer() const noexcept {
-    return renderer_;
-  }
+    /// Returns true if Init() succeeded (window + renderer created).
+    bool IsValid() const noexcept {
+        return renderer_ != nullptr;
+    }
 
-  /// Returns the SDL window ID (for matching SDL_WindowEvent).
-  uint32_t WindowID() const noexcept;
-  VideoViewport InputViewport() const;
-  void SetGunAim(std::array<snes::core::LightGunState, 2> aim, unsigned count) {
-    gunAim_ = aim;
-    gunCount_ = count;
-  }
+    /// Access the underlying SDL window (e.g. for event handling).
+    SDL_Window* Window() const noexcept {
+        return window_;
+    }
 
-private:
-  /// (Re-)create the streaming texture to match the given dimensions.
-  void EnsureTexture(uint32_t w, uint32_t h);
+    SDL_Renderer* Renderer() const noexcept {
+        return renderer_;
+    }
 
-  SDL_Window *window_ = nullptr;
-  SDL_Renderer *renderer_ = nullptr;
-  SDL_Texture *texture_ = nullptr;
+    /// Returns the SDL window ID (for matching SDL_WindowEvent).
+    uint32_t WindowID() const noexcept;
+    VideoViewport InputViewport() const;
 
-  // Current texture dimensions (recreated if frame size changes)
-  uint32_t texW_ = 0;
-  uint32_t texH_ = 0;
-  std::array<snes::core::LightGunState, 2> gunAim_{};
-  unsigned gunCount_ = 0;
-  bool deferredPresentation_ = false;
-  bool pending_ = false;
-  uint64_t submittedFrames_ = 0;
-  std::vector<uint32_t> lastPixels_;
-  bool aspectCorrection_ = false, integerScaling_ = true, linearFilter_ = false;
-  int scale_ = 3, baseWidth_ = 256, baseHeight_ = 224;
-  std::function<void()> overlay_;
-  int topInset_ = 0, bottomInset_ = 0;
+    void SetGunAim(std::array<snes::core::LightGunState, 2> aim, unsigned count) {
+        gunAim_ = aim;
+        gunCount_ = count;
+    }
+
+  private:
+    /// (Re-)create the streaming texture to match the given dimensions.
+    void EnsureTexture(uint32_t w, uint32_t h);
+
+    SDL_Window* window_ = nullptr;
+    SDL_Renderer* renderer_ = nullptr;
+    SDL_Texture* texture_ = nullptr;
+
+    // Current texture dimensions (recreated if frame size changes)
+    uint32_t texW_ = 0;
+    uint32_t texH_ = 0;
+    std::array<snes::core::LightGunState, 2> gunAim_{};
+    unsigned gunCount_ = 0;
+    bool deferredPresentation_ = false;
+    bool pending_ = false;
+    uint64_t submittedFrames_ = 0;
+    std::vector<uint32_t> lastPixels_;
+    bool aspectCorrection_ = false, integerScaling_ = true, linearFilter_ = false;
+    int scale_ = 3, baseWidth_ = 256, baseHeight_ = 224;
+    std::function<void()> overlay_;
+    int topInset_ = 0, bottomInset_ = 0;
 };
 
 } // namespace snes::frontend

@@ -22,68 +22,69 @@
 namespace snes::frontend {
 
 class SdlAudioOutput final : public snes::core::IAudioOutput {
-public:
-  struct Config {
-    int sampleRate = snes::core::AudioTiming::SampleRate;
-    int channels = 2; // stereo
-    std::string deviceName;
-  };
+  public:
+    struct Config {
+        int sampleRate = snes::core::AudioTiming::SampleRate;
+        int channels = 2; // stereo
+        std::string deviceName;
+    };
 
-  explicit SdlAudioOutput();
-  explicit SdlAudioOutput(const Config &config);
-  ~SdlAudioOutput() override;
+    explicit SdlAudioOutput();
+    explicit SdlAudioOutput(const Config& config);
+    ~SdlAudioOutput() override;
 
-  // Non-copyable / non-movable (owns SDL resources)
-  SdlAudioOutput(const SdlAudioOutput &) = delete;
-  SdlAudioOutput &operator=(const SdlAudioOutput &) = delete;
+    // Non-copyable / non-movable (owns SDL resources)
+    SdlAudioOutput(const SdlAudioOutput&) = delete;
+    SdlAudioOutput& operator=(const SdlAudioOutput&) = delete;
 
-  // IAudioOutput
-  void Submit(const snes::core::AudioBuffer &buffer) override;
+    // IAudioOutput
+    void Submit(const snes::core::AudioBuffer& buffer) override;
 
-  // Playback control
+    // Playback control
 
-  /// Request playback after at least 60 ms of input has been queued.
-  void Resume();
+    /// Request playback after at least 60 ms of input has been queued.
+    void Resume();
 
-  /// Pause the audio device.
-  void Pause();
+    /// Pause the audio device.
+    void Pause();
 
-  // Stop playback and discard host audio before a pause, reset or game change.
-  void Clear();
-  void SetVolume(int percent, bool muted = false);
-  // Select a fresh paused stream, retaining the old stream if opening fails.
-  void SelectDevice(const std::string &name);
-  static std::vector<std::string> DeviceNames();
+    // Stop playback and discard host audio before a pause, reset or game change.
+    void Clear();
+    void SetVolume(int percent, bool muted = false);
+    // Select a fresh paused stream, retaining the old stream if opening fails.
+    void SelectDevice(const std::string& name);
+    static std::vector<std::string> DeviceNames();
 
-  /// Returns true if the audio stream was created successfully.
-  bool IsValid() const noexcept {
-    return stream_ != nullptr;
-  }
+    /// Returns true if the audio stream was created successfully.
+    bool IsValid() const noexcept {
+        return stream_ != nullptr;
+    }
 
-  /// Returns queued bytes in the input format (stereo float).
-  int QueuedBytes() const;
+    /// Returns queued bytes in the input format (stereo float).
+    int QueuedBytes() const;
 
-  /// Whether the stream can currently supply samples to the device.
-  bool HasPendingOutput() const;
+    /// Whether the stream can currently supply samples to the device.
+    bool HasPendingOutput() const;
 
-  /// The frame loop should wait while enough audio is already queued.
-  bool NeedsSamples() const;
+    /// The frame loop should wait while enough audio is already queued.
+    bool NeedsSamples() const;
 
-  bool IsPlaying() const noexcept {
-    return playing_;
-  }
-  double QueuedMilliseconds() const;
+    bool IsPlaying() const noexcept {
+        return playing_;
+    }
 
-private:
-  void StartIfReady();
+    double QueuedMilliseconds() const;
 
-  SDL_AudioStream *stream_ = nullptr;
-  int sampleRate_ = snes::core::AudioTiming::SampleRate;
-  int targetQueuedBytes_ = 0;
-  bool playbackRequested_ = false;
-  bool playing_ = false;
-  int volume_ = 100;
-  bool muted_ = false;
+  private:
+    void StartIfReady();
+
+    SDL_AudioStream* stream_ = nullptr;
+    int sampleRate_ = snes::core::AudioTiming::SampleRate;
+    int targetQueuedBytes_ = 0;
+    bool playbackRequested_ = false;
+    bool playing_ = false;
+    int volume_ = 100;
+    bool muted_ = false;
 };
 
 } // namespace snes::frontend

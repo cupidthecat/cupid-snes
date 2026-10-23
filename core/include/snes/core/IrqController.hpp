@@ -47,152 +47,160 @@ class StateArchive;
 }
 
 class IrqController {
-public:
-  IrqController();
+  public:
+    IrqController();
 
-  /// Reset all state to power-on defaults.
-  void Reset();
-  void SerializeState(detail::StateArchive &archive);
+    /// Reset all state to power-on defaults.
+    void Reset();
+    void SerializeState(detail::StateArchive& archive);
 
-  // Periodic polling - called every 4 master clocks by the timing system
+    // Periodic polling - called every 4 master clocks by the timing system
 
-  /// Evaluate NMI and IRQ conditions based on current counters.
-  /// @param h       Current H counter (master clocks, 0..hperiod-1)
-  /// @param v       Current V counter (scanline, 0..vperiod-1)
-  /// @param vdisp   First VBlank scanline (225 or 240)
-  /// @param hperiod Width of the previous scanline in master clocks
-  /// @param vperiod Scanline count of the previous field
-  void Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod, uint16_t vperiod = 262);
+    /// Evaluate NMI and IRQ conditions based on current counters.
+    /// @param h       Current H counter (master clocks, 0..hperiod-1)
+    /// @param v       Current V counter (scanline, 0..vperiod-1)
+    /// @param vdisp   First VBlank scanline (225 or 240)
+    /// @param hperiod Width of the previous scanline in master clocks
+    /// @param vperiod Scanline count of the previous field
+    void Poll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t hperiod, uint16_t vperiod = 262);
 
-  /// Reevaluate only the timer condition after a timer register write.
-  void PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t vperiod = 262);
+    /// Reevaluate only the timer condition after a timer register write.
+    void PollTimer(uint16_t h, uint16_t v, uint16_t hperiod, uint16_t vperiod = 262);
 
-  // NMITIMEN ($4200) write handler
+    // NMITIMEN ($4200) write handler
 
-  /// Called when $4200 is written.  Updates enable flags and handles
-  /// edge cases (NMI enable rising edge while NMI line is already active,
-  /// IRQ mode changes, irqLock).
-  void NmitimenUpdate(uint8_t data);
+    /// Called when $4200 is written.  Updates enable flags and handles
+    /// edge cases (NMI enable rising edge while NMI line is already active,
+    /// IRQ mode changes, irqLock).
+    void NmitimenUpdate(uint8_t data);
 
-  // Register read hooks - called by CpuIoRegisters
+    // Register read hooks - called by CpuIoRegisters
 
-  /// $4210 RDNMI - returns true if NMI flag is set, then performs
-  /// read-and-clear with hold protection (flag is NOT cleared if hold
-  /// is still active).
-  bool Rdnmi();
+    /// $4210 RDNMI - returns true if NMI flag is set, then performs
+    /// read-and-clear with hold protection (flag is NOT cleared if hold
+    /// is still active).
+    bool Rdnmi();
 
-  /// $4211 TIMEUP - returns true if IRQ flag is set, then performs
-  /// read-and-clear with hold protection.
-  bool Timeup();
+    /// $4211 TIMEUP - returns true if IRQ flag is set, then performs
+    /// read-and-clear with hold protection.
+    bool Timeup();
 
-  // CPU lastCycle() interface
+    // CPU lastCycle() interface
 
-  /// Test if NMI should fire.  Returns true and clears the transition
-  /// flag.  The caller should then assert NMI on the CPU.
-  bool NmiTest();
+    /// Test if NMI should fire.  Returns true and clears the transition
+    /// flag.  The caller should then assert NMI on the CPU.
+    bool NmiTest();
 
-  /// Test if IRQ should fire.  Returns true if the IRQ transition is
-  /// pending AND the I flag is clear.  Clears the transition flag
-  /// regardless. @param iFlagClear  true if the CPU's I flag is cleared
-  bool IrqTest(bool iFlagClear);
+    /// Test if IRQ should fire.  Returns true if the IRQ transition is
+    /// pending AND the I flag is clear.  Clears the transition flag
+    /// regardless. @param iFlagClear  true if the CPU's I flag is cleared
+    bool IrqTest(bool iFlagClear);
 
-  // IRQ lock
+    // IRQ lock
 
-  /// Returns true if the interrupt lock is active (suppresses NmiTest/IrqTest).
-  bool IrqLocked() const noexcept {
-    return irqLock_;
-  }
+    /// Returns true if the interrupt lock is active (suppresses NmiTest/IrqTest).
+    bool IrqLocked() const noexcept {
+        return irqLock_;
+    }
 
-  /// Set/clear the lock.  Typically set by NmitimenUpdate, cleared by the
-  /// integration layer after calling NmiTest/IrqTest once.
-  void SetIrqLock(bool v) noexcept {
-    irqLock_ = v;
-  }
+    /// Set/clear the lock.  Typically set by NmitimenUpdate, cleared by the
+    /// integration layer after calling NmiTest/IrqTest once.
+    void SetIrqLock(bool v) noexcept {
+        irqLock_ = v;
+    }
 
-  // H/V timer target configuration (from $4207-$420A writes)
+    // H/V timer target configuration (from $4207-$420A writes)
 
-  /// Set the H-counter IRQ target (9-bit raw value, 0-339 dot range).
-  /// Internally converted to master clocks: (raw + 1) << 2.
-  void SetHTime(uint16_t raw9bit) noexcept;
+    /// Set the H-counter IRQ target (9-bit raw value, 0-339 dot range).
+    /// Internally converted to master clocks: (raw + 1) << 2.
+    void SetHTime(uint16_t raw9bit) noexcept;
 
-  /// Set the V-counter IRQ target (9-bit raw value, scanline number).
-  void SetVTime(uint16_t raw9bit) noexcept;
+    /// Set the V-counter IRQ target (9-bit raw value, scanline number).
+    void SetVTime(uint16_t raw9bit) noexcept;
 
-  /// Get raw H-counter target (9-bit, as written to registers).
-  uint16_t HTimeRaw() const noexcept {
-    return htimeRaw_;
-  }
+    /// Get raw H-counter target (9-bit, as written to registers).
+    uint16_t HTimeRaw() const noexcept {
+        return htimeRaw_;
+    }
 
-  /// Get converted H-counter target in master clocks.
-  uint16_t HTimeMasterClocks() const noexcept {
-    return htimeMc_;
-  }
+    /// Get converted H-counter target in master clocks.
+    uint16_t HTimeMasterClocks() const noexcept {
+        return htimeMc_;
+    }
 
-  /// Get V-counter target (9-bit raw scanline number).
-  uint16_t VTime() const noexcept {
-    return vtime_;
-  }
+    /// Get V-counter target (9-bit raw scanline number).
+    uint16_t VTime() const noexcept {
+        return vtime_;
+    }
 
-  // State queries
+    // State queries
 
-  bool NmiEnabled() const noexcept {
-    return nmiEnable_;
-  }
-  bool HIrqEnabled() const noexcept {
-    return hirqEnable_;
-  }
-  bool VIrqEnabled() const noexcept {
-    return virqEnable_;
-  }
-  bool IrqEnabled() const noexcept {
-    return irqEnable_;
-  }
+    bool NmiEnabled() const noexcept {
+        return nmiEnable_;
+    }
 
-  bool NmiLine() const noexcept {
-    return nmiLine_;
-  }
-  bool IrqLine() const noexcept {
-    return irqLine_;
-  }
-  bool NmiTransition() const noexcept {
-    return nmiTransition_;
-  }
-  bool IrqTransition() const noexcept {
-    return irqTransition_;
-  }
-  bool NmiHold() const noexcept {
-    return nmiHold_;
-  }
-  bool IrqHold() const noexcept {
-    return irqHold_;
-  }
+    bool HIrqEnabled() const noexcept {
+        return hirqEnable_;
+    }
 
-private:
-  void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod);
+    bool VIrqEnabled() const noexcept {
+        return virqEnable_;
+    }
 
-  // NMI state machine
-  bool nmiEnable_ = false;
-  bool nmiLine_ = false;       // NMI flag (returned by RDNMI)
-  bool nmiValid_ = false;      // Edge detector input (V >= vdisp)
-  bool nmiHold_ = false;       // 4-clock hold (protects RDNMI clear)
-  bool nmiTransition_ = false; // Pending NMI dispatch
+    bool IrqEnabled() const noexcept {
+        return irqEnable_;
+    }
 
-  // IRQ state machine
-  bool hirqEnable_ = false;
-  bool virqEnable_ = false;
-  bool irqEnable_ = false;     // hirq || virq
-  bool irqLine_ = false;       // IRQ flag (returned by TIMEUP)
-  bool irqValid_ = false;      // Edge detector input
-  bool irqHold_ = false;       // 4-clock hold (protects TIMEUP clear)
-  bool irqTransition_ = false; // Pending IRQ dispatch
+    bool NmiLine() const noexcept {
+        return nmiLine_;
+    }
 
-  // H/V timer targets
-  uint16_t htimeRaw_ = 0x1FF; // Raw 9-bit value from $4207/$4208
-  uint16_t htimeMc_ = 0;      // Converted to master clocks: (raw+1)<<2
-  uint16_t vtime_ = 0x1FF;    // Raw 9-bit value from $4209/$420A
+    bool IrqLine() const noexcept {
+        return irqLine_;
+    }
 
-  // Lock
-  bool irqLock_ = false;
+    bool NmiTransition() const noexcept {
+        return nmiTransition_;
+    }
+
+    bool IrqTransition() const noexcept {
+        return irqTransition_;
+    }
+
+    bool NmiHold() const noexcept {
+        return nmiHold_;
+    }
+
+    bool IrqHold() const noexcept {
+        return irqHold_;
+    }
+
+  private:
+    void nmiPoll(uint16_t h, uint16_t v, uint16_t vdisp, uint16_t vperiod);
+
+    // NMI state machine
+    bool nmiEnable_ = false;
+    bool nmiLine_ = false;       // NMI flag (returned by RDNMI)
+    bool nmiValid_ = false;      // Edge detector input (V >= vdisp)
+    bool nmiHold_ = false;       // 4-clock hold (protects RDNMI clear)
+    bool nmiTransition_ = false; // Pending NMI dispatch
+
+    // IRQ state machine
+    bool hirqEnable_ = false;
+    bool virqEnable_ = false;
+    bool irqEnable_ = false;     // hirq || virq
+    bool irqLine_ = false;       // IRQ flag (returned by TIMEUP)
+    bool irqValid_ = false;      // Edge detector input
+    bool irqHold_ = false;       // 4-clock hold (protects TIMEUP clear)
+    bool irqTransition_ = false; // Pending IRQ dispatch
+
+    // H/V timer targets
+    uint16_t htimeRaw_ = 0x1FF; // Raw 9-bit value from $4207/$4208
+    uint16_t htimeMc_ = 0;      // Converted to master clocks: (raw+1)<<2
+    uint16_t vtime_ = 0x1FF;    // Raw 9-bit value from $4209/$420A
+
+    // Lock
+    bool irqLock_ = false;
 };
 
 } // namespace snes::core

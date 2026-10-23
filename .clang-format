@@ -1,5 +1,23 @@
 BasedOnStyle: LLVM
-IndentWidth: 2
+Language: Cpp
+Standard: c++20
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
 ColumnLimit: 100
-AllowShortFunctionsOnASingleLine: Empty
-SortIncludes: CaseSensitive
+
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+# Separate definition blocks and preserve blank lines between function prototypes.
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1

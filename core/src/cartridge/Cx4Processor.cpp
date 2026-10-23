@@ -12,194 +12,196 @@ namespace snes::core {
 Cx4Processor::Cx4Processor(std::span<const uint8_t> rom, std::span<uint8_t> save,
                            std::span<const uint8_t> firmware, Layout layout)
     : rom_(rom), save_(save), layout_(layout) {
-  if (!LoadDataRom(firmware))
-    throw std::invalid_argument("Invalid Cx4 data firmware size");
-  Reset();
+    if (!LoadDataRom(firmware))
+        throw std::invalid_argument("Invalid Cx4 data firmware size");
+    Reset();
 }
 
 Cx4Processor::~Cx4Processor() = default;
 
 Cx4Processor::RetainedStorage Cx4Processor::CaptureStorage() const noexcept {
-  const auto &state = GetState();
-  return {state.program, state.stack};
+    const auto& state = GetState();
+    return {state.program, state.stack};
 }
 
-void Cx4Processor::InitializeStorage(const RetainedStorage &storage) {
-  auto state = GetState();
-  state.program = storage.program;
-  state.stack = storage.stack;
-  SetState(state);
+void Cx4Processor::InitializeStorage(const RetainedStorage& storage) {
+    auto state = GetState();
+    state.program = storage.program;
+    state.stack = storage.stack;
+    SetState(state);
 }
 
 void Cx4Processor::Reset() {
-  execution_.reset();
-  Hg51b::Reset();
-  balance_ = 0;
-  irqLine_ = false;
+    execution_.reset();
+    Hg51b::Reset();
+    balance_ = 0;
+    irqLine_ = false;
 }
 
 void Cx4Processor::SetPal(bool pal) {
-  masterFrequency_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
+    masterFrequency_ = pal ? Timing::kMasterClockHzPal : Timing::kMasterClockHz;
 }
 
 void Cx4Processor::Advance(uint32_t masterClocks, bool synchronize) {
-  const auto elapsed = int64_t(masterClocks) * 20'000'000;
-  if (balance_ < std::numeric_limits<int64_t>::min() + elapsed)
-    throw std::overflow_error("Cx4 elapsed clocks exceed the supported range");
-  balance_ -= elapsed;
-  if (delayedSync_ && !synchronize)
-    return;
-  if (balance_ < 0 && CanAdvanceIdle()) {
-    // No pending event can change halted state. Retain the same final clock edge
-    // without resuming the worker for each otherwise empty processor cycle.
-    const uint64_t debt = uint64_t(-(balance_ + 1)) + 1;
-    const uint64_t clocks = debt / masterFrequency_ + (debt % masterFrequency_ != 0);
-    balance_ = int64_t(clocks * masterFrequency_ - debt);
-    return;
-  }
-  Synchronize();
+    const auto elapsed = int64_t(masterClocks) * 20'000'000;
+    if (balance_ < std::numeric_limits<int64_t>::min() + elapsed)
+        throw std::overflow_error("Cx4 elapsed clocks exceed the supported range");
+    balance_ -= elapsed;
+    if (delayedSync_ && !synchronize)
+        return;
+    if (balance_ < 0 && CanAdvanceIdle()) {
+        // No pending event can change halted state. Retain the same final clock edge
+        // without resuming the worker for each otherwise empty processor cycle.
+        const uint64_t debt = uint64_t(-(balance_ + 1)) + 1;
+        const uint64_t clocks = debt / masterFrequency_ + (debt % masterFrequency_ != 0);
+        balance_ = int64_t(clocks * masterFrequency_ - debt);
+        return;
+    }
+    Synchronize();
 }
 
 void Cx4Processor::Synchronize() {
-  if (balance_ >= 0)
-    return;
-  if (!execution_)
-    execution_ = std::make_unique<detail::ExecutionContext>([this] {
-      for (;;)
-        RunStep();
-    });
-  execution_->Resume();
+    if (balance_ >= 0)
+        return;
+    if (!execution_)
+        execution_ = std::make_unique<detail::ExecutionContext>([this] {
+            for (;;)
+                RunStep();
+        });
+    execution_->Resume();
 }
 
 void Cx4Processor::StepClocks(unsigned clocks) {
-  balance_ += int64_t(clocks) * masterFrequency_;
-  if (balance_ >= 0)
-    execution_->Suspend();
+    balance_ += int64_t(clocks) * masterFrequency_;
+    if (balance_ >= 0)
+        execution_->Suspend();
 }
 
 void Cx4Processor::Halt() {
-  Hg51b::Halt();
-  if (IrqEnabled()) {
-    SetInterruptFlag();
-    irqLine_ = true;
-  }
+    Hg51b::Halt();
+    if (IrqEnabled()) {
+        SetInterruptFlag();
+        irqLine_ = true;
+    }
 }
 
 void Cx4Processor::ClearIrq() {
-  irqLine_ = false;
+    irqLine_ = false;
 }
 
 bool Cx4Processor::IsRom(uint32_t address) const {
-  return (address & 0x408000) == 0x008000 || (address & 0xc00000) == 0xc00000;
+    return (address & 0x408000) == 0x008000 || (address & 0xc00000) == 0xc00000;
 }
 
 bool Cx4Processor::IsRam(uint32_t address) const {
-  return layout_ == Layout::LoRom ? (address & 0xf88000) == 0x700000
-                                  : (address & 0x70e000) == 0x306000;
+    return layout_ == Layout::LoRom ? (address & 0xf88000) == 0x700000
+                                    : (address & 0x70e000) == 0x306000;
 }
 
 bool Cx4Processor::IsData(uint32_t address) const {
-  return (address & 0x40e000) == 0x006000 && (address & 0xc00) != 0xc00 &&
-         (layout_ == Layout::LoRom || (address & 0x300000) != 0x300000);
+    return (address & 0x40e000) == 0x006000 && (address & 0xc00) != 0xc00 &&
+           (layout_ == Layout::LoRom || (address & 0x300000) != 0x300000);
 }
 
 bool Cx4Processor::IsIo(uint32_t address) const {
-  return (address & 0x40ec00) == 0x006c00 &&
-         (layout_ == Layout::LoRom || (address & 0x300000) != 0x300000);
+    return (address & 0x40ec00) == 0x006c00 &&
+           (layout_ == Layout::LoRom || (address & 0x300000) != 0x300000);
 }
 
 uint32_t Cx4Processor::RomOffset(uint32_t address) const {
-  return layout_ == Layout::LoRom ? (((address & 0x3f0000) >> 1) | (address & 0x7fff)) & 0x1fffff
-                                  : address & 0x3fffff;
+    return layout_ == Layout::LoRom ? (((address & 0x3f0000) >> 1) | (address & 0x7fff)) & 0x1fffff
+                                    : address & 0x3fffff;
 }
 
 uint32_t Cx4Processor::RamOffset(uint32_t address) const {
-  return layout_ == Layout::LoRom ? (((address & 0x070000) >> 1) | (address & 0x7fff)) & 0x3ffff
-                                  : (((address & 0x0f0000) >> 3) | (address & 0x1fff)) & 0x1ffff;
+    return layout_ == Layout::LoRom ? (((address & 0x070000) >> 1) | (address & 0x7fff)) & 0x3ffff
+                                    : (((address & 0x0f0000) >> 3) | (address & 0x1fff)) & 0x1ffff;
 }
 
 std::size_t Cx4Processor::Mirror(uint32_t address, std::size_t size) {
-  std::size_t offset = address, base = 0;
-  while (offset >= size) {
-    const auto bit = std::bit_floor(offset);
-    offset -= bit;
-    if (size > bit) {
-      size -= bit;
-      base += bit;
+    std::size_t offset = address, base = 0;
+    while (offset >= size) {
+        const auto bit = std::bit_floor(offset);
+        offset -= bit;
+        if (size > bit) {
+            size -= bit;
+            base += bit;
+        }
     }
-  }
-  return base + offset;
+    return base + offset;
 }
 
 uint8_t Cx4Processor::ReadRom(uint32_t address, uint8_t openBus) const {
-  return rom_.empty() ? openBus : rom_[Mirror(RomOffset(address), rom_.size())];
+    return rom_.empty() ? openBus : rom_[Mirror(RomOffset(address), rom_.size())];
 }
 
 uint8_t Cx4Processor::ReadRam(uint32_t address) const {
-  return save_.empty() ? 0 : save_[Mirror(RamOffset(address), save_.size())];
+    return save_.empty() ? 0 : save_[Mirror(RamOffset(address), save_.size())];
 }
 
 uint8_t Cx4Processor::Read(uint32_t address, uint8_t openBus) {
-  if (!delayedSync_)
-    Synchronize();
-  // The CPU board map and DSP external decoder use different address wiring.
-  if ((address & 0x408000) == 0x008000) {
-    const auto offset = ((address & 0xff0000) >> 1) | (address & 0x7fff);
-    if (!Busy())
-      return rom_.empty() ? openBus : rom_[Mirror(offset, rom_.size())];
-    const auto vectors = layout_ == Layout::LoRom ? 0x7fc0u : 0xffc0u;
-    return (offset & 0xbfffc0) == vectors ? ReadHost(uint16_t(0x7f40 | (offset & 63))) : openBus;
-  }
-  if ((address & 0xf88000) == 0x700000)
-    return save_.empty() ? 0 : save_[Mirror(address, save_.size())];
-  if ((address & 0x40e000) == 0x006000)
-    return (address & 0xc00) == 0xc00 ? ReadHost(uint16_t(address)) : DataRam()[address & 0xfff];
-  return openBus;
+    if (!delayedSync_)
+        Synchronize();
+    // The CPU board map and DSP external decoder use different address wiring.
+    if ((address & 0x408000) == 0x008000) {
+        const auto offset = ((address & 0xff0000) >> 1) | (address & 0x7fff);
+        if (!Busy())
+            return rom_.empty() ? openBus : rom_[Mirror(offset, rom_.size())];
+        const auto vectors = layout_ == Layout::LoRom ? 0x7fc0u : 0xffc0u;
+        return (offset & 0xbfffc0) == vectors ? ReadHost(uint16_t(0x7f40 | (offset & 63)))
+                                              : openBus;
+    }
+    if ((address & 0xf88000) == 0x700000)
+        return save_.empty() ? 0 : save_[Mirror(address, save_.size())];
+    if ((address & 0x40e000) == 0x006000)
+        return (address & 0xc00) == 0xc00 ? ReadHost(uint16_t(address))
+                                          : DataRam()[address & 0xfff];
+    return openBus;
 }
 
 void Cx4Processor::Write(uint32_t address, uint8_t value) {
-  if (!delayedSync_)
-    Synchronize();
-  if ((address & 0xf88000) == 0x700000) {
-    if (!save_.empty())
-      save_[Mirror(address, save_.size())] = value;
-  } else if ((address & 0x40e000) == 0x006000) {
-    if ((address & 0xc00) == 0xc00)
-      WriteHost(uint16_t(address), value);
-    else
-      DataRam()[address & 0xfff] = value;
-  }
+    if (!delayedSync_)
+        Synchronize();
+    if ((address & 0xf88000) == 0x700000) {
+        if (!save_.empty())
+            save_[Mirror(address, save_.size())] = value;
+    } else if ((address & 0x40e000) == 0x006000) {
+        if ((address & 0xc00) == 0xc00)
+            WriteHost(uint16_t(address), value);
+        else
+            DataRam()[address & 0xfff] = value;
+    }
 }
 
 uint8_t Cx4Processor::ReadExternal(uint32_t address) {
-  if (IsRom(address))
-    return ReadRom(address, 0);
-  if (IsRam(address))
-    return ReadRam(address);
-  if (IsData(address))
-    return DataRam()[address & 0xfff];
-  return IsIo(address) ? ReadHost(uint16_t(address)) : 0;
+    if (IsRom(address))
+        return ReadRom(address, 0);
+    if (IsRam(address))
+        return ReadRam(address);
+    if (IsData(address))
+        return DataRam()[address & 0xfff];
+    return IsIo(address) ? ReadHost(uint16_t(address)) : 0;
 }
 
 void Cx4Processor::WriteExternal(uint32_t address, uint8_t value) {
-  if (IsRom(address))
-    return;
-  if (IsRam(address)) {
-    if (!save_.empty())
-      save_[Mirror(RamOffset(address), save_.size())] = value;
-  } else if (IsData(address)) {
-    DataRam()[address & 0xfff] = value;
-  } else if (IsIo(address)) {
-    WriteHost(uint16_t(address), value);
-  }
+    if (IsRom(address))
+        return;
+    if (IsRam(address)) {
+        if (!save_.empty())
+            save_[Mirror(RamOffset(address), save_.size())] = value;
+    } else if (IsData(address)) {
+        DataRam()[address & 0xfff] = value;
+    } else if (IsIo(address)) {
+        WriteHost(uint16_t(address), value);
+    }
 }
 
-void Cx4Processor::MapCpu(MemoryBus &bus, uint8_t slot) const {
-  bus.MapRange(0x00, 0x3f, 0x8000, 0xffff, slot);
-  bus.MapRange(0x80, 0xbf, 0x8000, 0xffff, slot);
-  bus.MapRange(0x00, 0x3f, 0x6000, 0x7fff, slot);
-  bus.MapRange(0x80, 0xbf, 0x6000, 0x7fff, slot);
-  bus.MapRange(0x70, 0x77, 0x0000, 0x7fff, slot);
+void Cx4Processor::MapCpu(MemoryBus& bus, uint8_t slot) const {
+    bus.MapRange(0x00, 0x3f, 0x8000, 0xffff, slot);
+    bus.MapRange(0x80, 0xbf, 0x8000, 0xffff, slot);
+    bus.MapRange(0x00, 0x3f, 0x6000, 0x7fff, slot);
+    bus.MapRange(0x80, 0xbf, 0x6000, 0x7fff, slot);
+    bus.MapRange(0x70, 0x77, 0x0000, 0x7fff, slot);
 }
 
 } // namespace snes::core

@@ -6,37 +6,39 @@
 namespace snes::frontend {
 namespace {
 enum Mode {
-  Imp,
-  Acc,
-  Imm8,
-  ImmM,
-  ImmX,
-  Dp,
-  DpX,
-  DpY,
-  Ind,
-  IndX,
-  IndY,
-  LongInd,
-  LongIndY,
-  Stack,
-  StackY,
-  Abs,
-  AbsX,
-  AbsY,
-  Long,
-  LongX,
-  AbsInd,
-  AbsIndX,
-  AbsLongInd,
-  Rel8,
-  Rel16,
-  Move
+    Imp,
+    Acc,
+    Imm8,
+    ImmM,
+    ImmX,
+    Dp,
+    DpX,
+    DpY,
+    Ind,
+    IndX,
+    IndY,
+    LongInd,
+    LongIndY,
+    Stack,
+    StackY,
+    Abs,
+    AbsX,
+    AbsY,
+    Long,
+    LongX,
+    AbsInd,
+    AbsIndX,
+    AbsLongInd,
+    Rel8,
+    Rel16,
+    Move
 };
+
 struct Op {
-  std::string_view name;
-  Mode mode;
+    std::string_view name;
+    Mode mode;
 };
+
 constexpr std::array<Op, 256> ops{
     {{"BRK", Imm8},       {"ORA", IndX}, {"COP", Imm8},  {"ORA", Stack},
      {"TSB", Dp},         {"ORA", Dp},   {"ASL", Dp},    {"ORA", LongInd},
@@ -102,146 +104,151 @@ constexpr std::array<Op, 256> ops{
      {"PEA", Abs},        {"SBC", DpX},  {"INC", DpX},   {"SBC", LongIndY},
      {"SED", Imp},        {"SBC", AbsY}, {"PLX", Imp},   {"XCE", Imp},
      {"JSR", AbsIndX},    {"SBC", AbsX}, {"INC", AbsX},  {"SBC", LongX}}};
+
 unsigned Length(Mode mode, CpuDecodeWidth width) {
-  switch (mode) {
-  case Imp:
-  case Acc:
-    return 1;
-  case ImmM:
-    return width.emulation || width.accumulator8 ? 2 : 3;
-  case ImmX:
-    return width.emulation || width.index8 ? 2 : 3;
-  case Abs:
-  case AbsX:
-  case AbsY:
-  case AbsInd:
-  case AbsIndX:
-  case AbsLongInd:
-  case Rel16:
-  case Move:
-    return 3;
-  case Long:
-  case LongX:
-    return 4;
-  default:
-    return 2;
-  }
+    switch (mode) {
+    case Imp:
+    case Acc:
+        return 1;
+    case ImmM:
+        return width.emulation || width.accumulator8 ? 2 : 3;
+    case ImmX:
+        return width.emulation || width.index8 ? 2 : 3;
+    case Abs:
+    case AbsX:
+    case AbsY:
+    case AbsInd:
+    case AbsIndX:
+    case AbsLongInd:
+    case Rel16:
+    case Move:
+        return 3;
+    case Long:
+    case LongX:
+        return 4;
+    default:
+        return 2;
+    }
 }
+
 std::string Hex(uint32_t value, unsigned digits) {
-  char text[16];
-  std::snprintf(text, sizeof(text), "$%0*X", int(digits), unsigned(value));
-  return text;
+    char text[16];
+    std::snprintf(text, sizeof(text), "$%0*X", int(digits), unsigned(value));
+    return text;
 }
+
 uint32_t Next(uint32_t address, unsigned length) {
-  return (address & 0xff0000) | uint16_t(address + length);
+    return (address & 0xff0000) | uint16_t(address + length);
 }
 } // namespace
+
 CpuInstruction Decode65816(uint32_t address, CpuDecodeWidth width,
-                           const std::function<std::optional<uint8_t>(uint32_t)> &reader) {
-  if (address > 0xffffff)
-    throw std::out_of_range("CPU addresses must be between 000000 and FFFFFF");
-  CpuInstruction result;
-  result.address = address;
-  result.bytes[0] = reader(address);
-  result.next = Next(address, 1);
-  if (!result.bytes[0]) {
-    result.mnemonic = "Unavailable";
+                           const std::function<std::optional<uint8_t>(uint32_t)>& reader) {
+    if (address > 0xffffff)
+        throw std::out_of_range("CPU addresses must be between 000000 and FFFFFF");
+    CpuInstruction result;
+    result.address = address;
+    result.bytes[0] = reader(address);
+    result.next = Next(address, 1);
+    if (!result.bytes[0]) {
+        result.mnemonic = "Unavailable";
+        return result;
+    }
+    const auto op = ops[*result.bytes[0]];
+    result.mnemonic = op.name;
+    result.length = Length(op.mode, width);
+    result.next = Next(address, result.length);
+    result.available = true;
+    uint32_t value = 0;
+    for (unsigned index = 1; index < result.length; ++index) {
+        result.bytes[index] = reader(Next(address, index));
+        if (result.bytes[index])
+            value |= uint32_t(*result.bytes[index]) << ((index - 1) * 8);
+        else
+            result.available = false;
+    }
+    if (!result.available) {
+        result.operand = "??";
+        return result;
+    }
+    const auto byte = Hex(value & 0xff, 2), word = Hex(value & 0xffff, 4), full = Hex(value, 6);
+    switch (op.mode) {
+    case Imp:
+        break;
+    case Acc:
+        result.operand = "A";
+        break;
+    case Imm8:
+    case ImmM:
+    case ImmX:
+        result.operand = "#" + Hex(value, (result.length - 1) * 2);
+        break;
+    case Dp:
+        result.operand = byte;
+        break;
+    case DpX:
+        result.operand = byte + ",X";
+        break;
+    case DpY:
+        result.operand = byte + ",Y";
+        break;
+    case Ind:
+        result.operand = "(" + byte + ")";
+        break;
+    case IndX:
+        result.operand = "(" + byte + ",X)";
+        break;
+    case IndY:
+        result.operand = "(" + byte + "),Y";
+        break;
+    case LongInd:
+        result.operand = "[" + byte + "]";
+        break;
+    case LongIndY:
+        result.operand = "[" + byte + "],Y";
+        break;
+    case Stack:
+        result.operand = byte + ",S";
+        break;
+    case StackY:
+        result.operand = "(" + byte + ",S),Y";
+        break;
+    case Abs:
+        result.operand = word;
+        break;
+    case AbsX:
+        result.operand = word + ",X";
+        break;
+    case AbsY:
+        result.operand = word + ",Y";
+        break;
+    case Long:
+        result.operand = full;
+        break;
+    case LongX:
+        result.operand = full + ",X";
+        break;
+    case AbsInd:
+        result.operand = "(" + word + ")";
+        break;
+    case AbsIndX:
+        result.operand = "(" + word + ",X)";
+        break;
+    case AbsLongInd:
+        result.operand = "[" + word + "]";
+        break;
+    case Rel8:
+    case Rel16: {
+        const int displacement = op.mode == Rel8
+                                     ? (value & 0x80 ? int(value) - 256 : int(value))
+                                     : (value & 0x8000 ? int(value) - 65536 : int(value));
+        result.operand = Hex((address & 0xff0000) | uint16_t(result.next + displacement), 6);
+        break;
+    }
+    case Move:
+        result.operand = Hex((value >> 8) & 0xff, 2) + "," + byte;
+        break;
+    }
     return result;
-  }
-  const auto op = ops[*result.bytes[0]];
-  result.mnemonic = op.name;
-  result.length = Length(op.mode, width);
-  result.next = Next(address, result.length);
-  result.available = true;
-  uint32_t value = 0;
-  for (unsigned index = 1; index < result.length; ++index) {
-    result.bytes[index] = reader(Next(address, index));
-    if (result.bytes[index])
-      value |= uint32_t(*result.bytes[index]) << ((index - 1) * 8);
-    else
-      result.available = false;
-  }
-  if (!result.available) {
-    result.operand = "??";
-    return result;
-  }
-  const auto byte = Hex(value & 0xff, 2), word = Hex(value & 0xffff, 4), full = Hex(value, 6);
-  switch (op.mode) {
-  case Imp:
-    break;
-  case Acc:
-    result.operand = "A";
-    break;
-  case Imm8:
-  case ImmM:
-  case ImmX:
-    result.operand = "#" + Hex(value, (result.length - 1) * 2);
-    break;
-  case Dp:
-    result.operand = byte;
-    break;
-  case DpX:
-    result.operand = byte + ",X";
-    break;
-  case DpY:
-    result.operand = byte + ",Y";
-    break;
-  case Ind:
-    result.operand = "(" + byte + ")";
-    break;
-  case IndX:
-    result.operand = "(" + byte + ",X)";
-    break;
-  case IndY:
-    result.operand = "(" + byte + "),Y";
-    break;
-  case LongInd:
-    result.operand = "[" + byte + "]";
-    break;
-  case LongIndY:
-    result.operand = "[" + byte + "],Y";
-    break;
-  case Stack:
-    result.operand = byte + ",S";
-    break;
-  case StackY:
-    result.operand = "(" + byte + ",S),Y";
-    break;
-  case Abs:
-    result.operand = word;
-    break;
-  case AbsX:
-    result.operand = word + ",X";
-    break;
-  case AbsY:
-    result.operand = word + ",Y";
-    break;
-  case Long:
-    result.operand = full;
-    break;
-  case LongX:
-    result.operand = full + ",X";
-    break;
-  case AbsInd:
-    result.operand = "(" + word + ")";
-    break;
-  case AbsIndX:
-    result.operand = "(" + word + ",X)";
-    break;
-  case AbsLongInd:
-    result.operand = "[" + word + "]";
-    break;
-  case Rel8:
-  case Rel16: {
-    const int displacement = op.mode == Rel8 ? (value & 0x80 ? int(value) - 256 : int(value))
-                                             : (value & 0x8000 ? int(value) - 65536 : int(value));
-    result.operand = Hex((address & 0xff0000) | uint16_t(result.next + displacement), 6);
-    break;
-  }
-  case Move:
-    result.operand = Hex((value >> 8) & 0xff, 2) + "," + byte;
-    break;
-  }
-  return result;
 }
 } // namespace snes::frontend
