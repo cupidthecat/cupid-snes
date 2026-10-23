@@ -16,6 +16,10 @@ add_executable(snes_ppu_state_tests test_ppu_state.cpp)
 target_link_libraries(snes_ppu_state_tests PRIVATE snes_core)
 snes_add_check(snes_ppu_state_tests snes_ppu_state_tests)
 
+add_executable(snes_system_state_tests test_system_state.cpp)
+target_link_libraries(snes_system_state_tests PRIVATE snes_core)
+snes_add_check(snes_system_state_tests snes_system_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )

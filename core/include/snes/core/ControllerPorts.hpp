@@ -7,6 +7,9 @@
 #include <functional>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 enum class ControllerDevice {
   None,
@@ -32,6 +35,7 @@ public:
   using GunCallback = std::function<LightGunState(int port, int gun)>;
 
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void Configure(unsigned port, ControllerDevice device);
   void Configure(unsigned port, ControllerDevice device, std::array<int, 4> players);
   void SetPadCallback(PadCallback callback) {

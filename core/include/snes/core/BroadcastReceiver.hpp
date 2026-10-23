@@ -7,6 +7,9 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 struct BroadcastTime {
   uint16_t year = 2000;
@@ -25,6 +28,7 @@ public:
 
   // Reset port state while retaining supplied assets and the clock provider.
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   static bool Selects(uint32_t address) noexcept;
   uint8_t ReadCpu(uint32_t address, uint8_t openBus);
   void WriteCpu(uint32_t address, uint8_t value);

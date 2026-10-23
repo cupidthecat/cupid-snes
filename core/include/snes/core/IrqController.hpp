@@ -42,6 +42,9 @@
 #include <cstdint>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class IrqController {
 public:
@@ -49,6 +52,7 @@ public:
 
   /// Reset all state to power-on defaults.
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
 
   // Periodic polling - called every 4 master clocks by the timing system
 
