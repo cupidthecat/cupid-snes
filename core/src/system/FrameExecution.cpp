@@ -86,6 +86,8 @@ FrameStepResult Emulator::FinishFrame() {
   ++frameIndex_;
   frameOpen_ = false;
   audioOutputBuffer_.interleavedStereo.clear();
+  if (inputProvider_)
+    inputProvider_->AdvanceFrame();
   return {.frameIndex = frameIndex_, .masterCycles = masterCycles_, .latchedInput = frameInput_};
 }
 

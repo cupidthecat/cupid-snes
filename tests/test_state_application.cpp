@@ -1,3 +1,4 @@
+#include "SdlInputProvider.hpp"
 #include "desktop/DesktopApplication.hpp"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
@@ -371,6 +372,135 @@ void Workflow(const fs::path &directory, const fs::path &pictures) {
   Check(PreferencesFile(profile).Load().stateSlot == 9,
         "Quick-slot selection survives application exit");
 }
+void TurboFields(const fs::path &directory) {
+  if (!SDL_getenv("SNES_TEST_WINDOW"))
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+  SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+  Check(SDL_Init(SDL_INIT_GAMEPAD), SDL_GetError());
+  SDL_VirtualJoystickDesc descriptor;
+  SDL_INIT_INTERFACE(&descriptor);
+  descriptor.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+  descriptor.name = "Turbo application field clock";
+  descriptor.naxes = SDL_GAMEPAD_AXIS_COUNT;
+  descriptor.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+  descriptor.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+  descriptor.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+  const auto id = SDL_AttachVirtualJoystick(&descriptor);
+  auto *joystick = SDL_OpenJoystick(id);
+  Check(id != 0 && joystick, "Attach application turbo gamepad");
+  struct Pad {
+    SDL_JoystickID id;
+    SDL_Joystick *joystick;
+    ~Pad() {
+      if (SDL_WasInit(SDL_INIT_JOYSTICK)) {
+        SDL_CloseJoystick(joystick);
+        SDL_DetachVirtualJoystick(id);
+      }
+    }
+  } pad{id, joystick};
+  Check(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_SOUTH, true),
+        "Hold application turbo button");
+  SDL_UpdateJoysticks();
+  const auto profile = directory / "turbo.cfg", rom = directory / "turbo.sfc";
+  PreferencesFile file(profile);
+  auto preferences = file.Load();
+  preferences.focus = FocusBehavior::AllowInput;
+  preferences.input.turboFrequency = 2;
+  preferences.input.players[0].buttons = {};
+  preferences.input.players[0].turbo[4][0] = {InputBinding::Kind::GamepadButton,
+                                              SDL_GAMEPAD_BUTTON_SOUTH};
+  std::string deviceKey;
+  for (const auto &device : SdlInputProvider::ConnectedGamepads())
+    if (device.name == descriptor.name)
+      deviceKey = device.key;
+  Check(!deviceKey.empty(), "Select the application turbo gamepad");
+  preferences.input.players[0].device = deviceKey;
+  file.Save(preferences);
+  auto image = Image();
+  image[0x7fd6] = 2;
+  image[0x7fd8] = 3;
+  std::vector<uint8_t> code{0x78};
+  const auto write = [&](uint16_t address, uint8_t value) {
+    code.insert(code.end(), {0xa9, value, 0x8d, uint8_t(address), uint8_t(address >> 8)});
+  };
+  const auto branch = [&](uint8_t opcode, size_t target) {
+    code.push_back(opcode);
+    const auto offset = int(target) - int(code.size() + 1);
+    Check(offset >= -128 && offset <= 127, "Turbo program branch fits");
+    code.push_back(uint8_t(offset));
+  };
+  write(0x2100, 0x80);
+  write(0x2121, 0);
+  write(0x2122, 0x1f);
+  write(0x2122, 0);
+  write(0x2100, 0x0f);
+  write(0x4200, 1);
+  code.insert(code.end(), {0xa2, 0x00, 0xa9, 0x00, 0x8f, 0x00, 0x00, 0x70});
+  const auto waitStart = code.size();
+  code.insert(code.end(), {0xad, 0x12, 0x42, 0x29, 0x01});
+  branch(0xf0, waitStart);
+  const auto waitEnd = code.size();
+  code.insert(code.end(), {0xad, 0x12, 0x42, 0x29, 0x01});
+  branch(0xd0, waitEnd);
+  code.insert(code.end(), {0xad, 0x18, 0x42, 0x29, 0x80, 0x9f, 0x00, 0x01, 0x70, 0xe8, 0x8a, 0x8f,
+                           0x00, 0x00, 0x70});
+  branch(0x80, waitStart);
+  std::copy(code.begin(), code.end(), image.begin());
+  {
+    std::ofstream out(rom, std::ios::binary);
+    out.write(reinterpret_cast<const char *>(image.data()), std::streamsize(image.size()));
+    Check(bool(out), "Application turbo program writes");
+  }
+  LaunchRequest request;
+  request.paths[0] = snes::core::PathText(rom);
+  std::atomic<SDL_WindowID> window{0};
+  std::atomic<bool> returned{false};
+  Check(SDL_AddEventWatch(WindowCreated, &window), SDL_GetError());
+  std::exception_ptr failure;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return window.load() || returned.load(); }, "Turbo application creates a window");
+      Check(!returned, "Turbo application stays open");
+      Wait([&] { return ReadPicture(window).center == 0xff0000ff; },
+           "Turbo guest presents its initialized backdrop");
+      Key(window, SDL_SCANCODE_P, SDLK_P);
+      Wait([&] { return ReadPicture(window).title.find("Paused") != std::string::npos; },
+           "Pause the application turbo guest");
+      for (unsigned field = 0; field < 24; ++field) {
+        Key(window, SDL_SCANCODE_N, SDLK_N);
+        if (field == 11)
+          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      }
+      Quit();
+    } catch (...) {
+      failure = std::current_exception();
+      if (!returned)
+        Quit();
+    }
+  });
+  const auto result = RunDesktop({}, {}, request, profile);
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0, "Turbo application exits normally");
+  auto battery = rom;
+  battery.replace_extension(".srm");
+  const auto bytes = ReadFile(battery, 8192);
+  Check(bytes.size() == 8192 && bytes[0] >= 16, "Guest records enough automatic controller reads");
+  const size_t first = size_t(bytes[0]) - 16;
+  for (size_t row = first; row < size_t(bytes[0]); ++row) {
+    const auto value = bytes[0x100 + row];
+    Check(value == 0 || value == 0x80, "Guest records only the mapped turbo button");
+    if (row + 2 < size_t(bytes[0]))
+      Check(value != bytes[0x100 + row + 2],
+            "Desktop turbo holds each phase for two emulated fields");
+    if (row + 4 < size_t(bytes[0]))
+      Check(value == bytes[0x100 + row + 4], "Paused host delay preserves the desktop turbo cycle");
+  }
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -393,6 +523,7 @@ int main(int argc, char **argv) {
     if (!pictures.empty())
       fs::create_directories(pictures);
     Workflow(directory, pictures);
+    TurboFields(directory);
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

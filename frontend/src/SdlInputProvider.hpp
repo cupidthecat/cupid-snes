@@ -38,7 +38,7 @@ public:
   }
 
   void SetBindings(const InputBindings &bindings);
-  void AdvanceFrame() noexcept {
+  void AdvanceFrame() noexcept override {
     turboPhase_ = (turboPhase_ + 1) % (2 * unsigned(bindings_.turboFrequency));
   }
   void SetEnabled(bool enabled) noexcept {

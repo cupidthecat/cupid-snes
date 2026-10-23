@@ -610,7 +610,6 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       }
       const auto before = emulator->CurrentMasterCycles();
       const auto result = emulator->StepFrame();
-      input.AdvanceFrame();
       if (paused || focusPaused) {
         --steps;
         video.PresentPending();
