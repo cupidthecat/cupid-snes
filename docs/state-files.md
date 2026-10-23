@@ -4,6 +4,8 @@ The desktop stores checkpoints in `.cst` files. Each file contains a complete ma
 
 A state requires the same cartridge hardware, ROM/firmware, and streamed media. It does not package those assets. Windows and Linux use the same byte format. Unsupported format versions and invalid data reject before replacing execution. Writes use a temporary file beside the destination and replace it only after the complete write succeeds.
 
+File reads, writes, checksums, and streamed-media checks support cancellation. A cancelled write closes and removes its temporary file while preserving the destination. A cancelled load leaves the previous undo history available. Media is checked again before a prepared restore releases suspended execution. No cancellation callback runs after a file replacement or state publication.
+
 ## Version 1 envelope
 
 All integer fields use unsigned little-endian encoding. The fixed header is 64 bytes.

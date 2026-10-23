@@ -2,6 +2,7 @@
 #include "AtomicFile.hpp"
 #include "snes/core/FilePath.hpp"
 #include "snes/core/detail/Sha256.hpp"
+#include "snes/core/detail/StateDigest.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -37,11 +38,9 @@ uint64_t Get(std::span<const uint8_t> bytes, size_t offset, unsigned count) {
     value |= uint64_t(bytes[offset + i]) << (8 * i);
   return value;
 }
-auto Digest(std::span<const uint8_t> bytes) {
-  core::detail::Sha256Hasher hash;
-  hash.Update(bytes.first(32));
-  hash.Update(bytes.subspan(headerSize));
-  return hash.Finish();
+auto Digest(std::span<const uint8_t> bytes, const core::StateOperation &operation,
+            core::StatePhase phase) {
+  return core::detail::StateDigest(bytes.subspan(headerSize), operation, phase, bytes.first(32));
 }
 std::string Identity(const LaunchRequest &request) {
   std::vector<uint8_t> bytes{uint8_t(request.kind), request.competitionDip};
@@ -63,8 +62,9 @@ std::string Identity(const LaunchRequest &request) {
 }
 } // namespace
 
-StateFile StateFile::Read(const std::filesystem::path &path) {
-  const auto bytes = ReadFile(path, maximumFileBytes);
+StateFile StateFile::Read(const std::filesystem::path &path,
+                          const core::StateOperation &operation) {
+  const auto bytes = ReadFile(path, maximumFileBytes, operation);
   if (bytes.size() < headerSize || !std::equal(magic.begin(), magic.end(), bytes.begin()) ||
       Get(bytes, 8, 4) != 1)
     throw std::runtime_error("Unsupported or missing state file: " + core::PathText(path));
@@ -74,7 +74,7 @@ StateFile StateFile::Read(const std::filesystem::path &path) {
       !((width == 0 && height == 0) || (width == previewWidth && height == previewHeight)) ||
       bytes.size() != headerSize + machineSize + width * height * sizeof(uint32_t))
     throw std::runtime_error("Invalid state file size or preview");
-  const auto digest = Digest(bytes);
+  const auto digest = Digest(bytes, operation, core::StatePhase::Validate);
   if (!std::equal(digest.begin(), digest.end(), bytes.begin() + 32))
     throw std::runtime_error("State file checksum does not match");
   StateFile result;
@@ -89,7 +89,8 @@ StateFile StateFile::Read(const std::filesystem::path &path) {
 }
 
 void StateFile::Write(const std::filesystem::path &path, std::span<const uint8_t> machine,
-                      const core::VideoFrame &picture) {
+                      const core::VideoFrame &picture, const core::StateOperation &operation) {
+  operation.Report(core::StatePhase::Capture);
   if (machine.size() < 48 || machine.size() > maximumMachineBytes)
     throw std::runtime_error("Machine state exceeds the supported file size");
   const bool preview = picture.width && picture.height &&
@@ -114,11 +115,11 @@ void StateFile::Write(const std::filesystem::path &path, std::span<const uint8_t
                            x * picture.width / previewWidth],
             4);
   }
-  const auto digest = Digest(bytes);
+  const auto digest = Digest(bytes, operation, core::StatePhase::Capture);
   std::copy(digest.begin(), digest.end(), bytes.begin() + 32);
   if (!path.parent_path().empty())
     std::filesystem::create_directories(path.parent_path());
-  WriteFileAtomically(path, bytes);
+  WriteFileAtomically(path, bytes, operation);
 }
 
 StateStorage::StateStorage(const LaunchRequest &request, const std::filesystem::path &directory) {

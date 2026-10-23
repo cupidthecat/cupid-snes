@@ -1,12 +1,14 @@
 #include "snes/core/detail/Sha256.hpp"
 #include "snes/core/detail/StateArchive.hpp"
+#include "snes/core/detail/StateDigest.hpp"
 #include "snes/core/gameboy/Cartridge.hpp"
 
 namespace snes::core::gameboy {
 void Cartridge::SerializeState(detail::StateArchive &archive) {
   // ROM contents cannot change between successful loads.
   if (!stateIdentity_)
-    stateIdentity_ = detail::Sha256(rom_);
+    stateIdentity_ = detail::StateDigest(
+        rom_, archive.Progress(), archive.Reading() ? StatePhase::Validate : StatePhase::Capture);
   for (auto byte : *stateIdentity_)
     archive.Expect(byte);
   archive.Expect(uint64_t(rom_.size()));

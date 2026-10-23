@@ -1,5 +1,6 @@
 #include "SdlInputProvider.hpp"
 #include "desktop/DesktopApplication.hpp"
+#include "imgui_internal.h"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
 #include "storage/AtomicFile.hpp"
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -32,6 +34,31 @@ template <class Predicate> void Wait(Predicate predicate, const char *message) {
 void Push(SDL_Event event) {
   Check(SDL_PushEvent(&event), "Application event can be queued");
 }
+struct ProgressWindow {
+  bool active = false;
+  float x = 0, y = 0, width = 0, height = 0;
+};
+ProgressWindow ReadProgress() {
+  ProgressWindow progress;
+  Check(SDL_RunOnMainThread(
+            [](void *userdata) {
+              auto &progress = *static_cast<ProgressWindow *>(userdata);
+              if (ImGui::GetCurrentContext())
+                if (const auto *window = ImGui::FindWindowByName("State operation")) {
+                  progress.active = window->Active;
+                  progress.x = window->Pos.x;
+                  progress.y = window->Pos.y;
+                  progress.width = window->Size.x;
+                  progress.height = window->Size.y;
+                }
+            },
+            &progress, true),
+        "Progress observer runs on the owning UI thread");
+  return progress;
+}
+void Ready() {
+  Wait([] { return !ReadProgress().active; }, "State progress closes before the next interaction");
+}
 void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod modifiers = 0) {
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
@@ -45,6 +72,7 @@ void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod mod
   event.key.mod = 0;
   Push(event);
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  Ready();
 }
 void Quit() {
   SDL_Event event{};
@@ -70,6 +98,7 @@ void Click(SDL_WindowID window, float x, float y) {
   event.button.down = false;
   Push(event);
   std::this_thread::sleep_for(std::chrono::milliseconds(80));
+  Ready();
 }
 Preferences Profile(const fs::path &path) {
   struct Request {
@@ -139,6 +168,10 @@ public:
   bool Contains(const std::string &text) {
     std::lock_guard lock(mutex_);
     return text_.find(text) != std::string::npos;
+  }
+  bool Empty() {
+    std::lock_guard lock(mutex_);
+    return text_.empty();
   }
 
 private:
@@ -359,6 +392,8 @@ void Workflow(const fs::path &directory, const fs::path &pictures) {
       Quit();
     } catch (...) {
       failure = std::current_exception();
+      if (!returned && !pictures.empty())
+        ReadPicture(window, pictures / "state-workflow-failure.bmp");
       if (!returned)
         Quit();
     }
@@ -501,6 +536,189 @@ void TurboFields(const fs::path &directory) {
       Check(value == bytes[0x100 + row + 4], "Paused host delay preserves the desktop turbo cycle");
   }
 }
+void CancelWorkflow(const fs::path &directory, const fs::path &pictures) {
+  const auto rom = directory / "large-media.sfc";
+  const auto data = directory / "large-media.msu";
+  {
+    const auto bytes = Image();
+    std::ofstream other(directory / "state-game.sfc", std::ios::binary);
+    other.write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+    std::ofstream file(rom, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+    Check(bool(file), "Write cancellation cartridge");
+    std::ofstream media(data, std::ios::binary);
+    media.seekp(256 * 1024 * 1024 + 16);
+    media.put(0);
+    Check(bool(media), "Write sparse large-media fixture");
+  }
+  const auto touchMedia = [&] {
+    std::fstream media(data, std::ios::binary | std::ios::in | std::ios::out);
+    media.seekp(-1, std::ios::end);
+    media.put(0);
+    media.close();
+    Check(bool(media), "Invalidate the media stamp while retaining identical contents");
+  };
+  const auto profile = directory / "cancel-preferences.cfg";
+  PreferencesFile preferencesFile(profile);
+  auto preferences = preferencesFile.Load();
+  preferences.focus = FocusBehavior::AllowInput;
+  preferences.hotkeys.gamepads[size_t(DesktopCommand::Pause)][0].controls[0] = {
+      InputBinding::Kind::GamepadButton, SDL_GAMEPAD_BUTTON_SOUTH};
+  preferencesFile.Save(preferences);
+  LaunchRequest request;
+  request.paths[0] = snes::core::PathText(rom);
+  StateStorage states(request);
+  const auto path = states.Path(StateStorage::Quick(0));
+  StateFile::Write(path, std::vector<uint8_t>(48, 0x71), {});
+  const auto old = ReadFile(path, 1024);
+  if (!SDL_getenv("SNES_TEST_WINDOW"))
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+  SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  Check(SDL_Init(SDL_INIT_GAMEPAD), SDL_GetError());
+  SDL_VirtualJoystickDesc descriptor;
+  SDL_INIT_INTERFACE(&descriptor);
+  descriptor.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+  descriptor.name = "State progress shortcut gamepad";
+  descriptor.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+  descriptor.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+  const auto id = SDL_AttachVirtualJoystick(&descriptor);
+  auto *joystick = SDL_OpenJoystick(id);
+  Check(id != 0 && joystick, "Attach progress shortcut gamepad");
+  struct Pad {
+    SDL_JoystickID id;
+    SDL_Joystick *joystick;
+    ~Pad() {
+      if (SDL_WasInit(SDL_INIT_JOYSTICK)) {
+        SDL_CloseJoystick(joystick);
+        SDL_DetachVirtualJoystick(id);
+      }
+    }
+  } pad{id, joystick};
+  const auto button = [&](bool down) {
+    struct Request {
+      SDL_Joystick *joystick;
+      bool down, success = false;
+    } request{joystick, down};
+    Check(SDL_RunOnMainThread(
+              [](void *userdata) {
+                auto &request = *static_cast<Request *>(userdata);
+                request.success = SDL_SetJoystickVirtualButton(
+                    request.joystick, SDL_GAMEPAD_BUTTON_SOUTH, request.down);
+                SDL_UpdateJoysticks();
+              },
+              &request, true) &&
+              request.success,
+          "Update progress shortcut on the main thread");
+  };
+  std::atomic<SDL_WindowID> window{0};
+  std::atomic<bool> returned{false};
+  Check(SDL_AddEventWatch(WindowCreated, &window), SDL_GetError());
+  ErrorCapture errors;
+  std::exception_ptr failure;
+  std::vector<uint8_t> beforeQuit;
+  std::thread driver([&] {
+    try {
+      Wait([&] { return window.load() || returned.load(); },
+           "Cancellation application creates a window");
+      Check(!returned, "Cancellation application stays open");
+      Wait(
+          [&] {
+            const auto color = ReadPicture(window).center;
+            return Profile(profile).recent.size() == 1 && color != 0xff000000 &&
+                   color != 0xff1e1816;
+          },
+          "Cancellation guest completes a picture");
+      Key(window, SDL_SCANCODE_P, SDLK_P);
+      const auto start = [&](SDL_Scancode scan, SDL_Keycode key) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_KEY_DOWN;
+        event.key.windowID = window;
+        event.key.scancode = scan;
+        event.key.key = key;
+        Push(event);
+        event.type = SDL_EVENT_KEY_UP;
+        Push(event);
+        Wait([] { return ReadProgress().active; }, "Large-media state operation displays progress");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Check(ReadProgress().active, "Progress remains responsive during cold media checking");
+      };
+      const auto other = snes::core::PathText(directory / "state-game.sfc");
+      const auto blockedActions = [&] {
+        for (const auto scan : {SDL_SCANCODE_N, SDL_SCANCODE_F9}) {
+          SDL_Event event{};
+          event.type = SDL_EVENT_KEY_DOWN;
+          event.key.windowID = window;
+          event.key.scancode = scan;
+          Push(event);
+          event.type = SDL_EVENT_KEY_UP;
+          Push(event);
+        }
+        SDL_Event drop{};
+        drop.type = SDL_EVENT_DROP_FILE;
+        drop.drop.windowID = window;
+        drop.drop.data = other.c_str();
+        Push(drop);
+      };
+      start(SDL_SCANCODE_F2, SDLK_F2);
+      if (!pictures.empty())
+        ReadPicture(window, pictures / "state-progress-media.bmp");
+      blockedActions();
+      auto progress = ReadProgress();
+      Click(window, progress.x + 45, progress.y + progress.height - 22);
+      Check(ReadFile(path, 1024) == old && !ReadProgress().active,
+            "Cancel button retains the previous quick state and closes progress");
+      Key(window, SDL_SCANCODE_F2, SDLK_F2);
+      const auto saved = StateFile::Read(path);
+      for (bool load : {false, true}) {
+        touchMedia();
+        beforeQuit = ReadFile(path, 8 * 1024 * 1024);
+        start(load ? SDL_SCANCODE_F4 : SDL_SCANCODE_F2, load ? SDLK_F4 : SDLK_F2);
+        blockedActions();
+        Key(window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+        Check(ReadFile(path, 8 * 1024 * 1024) == beforeQuit &&
+                  ReadPicture(window).title.find("Paused") != std::string::npos,
+              "Escape cancellation preserves the slot and pause setting");
+        Key(window, SDL_SCANCODE_F2, SDLK_F2);
+        Check(StateFile::Read(path).machine == saved.machine,
+              "Blocked frame, reset and drop actions cannot mutate the busy machine");
+      }
+      button(true);
+      Wait([&] { return ReadPicture(window).title.find("Paused") == std::string::npos; },
+           "Gamepad shortcut resumes before a running capture");
+      touchMedia();
+      start(SDL_SCANCODE_F2, SDLK_F2);
+      button(false);
+      Key(window, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE);
+      Check(ReadPicture(window).title.find("Paused") == std::string::npos,
+            "Cancelling a running capture retains running playback");
+      button(true);
+      Wait([&] { return ReadPicture(window).title.find("Paused") != std::string::npos; },
+           "Gamepad released during progress rearms on the next press");
+      button(false);
+      touchMedia();
+      beforeQuit = ReadFile(path, 8 * 1024 * 1024);
+      start(SDL_SCANCODE_F2, SDLK_F2);
+      Quit();
+    } catch (...) {
+      failure = std::current_exception();
+      if (!returned)
+        Quit();
+    }
+  });
+  const auto result = RunDesktop({}, {}, request, profile);
+  returned = true;
+  driver.join();
+  if (failure)
+    std::rethrow_exception(failure);
+  Check(result == 0 && errors.Empty(),
+        "Cancellation and deferred quit complete without an error dialog");
+  Check(ReadFile(path, 8 * 1024 * 1024) == beforeQuit,
+        "Quit during capture unwinds before publishing a replacement file");
+  const auto recent = PreferencesFile(profile).Load().recent;
+  Check(recent.size() == 1 && recent[0].paths[0] == request.paths[0],
+        "Busy file drops never replace the loaded session");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -519,11 +737,17 @@ int main(int argc, char **argv) {
     }
   } cleanup{directory};
   try {
-    const auto pictures = argc == 2 ? snes::core::FilePath(argv[1]) : fs::path{};
+    const bool cancelOnly = argc > 1 && std::string_view(argv[1]) == "--cancel-only";
+    const int pictureIndex = cancelOnly ? 2 : 1;
+    const auto pictures =
+        argc > pictureIndex ? snes::core::FilePath(argv[pictureIndex]) : fs::path{};
     if (!pictures.empty())
       fs::create_directories(pictures);
-    Workflow(directory, pictures);
-    TurboFields(directory);
+    if (!cancelOnly) {
+      Workflow(directory, pictures);
+      TurboFields(directory);
+    }
+    CancelWorkflow(directory, pictures);
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

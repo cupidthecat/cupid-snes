@@ -7,8 +7,9 @@ StateArchive::StateArchive(std::span<const uint8_t> bytes)
   Require(bytes.size() <= MaximumBytes, "Machine state exceeds the supported size");
 }
 StateArchive::StateArchive(Mode mode, std::span<const uint8_t> bytes,
-                           std::shared_ptr<RestorePlan> plan)
-    : mode_(mode), root_(false), input_(bytes), plan_(std::move(plan)) {}
+                           std::shared_ptr<RestorePlan> plan, StateOperation progress)
+    : mode_(mode), root_(false), input_(bytes), plan_(std::move(plan)),
+      progress_(std::move(progress)) {}
 
 void StateArchive::Require(bool condition, const char *message) {
   if (!condition) {
@@ -35,7 +36,13 @@ uint64_t StateArchive::ReadUnsigned(size_t bytes) {
 void StateArchive::WriteBlock(std::span<const uint8_t> bytes) {
   Require(bytes.size() <= MaximumBytes - output_.size(),
           "Machine state exceeds the supported size");
-  if (!bytes.empty())
+  if (progress_) {
+    for (size_t offset = 0; offset < bytes.size(); offset += 65536) {
+      progress_.Report(StatePhase::Capture, offset, bytes.size());
+      const auto part = bytes.subspan(offset, std::min<size_t>(65536, bytes.size() - offset));
+      output_.insert(output_.end(), part.begin(), part.end());
+    }
+  } else if (!bytes.empty())
     output_.insert(output_.end(), bytes.begin(), bytes.end());
 }
 std::span<const uint8_t> StateArchive::ReadBlock(size_t bytes) {
@@ -72,6 +79,7 @@ void StateArchive::Commit() {
   Require(root_ && mode_ == Mode::Stage && !plan_->committed && !plan_->failed,
           "Machine state restore cannot be committed here");
   Require(Remaining() == 0, "Unexpected data at the end of machine state");
+  progress_.Report(StatePhase::Commit);
   for (auto &verify : plan_->verifications)
     verify();
   for (auto &prepare : plan_->preparations)

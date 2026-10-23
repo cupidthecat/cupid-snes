@@ -599,6 +599,75 @@ void ClockBindings() {
   Check(firmwareOnly->LoadCartridge(bios, &error) && emptyGameClockCalls > 0,
         "A firmware-only handheld launch selects its host clock before startup reset");
 }
+void CancelStateOperations() {
+  Emulator machine(snes::tests::DeterministicConsoleConfig());
+  std::string error;
+  Check(machine.LoadCartridge(Rom(), &error), "Load cancellation fixture");
+  machine.StepFrame();
+  const auto saved = machine.CaptureState();
+  machine.StepFrame();
+  const auto before = machine.CaptureState();
+  for (unsigned point = 0; point < 4; ++point) {
+    bool cancelled = false, reached = false, checksumComplete = false;
+    try {
+      const StateOperation operation([&](const StateProgress &progress) {
+        checksumComplete |= progress.phase == StatePhase::Validate && progress.total &&
+                            progress.completed == progress.total;
+        const bool stop =
+            point == 0   ? progress.phase == StatePhase::Capture
+            : point == 1 ? progress.phase == StatePhase::Validate && progress.completed >= 65536
+            : point == 2
+                ? checksumComplete && progress.phase == StatePhase::Validate && !progress.total
+                : progress.phase == StatePhase::Commit;
+        reached |= stop;
+        return !stop;
+      });
+      if (!point)
+        machine.CaptureState(operation);
+      else
+        machine.RestoreState(saved, operation);
+    } catch (const StateCancelled &) {
+      cancelled = true;
+    }
+    Check(cancelled && reached && machine.CaptureState() == before,
+          "Cancelled capture, checksum, validation and commit retain the current machine");
+  }
+  struct Observer {
+    bool cancel = false;
+    unsigned commits = 0;
+  };
+  auto observer = std::make_shared<Observer>();
+  const std::weak_ptr<Observer> retained = observer;
+  {
+    auto prepared = machine.PrepareStateRestore(
+        saved, StateOperation([observer](const StateProgress &progress) {
+          if (progress.phase == StatePhase::Commit)
+            ++observer->commits;
+          return !observer->cancel;
+        }));
+    observer.reset();
+    Check(!retained.expired(), "Prepared restore owns its observer after preparation returns");
+    retained.lock()->cancel = true;
+    bool cancelled = false;
+    try {
+      prepared.Commit();
+    } catch (const StateCancelled &) {
+      cancelled = true;
+    }
+    Check(cancelled && retained.lock()->commits == 1 && machine.CaptureState() == before,
+          "Retained observer can cancel a later commit without publishing its staged state");
+    Reject([&] { prepared.Commit(); }, "Cancelled prepared restore remains invalid");
+  }
+  Check(retained.expired(), "Discarding a prepared plan releases its observer");
+  unsigned commits = 0;
+  machine.RestoreState(saved, StateOperation([&](const StateProgress &progress) {
+                         if (progress.phase == StatePhase::Commit)
+                           ++commits;
+                         return true;
+                       }));
+  Check(commits == 1 && machine.CaptureState() == saved,
+        "Uncancelled restore reports before publication and retains the portable wire format");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -613,6 +682,7 @@ int main(int argc, char **argv) {
     SeparateCommandDevices();
     RetainedConsoleStorage();
     ClockBindings();
+    CancelStateOperations();
     StreamedMedia(portable.get());
     const auto boards = BoardContinuations(portable.get());
     if (portable) {

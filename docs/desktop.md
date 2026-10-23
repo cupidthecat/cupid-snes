@@ -38,6 +38,8 @@ Opening the manager pauses playback. Closing it restores the previous pause sett
 
 Capture finishes in-flight instructions and DMA while retaining any picture, input, and audio events crossed along the way. A checkpoint includes the resulting partial field and all required cartridge hardware. Loading validates the file and loaded hardware before capturing undo or replacing execution. Invalid versions, damaged files, different cartridges, and changed or missing streamed media leave the game and previous undo history available. State loading does not read or flush battery files. Later battery saves write the restored cartridge data normally.
 
+State operations show progress while checking media, reading or writing files, and preparing the machine. Cancel or Escape stops the operation before replacing a state file or restoring execution. Cancellation preserves the loaded game, existing files, pause setting, and undo history. Capture may already have completed pending fields; those fields and their input and output remain part of the running game. Game commands are unavailable while progress is open. Closing the application cancels the operation, then exits after it unwinds.
+
 Preferences > Paths selects the state directory. A blank setting uses a `states` folder beside the game. Each launch has its own subfolder, derived from its cartridge mode, all canonical asset paths, and competition DIP setting. Handheld games and different slot/pack combinations therefore keep separate collections. Changing the directory changes future state destinations without moving existing files or replacing the loaded machine. See [State files](state-files.md) for the format and filename rules.
 
 ## Battery files

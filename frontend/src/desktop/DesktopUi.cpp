@@ -47,6 +47,25 @@ void LoadFonts() {
   }
   io.FontDefault = base;
 }
+const char *PhaseLabel(core::StatePhase phase) {
+  switch (phase) {
+  case core::StatePhase::Synchronize:
+    return "Preparing state";
+  case core::StatePhase::Capture:
+    return "Capturing state";
+  case core::StatePhase::Validate:
+    return "Checking state";
+  case core::StatePhase::Media:
+    return "Checking media";
+  case core::StatePhase::ReadFile:
+    return "Reading state file";
+  case core::StatePhase::WriteFile:
+    return "Writing state file";
+  case core::StatePhase::Commit:
+    return "Restoring state";
+  }
+  return "Preparing state";
+}
 } // namespace
 
 struct DesktopUi::Impl {
@@ -57,6 +76,10 @@ struct DesktopUi::Impl {
   std::unique_ptr<StateManagerDialog> states;
   std::string status = "Ready", error;
   bool platformReady = false, rendererReady = false, errorOpening = false, errorOpen = false;
+  bool stateActive = false, stateOpening = false, stateCancelled = false;
+  core::StatePhase statePhase = core::StatePhase::Synchronize;
+  uint64_t stateCompleted = 0, stateTotal = 0;
+  std::string stateTitle, stateItem;
 
   void Activate() const {
     ImGui::SetCurrentContext(context);
@@ -103,7 +126,7 @@ DesktopUi::DesktopUi(SDL_Window *window, SDL_Renderer *renderer) : impl_(std::ma
 DesktopUi::~DesktopUi() = default;
 void DesktopUi::ProcessEvent(const SDL_Event &event) {
   impl_->Activate();
-  if (!impl_->preferences.ProcessEvent(event))
+  if (impl_->stateActive || !impl_->preferences.ProcessEvent(event))
     ImGui_ImplSDL3_ProcessEvent(&event);
 }
 void DesktopUi::Frame() {
@@ -112,7 +135,8 @@ void DesktopUi::Frame() {
   ImGui_ImplSDLRenderer3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
-  self.menu.Draw(!self.preferences.Active() && !self.states->Active() && !self.errorOpen);
+  self.menu.Draw(!self.stateActive && !self.preferences.Active() && !self.states->Active() &&
+                 !self.errorOpen);
   const auto *viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos({viewport->Pos.x, viewport->Pos.y + viewport->Size.y - BottomInset()});
   ImGui::SetNextWindowSize({viewport->Size.x, float(BottomInset())});
@@ -122,8 +146,10 @@ void DesktopUi::Frame() {
                        ImGuiWindowFlags_NoBringToFrontOnFocus))
     ImGui::TextUnformatted(self.status.c_str());
   ImGui::End();
-  self.preferences.Draw();
-  self.states->Draw();
+  if (!self.stateActive) {
+    self.preferences.Draw();
+    self.states->Draw();
+  }
   if (self.errorOpening) {
     ImGui::OpenPopup("Cupid-SNES error");
     self.errorOpening = false;
@@ -138,6 +164,31 @@ void DesktopUi::Frame() {
     if (ImGui::Button("Close", {80, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
       self.errorOpen = false;
       ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+  if (self.stateOpening) {
+    ImGui::OpenPopup("State operation");
+    self.stateOpening = false;
+  }
+  ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, {0.5f, 0.5f});
+  ImGui::SetNextWindowSize({std::min(420.0f, viewport->Size.x - 24), 0}, ImGuiCond_Always);
+  if (ImGui::BeginPopupModal("State operation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!self.stateActive)
+      ImGui::CloseCurrentPopup();
+    else {
+      ImGui::TextUnformatted(self.stateTitle.c_str());
+      ImGui::TextUnformatted(PhaseLabel(self.statePhase));
+      if (!self.stateItem.empty())
+        ImGui::TextWrapped("%s", self.stateItem.c_str());
+      if (self.stateTotal) {
+        const auto fraction = float(double(self.stateCompleted) / double(self.stateTotal));
+        ImGui::ProgressBar(std::clamp(fraction, 0.0f, 1.0f), {-1, 0});
+        ImGui::Text("%.1f / %.1f MiB", double(self.stateCompleted) / (1024 * 1024),
+                    double(self.stateTotal) / (1024 * 1024));
+      }
+      if (ImGui::Button("Cancel", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        self.stateCancelled = true;
     }
     ImGui::EndPopup();
   }
@@ -157,14 +208,14 @@ int DesktopUi::BottomInset() const {
 }
 bool DesktopUi::WantsKeyboard() const {
   impl_->Activate();
-  return impl_->preferences.Active() || impl_->states->Active() || impl_->errorOpen ||
-         ImGui::GetIO().WantCaptureKeyboard ||
+  return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
+         impl_->errorOpen || ImGui::GetIO().WantCaptureKeyboard ||
          ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 }
 bool DesktopUi::WantsPointer() const {
   impl_->Activate();
-  return impl_->preferences.Active() || impl_->states->Active() || impl_->errorOpen ||
-         ImGui::GetIO().WantCaptureMouse;
+  return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
+         impl_->errorOpen || ImGui::GetIO().WantCaptureMouse;
 }
 DesktopMenu &DesktopUi::Menu() {
   return impl_->menu;
@@ -184,5 +235,28 @@ void DesktopUi::ShowError(std::string text) {
 }
 bool DesktopUi::ErrorOpen() const {
   return impl_->errorOpen;
+}
+void DesktopUi::BeginStateOperation(std::string title) {
+  impl_->stateTitle = std::move(title);
+  impl_->stateItem.clear();
+  impl_->statePhase = core::StatePhase::Synchronize;
+  impl_->stateCompleted = impl_->stateTotal = 0;
+  impl_->stateActive = impl_->stateOpening = true;
+  impl_->stateCancelled = false;
+}
+void DesktopUi::UpdateStateOperation(const core::StateProgress &progress) {
+  impl_->statePhase = progress.phase;
+  impl_->stateCompleted = progress.completed;
+  impl_->stateTotal = progress.total;
+  impl_->stateItem = progress.item;
+}
+void DesktopUi::CancelStateOperation() {
+  impl_->stateCancelled = true;
+}
+bool DesktopUi::StateOperationCancelled() const {
+  return impl_->stateCancelled;
+}
+void DesktopUi::EndStateOperation() {
+  impl_->stateActive = false;
 }
 } // namespace snes::frontend

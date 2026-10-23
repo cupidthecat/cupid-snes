@@ -1,6 +1,7 @@
 #include "ConsoleConfig.hpp"
 #include "SdlInputProvider.hpp"
 #include "snes/core/Emulator.hpp"
+#include "snes/core/detail/Sha256.hpp"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdio>
@@ -177,6 +178,54 @@ void Ownership(bool pal) {
   machine.StepFrame();
   Check(target.completed == beforeReset, "Detached input receives no further field notifications");
 }
+void CancelCapture(bool pal) {
+  auto config = snes::tests::DeterministicConsoleConfig();
+  config.regionOverride = pal ? Region::PAL : Region::NTSC;
+  Input captured(2), control(2);
+  Emulator source(config), normal(config);
+  struct Output final : IVideoOutput, IAudioOutput {
+    std::vector<std::array<uint8_t, 32>> audio, video;
+    void Present(const VideoFrame &frame) override {
+      video.push_back(detail::Sha256({reinterpret_cast<const uint8_t *>(frame.pixels.data()),
+                                      frame.pixels.size() * sizeof(uint32_t)}));
+    }
+    void Submit(const AudioBuffer &buffer) override {
+      audio.push_back(
+          detail::Sha256({reinterpret_cast<const uint8_t *>(buffer.interleavedStereo.data()),
+                          buffer.interleavedStereo.size() * sizeof(float)}));
+    }
+  } output, expected;
+  const auto image = Image(8);
+  Load(source, image, &captured);
+  Load(normal, image, &control);
+  source.AttachVideoOutput(&output);
+  source.AttachAudioOutput(&output);
+  normal.AttachVideoOutput(&expected);
+  normal.AttachAudioOutput(&expected);
+  source.StepFrame();
+  const auto before = source.CurrentFrame();
+  bool cancelled = false;
+  try {
+    source.CaptureState(StateOperation([&](const StateProgress &progress) {
+      return progress.phase != StatePhase::Synchronize || source.CurrentFrame() <= before;
+    }));
+  } catch (const StateCancelled &) {
+    cancelled = true;
+  }
+  Check(cancelled && source.CurrentFrame() > before && captured.completed == source.CurrentFrame(),
+        "Cancelled synchronization retains every completed DMA field and input notification");
+  const auto saved = source.CaptureState();
+  while (normal.CurrentFrame() < source.CurrentFrame())
+    normal.StepFrame();
+  Check(saved == normal.CaptureState() && captured.samples == control.samples,
+        "Capture resumes after cancellation with the same turbo input and complete machine");
+  Check(!output.audio.empty() && output.audio == expected.audio && output.video == expected.video,
+        "Cancelled synchronization delivers every crossed audio block and picture in order");
+  source.StepFrame();
+  normal.StepFrame();
+  Check(source.CaptureState() == normal.CaptureState() && captured.samples == control.samples,
+        "Cancelling capture leaves native DMA execution resumable");
+}
 } // namespace
 
 int main() {
@@ -195,6 +244,7 @@ int main() {
         for (unsigned channels : {0, 1, 2, 8})
           CaptureFields(pal, channels, frequency);
       Ownership(pal);
+      CancelCapture(pal);
     }
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

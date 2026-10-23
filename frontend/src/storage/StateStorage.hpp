@@ -2,6 +2,7 @@
 
 #include "session/LaunchRequest.hpp"
 #include "snes/core/Platform.hpp"
+#include "snes/core/StateOperation.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -15,9 +16,10 @@ struct StateFile {
   core::VideoFrame preview;
   uint64_t created = 0;
 
-  static StateFile Read(const std::filesystem::path &path);
+  static StateFile Read(const std::filesystem::path &path,
+                        const core::StateOperation &operation = {});
   static void Write(const std::filesystem::path &path, std::span<const uint8_t> machine,
-                    const core::VideoFrame &picture);
+                    const core::VideoFrame &picture, const core::StateOperation &operation = {});
 };
 
 class StateStorage {

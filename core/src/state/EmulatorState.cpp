@@ -2,6 +2,7 @@
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/detail/Sha256.hpp"
 #include "snes/core/detail/StateArchive.hpp"
+#include "snes/core/detail/StateDigest.hpp"
 #include "snes/core/gameboy/StartupState.hpp"
 
 #include <stdexcept>
@@ -54,9 +55,11 @@ void Emulator::InvalidatePreparedRestores() noexcept {
   restoreLifetime_.reset();
 }
 
-std::vector<uint8_t> Emulator::CaptureState() {
-  SynchronizeState();
+std::vector<uint8_t> Emulator::CaptureState(const StateOperation &operation) {
+  operation.Report(StatePhase::Synchronize);
+  SynchronizeState(operation);
   StateArchive payload;
+  payload.SetProgress(operation);
   SerializeState(payload);
   if (payload.Bytes().size() > StateArchive::MaximumBytes - kHeaderBytes)
     throw std::runtime_error("Machine state exceeds the supported size");
@@ -65,18 +68,20 @@ std::vector<uint8_t> Emulator::CaptureState() {
     header.Expect(byte);
   header.Expect(kVersion);
   header.Expect(uint32_t(payload.Bytes().size()));
-  for (auto byte : detail::Sha256(payload.Bytes()))
+  for (auto byte : detail::StateDigest(payload.Bytes(), operation, StatePhase::Capture))
     header.Expect(byte);
   auto bytes = header.Bytes();
   bytes.insert(bytes.end(), payload.Bytes().begin(), payload.Bytes().end());
   return bytes;
 }
 
-Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uint8_t> bytes) {
+Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uint8_t> bytes,
+                                                             const StateOperation &operation) {
   if (!initialized_)
     throw std::runtime_error("Machine state requires a loaded cartridge");
   if (bytes.size() < kHeaderBytes || bytes.size() > StateArchive::MaximumBytes)
     throw std::runtime_error("Invalid machine state size");
+  operation.Report(StatePhase::Validate);
   auto prepared = std::make_unique<PreparedStateRestore::Impl>();
   prepared->bytes.assign(bytes.begin(), bytes.end());
   const std::span<const uint8_t> owned(prepared->bytes);
@@ -86,10 +91,11 @@ Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uin
     header.Expect(byte);
   header.Expect(kVersion);
   header.Expect(uint32_t(payload.size()));
-  for (auto byte : detail::Sha256(payload))
+  for (auto byte : detail::StateDigest(payload, operation, StatePhase::Validate))
     header.Expect(byte);
   header.Commit();
   prepared->archive = std::make_unique<StateArchive>(payload);
+  prepared->archive->SetProgress(operation);
   SerializeState(*prepared->archive);
   if (prepared->archive->Remaining())
     throw std::runtime_error("Unexpected data after machine state");
@@ -99,8 +105,8 @@ Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uin
   return PreparedStateRestore(std::move(prepared));
 }
 
-void Emulator::RestoreState(std::span<const uint8_t> bytes) {
-  auto prepared = PrepareStateRestore(bytes);
+void Emulator::RestoreState(std::span<const uint8_t> bytes, const StateOperation &operation) {
+  auto prepared = PrepareStateRestore(bytes, operation);
   prepared.Commit();
 }
 

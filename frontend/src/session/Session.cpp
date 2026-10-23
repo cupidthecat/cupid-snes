@@ -116,15 +116,15 @@ void Session::SetStateDirectory(std::filesystem::path directory,
 const StateStorage *Session::States() const noexcept {
   return state_ ? state_->states.get() : nullptr;
 }
-void Session::SaveState(const std::filesystem::path &path) {
+void Session::SaveState(const std::filesystem::path &path, const core::StateOperation &operation) {
   if (!state_)
     throw std::runtime_error("Saving a state requires a loaded game");
-  auto bytes = state_->machine->CaptureState();
-  StateFile::Write(path, bytes, state_->machine->LastFrame());
+  auto bytes = state_->machine->CaptureState(operation);
+  StateFile::Write(path, bytes, state_->machine->LastFrame(), operation);
 }
-void Session::LoadState(const std::filesystem::path &path) {
-  const auto file = StateFile::Read(path);
-  RestoreState(file.machine, RestoreAction::Load);
+void Session::LoadState(const std::filesystem::path &path, const core::StateOperation &operation) {
+  const auto file = StateFile::Read(path, operation);
+  RestoreState(file.machine, RestoreAction::Load, operation);
 }
 bool Session::CanUndoState() const noexcept {
   return state_ && !state_->undo.empty();
@@ -132,22 +132,23 @@ bool Session::CanUndoState() const noexcept {
 bool Session::CanRedoState() const noexcept {
   return state_ && !state_->redo.empty();
 }
-void Session::UndoState() {
+void Session::UndoState(const core::StateOperation &operation) {
   if (!CanUndoState())
     throw std::runtime_error("There is no state load to undo");
-  RestoreState(state_->undo, RestoreAction::Undo);
+  RestoreState(state_->undo, RestoreAction::Undo, operation);
 }
-void Session::RedoState() {
+void Session::RedoState(const core::StateOperation &operation) {
   if (!CanRedoState())
     throw std::runtime_error("There is no state load to redo");
-  RestoreState(state_->redo, RestoreAction::Redo);
+  RestoreState(state_->redo, RestoreAction::Redo, operation);
 }
-void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action) {
+void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
+                           const core::StateOperation &operation) {
   if (!state_)
     throw std::runtime_error("Loading a state requires a loaded game");
   auto &machine = *state_->machine;
-  auto prepared = machine.PrepareStateRestore(bytes);
-  auto previous = machine.CaptureState();
+  auto prepared = machine.PrepareStateRestore(bytes, operation);
+  auto previous = machine.CaptureState(operation);
   prepared.Commit();
   if (action == RestoreAction::Undo) {
     state_->redo = std::move(previous);

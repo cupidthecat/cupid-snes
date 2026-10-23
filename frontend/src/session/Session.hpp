@@ -41,12 +41,12 @@ public:
   void SetStateDirectory(std::filesystem::path directory,
                          const std::function<void()> &persist = {});
   const StateStorage *States() const noexcept;
-  void SaveState(const std::filesystem::path &path);
-  void LoadState(const std::filesystem::path &path);
+  void SaveState(const std::filesystem::path &path, const core::StateOperation &operation = {});
+  void LoadState(const std::filesystem::path &path, const core::StateOperation &operation = {});
   bool CanUndoState() const noexcept;
   bool CanRedoState() const noexcept;
-  void UndoState();
-  void RedoState();
+  void UndoState(const core::StateOperation &operation = {});
+  void RedoState(const core::StateOperation &operation = {});
   void SetFirmware(std::shared_ptr<const core::CartridgeFirmware> firmware) {
     config_.cartridgeFirmware = std::move(firmware);
   }
@@ -54,7 +54,8 @@ public:
 private:
   struct State;
   enum class RestoreAction { Load, Undo, Redo };
-  void RestoreState(std::span<const uint8_t> bytes, RestoreAction action);
+  void RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
+                    const core::StateOperation &operation);
   core::Emulator::Config config_;
   Outputs outputs_;
   std::array<core::ControllerDevice, 2> devices_;

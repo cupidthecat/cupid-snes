@@ -91,12 +91,13 @@ FrameStepResult Emulator::FinishFrame() {
   return {.frameIndex = frameIndex_, .masterCycles = masterCycles_, .latchedInput = frameInput_};
 }
 
-void Emulator::SynchronizeState() {
+void Emulator::SynchronizeState(const StateOperation &operation) {
   if (!initialized_)
     throw std::runtime_error("Machine state requires a loaded cartridge");
   synchronizingState_ = true;
   try {
     for (;;) {
+      operation.Report(StatePhase::Synchronize);
       if (atStateBoundary_) {
         const auto first = dsp_.SamplesWritten();
         collectingAudio_ = frameOpen_;

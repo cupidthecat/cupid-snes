@@ -1,5 +1,7 @@
 #pragma once
 
+#include "snes/core/StateOperation.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -29,6 +31,12 @@ public:
   explicit StateArchive(std::span<const uint8_t> bytes);
   StateArchive(const StateArchive &) = delete;
   StateArchive &operator=(const StateArchive &) = delete;
+  void SetProgress(StateOperation progress) {
+    progress_ = std::move(progress);
+  }
+  const StateOperation &Progress() const noexcept {
+    return progress_;
+  }
 
   bool Reading() const noexcept {
     return mode_ != Mode::Write;
@@ -172,15 +180,19 @@ public:
     Operation operation(*this);
     if (!Reading()) {
       WriteCount(values.size(), maximumElements);
-      for (const T value : values)
-        WriteNumber(value);
+      for (size_t index = 0; index < values.size(); ++index) {
+        ReportProgress(index, values.size(), WireSize<T>());
+        WriteNumber(values[index]);
+      }
       return values.size();
     }
     const auto count = ReadCount(maximumElements, WireSize<T>());
     ReserveStaging(count, sizeof(T));
     auto next = std::make_shared<std::vector<T>>(count);
-    for (size_t index = 0; index < count; ++index)
+    for (size_t index = 0; index < count; ++index) {
+      ReportProgress(index, count, WireSize<T>());
       (*next)[index] = ReadNumber<T>();
+    }
     Replace(values, std::move(next));
     return count;
   }
@@ -196,7 +208,7 @@ public:
     }
     ReserveStaging(1, sizeof(T));
     auto next = std::make_shared<T>(value);
-    StateArchive scratch(Mode::Scratch, input_.subspan(position_), plan_);
+    StateArchive scratch(Mode::Scratch, input_.subspan(position_), plan_, progress_);
     scratch.VisitObject(visit, *next);
     position_ += scratch.position_;
     Replace(value, std::move(next));
@@ -222,7 +234,7 @@ public:
     const auto count = ReadCount(maximumElements, 1);
     ReserveStaging(count, sizeof(T));
     auto next = std::make_shared<std::vector<T>>(count);
-    StateArchive scratch(Mode::Scratch, input_.subspan(position_), plan_);
+    StateArchive scratch(Mode::Scratch, input_.subspan(position_), plan_, progress_);
     for (auto &item : *next)
       scratch.VisitObject(visit, item);
     position_ += scratch.position_;
@@ -232,6 +244,7 @@ public:
 
   template <class Visit> void Section(uint32_t tag, Visit visit) {
     Operation operation(*this);
+    progress_.Report(Reading() ? StatePhase::Validate : StatePhase::Capture);
     Expect(tag);
     if (!Reading()) {
       const auto lengthAt = output_.size();
@@ -242,7 +255,7 @@ public:
     } else {
       const auto length = ReadUnsigned(4);
       Require(length <= Remaining(), "Truncated machine state section");
-      StateArchive section(mode_, input_.subspan(position_, size_t(length)), plan_);
+      StateArchive section(mode_, input_.subspan(position_, size_t(length)), plan_, progress_);
       section.VisitSection(visit);
       Require(section.Remaining() == 0, "Unexpected data in machine state section");
       position_ += size_t(length);
@@ -274,7 +287,13 @@ private:
     bool committed = false;
     bool failed = false;
   };
-  StateArchive(Mode mode, std::span<const uint8_t> bytes, std::shared_ptr<RestorePlan> plan);
+  StateArchive(Mode mode, std::span<const uint8_t> bytes, std::shared_ptr<RestorePlan> plan,
+               StateOperation progress);
+  void ReportProgress(size_t index, size_t total, size_t bytes) const {
+    if (progress_ && (index & 16383) == 0)
+      progress_.Report(Reading() ? StatePhase::Validate : StatePhase::Capture, index * bytes,
+                       total * bytes);
+  }
   void Require(bool condition, const char *message);
   void Invalidate() noexcept;
   void WriteUnsigned(uint64_t value, size_t bytes);
@@ -361,5 +380,6 @@ private:
   std::span<const uint8_t> input_;
   size_t position_ = 0;
   std::shared_ptr<RestorePlan> plan_;
+  StateOperation progress_;
 };
 } // namespace snes::core::detail

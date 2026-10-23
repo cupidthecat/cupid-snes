@@ -27,6 +27,15 @@ template <class Operation> void Reject(Operation operation, const char *message)
   }
   Check(rejected, message);
 }
+template <class Operation> void Cancelled(Operation operation) {
+  bool cancelled = false;
+  try {
+    operation();
+  } catch (const snes::core::StateCancelled &) {
+    cancelled = true;
+  }
+  Check(cancelled, "Cancellation propagates distinctly from file or state errors");
+}
 void Write(const fs::path &path, std::span<const uint8_t> bytes) {
   std::ofstream file(path, std::ios::binary);
   file.write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
@@ -132,6 +141,45 @@ void Catalog(const fs::path &directory) {
           "Competition settings participate in state identity");
   }
 }
+void CancelFiles(const fs::path &directory) {
+  using namespace snes::core;
+  const auto path = directory / "atomic-cancel.bin";
+  const std::vector<uint8_t> original(1024 * 1024 + 19, 0x37), next(original.size(), 0xa1);
+  WriteFileAtomically(path, original);
+  const auto entries = [&] {
+    std::set<fs::path> paths;
+    for (const auto &entry : fs::directory_iterator(directory))
+      paths.insert(entry.path());
+    return paths;
+  };
+  const auto before = entries();
+  for (bool final : {false, true}) {
+    const StateOperation operation([&](const StateProgress &progress) {
+      Check(progress.phase == StatePhase::WriteFile && progress.completed <= progress.total,
+            "File writes report their current byte extent");
+      return final ? progress.completed != progress.total : progress.completed < 65536;
+    });
+    Cancelled([&] { WriteFileAtomically(path, next, operation); });
+    Check(ReadFile(path, original.size()) == original && entries() == before,
+          "Cancelled writes retain the old bytes and remove their own temporary file");
+  }
+  const auto missing = directory / "cancelled-new.bin";
+  Cancelled([&] {
+    WriteFileAtomically(missing, next, StateOperation([](const StateProgress &progress) {
+                          return progress.completed != progress.total;
+                        }));
+  });
+  Check(!fs::exists(missing) && entries() == before,
+        "Cancellation before publication leaves no new file or temporary artifact");
+  Cancelled([&] {
+    ReadFile(path, original.size(), StateOperation([](const StateProgress &progress) {
+               return progress.completed < 65536;
+             }));
+  });
+  Check(ReadFile(path, original.size()) == original, "Cancelled reads retain the source file");
+  WriteFileAtomically(path, next);
+  Check(ReadFile(path, next.size()) == next, "An atomic write can be retried after cancellation");
+}
 void Workflow(const fs::path &directory, const fs::path &exportFile, const fs::path &importFile) {
   const auto rom = directory / "game.sfc";
   Write(rom, Image());
@@ -183,6 +231,36 @@ void Workflow(const fs::path &directory, const fs::path &exportFile, const fs::p
   Check(machine->CaptureState() == second && !session.CanUndoState() && session.CanRedoState() &&
             session.Devices().ports[0] == snes::core::ControllerDevice::Multitap,
         "Undo restores the pre-load execution and live device selection");
+  const auto previousFile = ReadFile(quick, 8 * 1024 * 1024);
+  using namespace snes::core;
+  for (auto phase :
+       {StatePhase::ReadFile, StatePhase::Validate, StatePhase::Capture, StatePhase::Commit}) {
+    Cancelled([&] {
+      session.LoadState(quick, StateOperation([phase](const StateProgress &progress) {
+                          return progress.phase != phase;
+                        }));
+    });
+    Check(machine->CaptureState() == second && session.CanRedoState() && !session.CanUndoState() &&
+              session.Devices().ports[0] == ControllerDevice::Multitap,
+          "Cancelled load retains live execution, device selection and previous redo");
+  }
+  for (auto phase : {StatePhase::Capture, StatePhase::WriteFile}) {
+    Cancelled([&] {
+      session.SaveState(quick, StateOperation([phase](const StateProgress &progress) {
+                          return progress.phase != phase || (phase == StatePhase::WriteFile &&
+                                                             progress.completed != progress.total);
+                        }));
+    });
+    Check(ReadFile(quick, 8 * 1024 * 1024) == previousFile && machine->CaptureState() == second &&
+              session.CanRedoState() && !session.CanUndoState(),
+          "Cancelled save retains the old slot and previous redo history");
+  }
+  Cancelled([&] {
+    session.RedoState(StateOperation(
+        [](const StateProgress &progress) { return progress.phase != StatePhase::Commit; }));
+  });
+  Check(machine->CaptureState() == second && session.CanRedoState(),
+        "Cancelled redo retains its state and can be retried");
   const auto corrupt = directory / "corrupt.cst";
   auto invalid = first;
   invalid[8] ^= 1;
@@ -239,6 +317,7 @@ int main(int argc, char **argv) {
   try {
     Files(directory);
     Catalog(directory);
+    CancelFiles(directory);
     Workflow(directory, argc > 1 ? snes::core::FilePath(argv[1]) : fs::path{},
              argc > 2 ? snes::core::FilePath(argv[2]) : fs::path{});
   } catch (const std::exception &error) {

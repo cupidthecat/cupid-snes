@@ -1,5 +1,6 @@
 #include "snes/core/PowerOnState.hpp"
 #include "snes/core/detail/StateArchive.hpp"
+#include "snes/core/detail/StateDigest.hpp"
 
 #include <array>
 #include <cmath>
@@ -362,6 +363,75 @@ void ResourceRechecks() {
   writer.RecheckBeforeRestore([&]() { ++checks; });
   Check(checks == 2, "Writing state never rechecks host resources");
 }
+void ProgressCancellation() {
+  using namespace snes::core;
+  std::vector<uint8_t> memory(200013, 0x39);
+  StateArchive writer;
+  writer.Section(1, [&](auto &fields) { fields.Fixed(std::span(memory)); });
+  for (bool reading : {false, true}) {
+    bool cancelled = false;
+    unsigned reports = 0;
+    StateArchive archive(reading ? std::span<const uint8_t>(writer.Bytes())
+                                 : std::span<const uint8_t>{});
+    auto output = reading ? std::unique_ptr<StateArchive>{} : std::make_unique<StateArchive>();
+    auto &fields = reading ? archive : *output;
+    fields.SetProgress(StateOperation([&](const StateProgress &progress) {
+      ++reports;
+      Check(progress.completed <= progress.total, "Progress stays within its current extent");
+      return false;
+    }));
+    const auto original = memory;
+    try {
+      if (reading)
+        fields.Section(1, [](auto &) {});
+      else
+        fields.Fixed(std::span(memory));
+    } catch (const StateCancelled &) {
+      cancelled = true;
+    }
+    Check(cancelled && reports == 1 && memory == original,
+          "Cancellation escapes capture and staged traversal without changing live memory");
+    if (reading)
+      Reject([&] { fields.Commit(); }, "Cancelled validation poisons its restore plan");
+  }
+  uint64_t completed = 0;
+  const auto digest = snes::core::detail::StateDigest(
+      memory, StateOperation([&](const StateProgress &progress) {
+        Check(progress.total == memory.size() && progress.completed >= completed,
+              "Chunked checksums report increasing byte offsets");
+        completed = progress.completed;
+        return true;
+      }),
+      StatePhase::Validate);
+  Check(completed == memory.size() && digest == snes::core::detail::Sha256(memory),
+        "Progress reporting retains the exact checksum");
+  for (unsigned cancelAt : {1, 2}) {
+    uint8_t value = 9;
+    unsigned reports = 0, prepared = 0, checked = 0;
+    const std::array<uint8_t, 1> bytes{7};
+    StateArchive reader(bytes);
+    reader.Number(value);
+    reader.BeforeRestore([&]() noexcept { ++prepared; });
+    reader.RecheckBeforeRestore([&] {
+      ++checked;
+      reader.Progress().Report(StatePhase::Media);
+    });
+    reader.SetProgress(StateOperation([&](const StateProgress &progress) {
+      Check(progress.phase == StatePhase::Commit || progress.phase == StatePhase::Media,
+            "Commit and resource rechecks retain progress reporting");
+      return ++reports != cancelAt;
+    }));
+    bool cancelled = false;
+    try {
+      reader.Commit();
+    } catch (const StateCancelled &) {
+      cancelled = true;
+    }
+    Check(cancelled && value == 9 && prepared == 0 && checked == cancelAt - 1,
+          "Commit and resource cancellation precede execution release and state publication");
+    Reject([&] { reader.Commit(); }, "A cancelled commit cannot be retried");
+  }
+}
 } // namespace
 
 int main() {
@@ -373,6 +443,7 @@ int main() {
     RestorePreparation();
     EntropyContinuation();
     ResourceRechecks();
+    ProgressCancellation();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

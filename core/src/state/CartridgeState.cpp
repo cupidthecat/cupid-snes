@@ -1,6 +1,7 @@
 #include "snes/core/Cartridge.hpp"
 #include "snes/core/detail/Sha256.hpp"
 #include "snes/core/detail/StateArchive.hpp"
+#include "snes/core/detail/StateDigest.hpp"
 #include "snes/core/gameboy/Adapter.hpp"
 
 #include <tuple>
@@ -14,7 +15,8 @@ void Cartridge::SynchronizeState() {
 void Cartridge::SerializeState(detail::StateArchive &archive) {
   archive.Expect(uint64_t(rom_.size()));
   if (!stateRomIdentity_)
-    stateRomIdentity_ = std::make_unique<std::array<uint8_t, 32>>(detail::Sha256(rom_));
+    stateRomIdentity_ = std::make_unique<std::array<uint8_t, 32>>(detail::StateDigest(
+        rom_, archive.Progress(), archive.Reading() ? StatePhase::Validate : StatePhase::Capture));
   for (auto byte : *stateRomIdentity_)
     archive.Expect(byte);
   archive.Expect(static_cast<uint32_t>(header_.mapping));

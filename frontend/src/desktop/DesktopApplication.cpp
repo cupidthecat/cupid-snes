@@ -177,6 +177,63 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
         audio.Resume();
       refresh();
     };
+    const auto runStateOperation = [&](const char *title, bool restoring, auto perform) {
+      const bool relativeMouse = SDL_GetWindowRelativeMouseMode(video.Window());
+      audio.Pause();
+      if (relativeMouse)
+        SDL_SetWindowRelativeMouseMode(video.Window(), false);
+      menu.ResetHotkeys();
+      ui.BeginStateOperation(title);
+      uint64_t nextProgressFrame = 0;
+      const core::StateOperation operation([&](const core::StateProgress &progress) {
+        ui.UpdateStateOperation(progress);
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+          ui.ProcessEvent(event);
+          if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            quitPending = true;
+            ui.CancelStateOperation();
+          } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_ESCAPE)
+            ui.CancelStateOperation();
+          (void)menu.GamepadCommands(event, false);
+        }
+        const auto now = SDL_GetTicksNS();
+        if (now >= nextProgressFrame || ui.StateOperationCancelled()) {
+          ui.Frame();
+          video.Redraw();
+          nextProgressFrame = now + 16'000'000;
+        }
+        return !ui.StateOperationCancelled();
+      });
+      const auto finish = [&](bool succeeded) {
+        ui.EndStateOperation();
+        menu.ResetHotkeys();
+        if (relativeMouse)
+          input.ResetSampling();
+        if ((succeeded && restoring) || paused || focusPaused || quitPending)
+          audio.Clear();
+        picturePending = false;
+        pacer.Reset();
+        ui.Frame();
+        nextUiFrame = SDL_GetTicksNS() + 16'000'000;
+        video.Redraw();
+        if (!paused && !focusPaused && !quitPending)
+          audio.Resume();
+      };
+      try {
+        perform(operation);
+      } catch (const core::StateCancelled &) {
+        finish(false);
+        capturedState();
+        ui.SetStatus("State operation cancelled");
+        return false;
+      } catch (...) {
+        finish(false);
+        throw;
+      }
+      finish(true);
+      return true;
+    };
     const auto open = [&](const LaunchRequest &request) {
       session.Open(request);
       input.ResetSampling();
@@ -346,23 +403,37 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           }
           switch (command) {
           case Command::QuickSave: {
-            session.SaveState(session.States()->Path(StateStorage::Quick(preferences.stateSlot)));
+            if (!runStateOperation("Saving state", false, [&](const auto &operation) {
+                  session.SaveState(
+                      session.States()->Path(StateStorage::Quick(preferences.stateSlot)),
+                      operation);
+                }))
+              break;
             capturedState();
             ui.SetStatus("Saved quick slot " + std::to_string(preferences.stateSlot + 1));
             break;
           }
           case Command::QuickLoad:
-            session.LoadState(session.States()->Path(StateStorage::Quick(preferences.stateSlot)));
+            if (!runStateOperation("Loading state", true, [&](const auto &operation) {
+                  session.LoadState(
+                      session.States()->Path(StateStorage::Quick(preferences.stateSlot)),
+                      operation);
+                }))
+              break;
             restoredState();
             ui.SetStatus("Loaded quick slot " + std::to_string(preferences.stateSlot + 1));
             break;
           case Command::UndoState:
-            session.UndoState();
+            if (!runStateOperation("Undoing state load", true,
+                                   [&](const auto &operation) { session.UndoState(operation); }))
+              break;
             restoredState();
             ui.SetStatus("State load undone");
             break;
           case Command::RedoState:
-            session.RedoState();
+            if (!runStateOperation("Redoing state load", true,
+                                   [&](const auto &operation) { session.RedoState(operation); }))
+              break;
             restoredState();
             ui.SetStatus("State load redone");
             break;
@@ -481,6 +552,11 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       }
       if (!running)
         break;
+      if (quitPending && !dialogs.Active()) {
+        quitPending = false;
+        execute(DesktopCommand::Quit);
+        continue;
+      }
       if (const auto changes = ui.PreferencesEditor().TakeChanges()) {
         try {
           applyPreferences(*changes);
@@ -496,23 +572,36 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       }
       if (const auto action = ui.StateManager().TakeAction()) {
         try {
+          bool completed = true;
           using Kind = StateManagerDialog::Action::Kind;
           switch (action->kind) {
           case Kind::Save:
-            session.SaveState(session.States()->Path(action->key));
-            capturedState();
+            completed = runStateOperation("Saving state", false, [&](const auto &operation) {
+              session.SaveState(session.States()->Path(action->key), operation);
+            });
+            if (completed)
+              capturedState();
             break;
           case Kind::Load:
-            session.LoadState(session.States()->Path(action->key));
-            restoredState();
+            completed = runStateOperation("Loading state", true, [&](const auto &operation) {
+              session.LoadState(session.States()->Path(action->key), operation);
+            });
+            if (completed)
+              restoredState();
             break;
           case Kind::Undo:
-            session.UndoState();
-            restoredState();
+            completed = runStateOperation("Undoing state load", true, [&](const auto &operation) {
+              session.UndoState(operation);
+            });
+            if (completed)
+              restoredState();
             break;
           case Kind::Redo:
-            session.RedoState();
-            restoredState();
+            completed = runStateOperation("Redoing state load", true, [&](const auto &operation) {
+              session.RedoState(operation);
+            });
+            if (completed)
+              restoredState();
             break;
           case Kind::Rename:
             session.States()->Rename(action->key, action->name);
@@ -521,7 +610,10 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             session.States()->Remove(action->key);
             break;
           }
-          ui.StateManager().Completed(session.CanUndoState(), session.CanRedoState());
+          if (completed)
+            ui.StateManager().Completed(session.CanUndoState(), session.CanRedoState());
+          else
+            ui.StateManager().Rejected({});
         } catch (const std::exception &error) {
           ui.StateManager().Rejected(error.what());
         }
@@ -553,6 +645,11 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       } catch (const std::exception &error) {
         setPaused(dialogWasPaused);
         report(error);
+      }
+      if (quitPending && !dialogs.Active()) {
+        quitPending = false;
+        execute(DesktopCommand::Quit);
+        continue;
       }
       auto *emulator = session.Machine();
       const bool focused = WindowFocused(video.Window());

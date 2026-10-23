@@ -424,6 +424,91 @@ void Portable(const char *path) {
   Check(bool(output), "Write portable MSU fixture");
   std::printf("Portable MSU fixture: %llu bytes\n", (unsigned long long)size);
 }
+void CancelMedia() {
+  using namespace snes::core;
+  stage = "cancel media";
+  Media media("cancel.sfc", 4 * 65536 + 37);
+  Msu1 chip, control;
+  Check(chip.Open(media.rom) && control.Open(media.rom), "Open cancellable media streams");
+  for (auto *device : {&chip, &control}) {
+    Select(*device, 1);
+    Seek(*device, 17003);
+    (void)device->Read(0x2001);
+    (void)device->Clock();
+  }
+  StateArchive capture;
+  bool reached = false, cancelled = false;
+  capture.SetProgress(StateOperation([&](const StateProgress &progress) {
+    if (progress.phase == StatePhase::Media && progress.completed >= 65536 &&
+        progress.completed < progress.total) {
+      reached = true;
+      return false;
+    }
+    return true;
+  }));
+  try {
+    chip.SerializeState(capture);
+  } catch (const StateCancelled &) {
+    cancelled = true;
+  }
+  Check(reached && cancelled, "Cold media fingerprint can cancel between read chunks");
+  for (unsigned n = 0; n < 2048; ++n)
+    Check(chip.Read(0x2001) == control.Read(0x2001) && chip.Clock() == control.Clock(),
+          "Cancelled media capture preserves both stream cursors and future samples");
+  const auto saved = Capture(chip);
+  Check(saved == Capture(control), "A cancelled fingerprint can be captured again exactly");
+  (void)chip.Clock();
+  const auto before = Capture(chip);
+  for (bool commit : {false, true}) {
+    bool committing = false;
+    StateArchive reader(saved);
+    reader.SetProgress(StateOperation([&](const StateProgress &progress) {
+      return progress.phase != StatePhase::Media || (commit && !committing);
+    }));
+    cancelled = false;
+    try {
+      chip.SerializeState(reader);
+      committing = true;
+      reader.Commit();
+    } catch (const StateCancelled &) {
+      cancelled = true;
+    }
+    Check(cancelled && Capture(chip) == before,
+          "Media cancellation escapes reuse fallback and the final resource recheck");
+    bool poisoned = false;
+    try {
+      reader.Commit();
+    } catch (const std::runtime_error &) {
+      poisoned = true;
+    }
+    Check(poisoned, "Cancelled media preparation permanently invalidates its plan");
+  }
+  Restore(chip, saved);
+  Check(Capture(chip) == saved, "Matching media can restore after cancellation");
+#ifndef _WIN32
+  // A progress observer can yield to host work while a cached identity is checked.
+  bool changed = false, rejected = false;
+  StateArchive late(saved);
+  late.SetProgress(StateOperation([&](const StateProgress &progress) {
+    if (!changed && progress.phase == StatePhase::Media && progress.total > 65536 &&
+        progress.completed == progress.total) {
+      changed = true;
+      std::fstream file(media.Data(), std::ios::in | std::ios::out | std::ios::binary);
+      file.seekp(-1, std::ios::end);
+      file.put(0x19);
+      file.close();
+      Check(bool(file), "Change cached media during a progress callback");
+    }
+    return true;
+  }));
+  try {
+    chip.SerializeState(late);
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  Check(changed && rejected, "Cached media is checked again after yielding to its observer");
+#endif
+}
 } // namespace
 int main(int argc, char **argv) {
   try {
@@ -436,6 +521,7 @@ int main(int argc, char **argv) {
     RenamedOpenMedia();
     PlaybackEdges();
     InvalidFieldsAndMoves();
+    CancelMedia();
     const auto cuts = Continuation();
     if (argc == 2)
       Portable(argv[1]);

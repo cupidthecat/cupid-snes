@@ -1,6 +1,8 @@
 // Top-level emulator lifecycle and subsystem interface.
 
 #pragma once
+
+#include "snes/core/StateOperation.hpp"
 // Owns every hardware subsystem and wires them together:
 //   CPU (65816)  ↔  MemoryBus  ↔  PPU / APU / DMA / Cartridge
 //   Timing → DRAM refresh, HDMA, NMI/IRQ polling, auto-joypad
@@ -193,9 +195,10 @@ public:
 
   // Call between emulation steps. Capture may complete pending hardware work
   // and deliver crossed fields. Restore retains the target's platform bindings.
-  std::vector<uint8_t> CaptureState();
-  PreparedStateRestore PrepareStateRestore(std::span<const uint8_t> bytes);
-  void RestoreState(std::span<const uint8_t> bytes);
+  std::vector<uint8_t> CaptureState(const StateOperation &operation = {});
+  PreparedStateRestore PrepareStateRestore(std::span<const uint8_t> bytes,
+                                           const StateOperation &operation = {});
+  void RestoreState(std::span<const uint8_t> bytes, const StateOperation &operation = {});
   const VideoFrame &LastFrame() const noexcept {
     return videoOutputFrame_;
   }
@@ -251,7 +254,7 @@ private:
   void AdvanceClocks(uint32_t clocks);
   void SynchronizeDevices(bool communication = false);
   void RouteDspSamples(int firstSample);
-  void SynchronizeState();
+  void SynchronizeState(const StateOperation &operation);
   void SerializeState(detail::StateArchive &archive);
   void BeginFrame();
   FrameStepResult FinishFrame();

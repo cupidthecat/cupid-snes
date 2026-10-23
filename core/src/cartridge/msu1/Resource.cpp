@@ -1,4 +1,5 @@
 #include "Resource.hpp"
+#include "snes/core/FilePath.hpp"
 #include "snes/core/detail/Sha256.hpp"
 
 #include <algorithm>
@@ -165,7 +166,10 @@ size_t Msu1::Stream::Resource::Read(uint64_t offset, std::span<uint8_t> bytes) {
     return 0;
   return std::fread(bytes.data(), 1, bytes.size(), file);
 }
-const Msu1::Stream::Resource::Key &Msu1::Stream::Resource::Fingerprint() {
+const Msu1::Stream::Resource::Key &
+Msu1::Stream::Resource::Fingerprint(const StateOperation &operation) {
+  const auto label = operation ? PathText(path.filename()) : std::string{};
+  operation.Report(StatePhase::Media, 0, size, label);
 #ifdef _WIN32
   ReadLease lease(path);
   const auto observe = [&] { return Observe(file, lease); };
@@ -173,8 +177,12 @@ const Msu1::Stream::Resource::Key &Msu1::Stream::Resource::Fingerprint() {
   const auto observe = [&] { return Observe(file); };
 #endif
   const auto before = observe();
-  if (identity && stamp && before == stamp && Attached(path, before))
+  if (identity && stamp && before == stamp && Attached(path, before)) {
+    operation.Report(StatePhase::Media, identity->size, identity->size, label);
+    if (operation && (observe() != before || !Attached(path, before)))
+      throw std::runtime_error("MSU-1 media changed while preparing a checkpoint");
     return *identity;
+  }
   std::clearerr(file);
   const auto position = Position(file);
   struct Cursor {
@@ -197,12 +205,14 @@ const Msu1::Stream::Resource::Key &Msu1::Stream::Resource::Fingerprint() {
   std::array<uint8_t, 65536> buffer;
   auto remaining = next.size;
   while (remaining) {
+    operation.Report(StatePhase::Media, next.size - remaining, next.size, label);
     const auto count = size_t(std::min<uint64_t>(buffer.size(), remaining));
     if (std::fread(buffer.data(), 1, count, file) != count)
       throw std::runtime_error("MSU-1 media changed while preparing a checkpoint");
     hash.Update(std::span(buffer).first(count));
     remaining -= count;
   }
+  operation.Report(StatePhase::Media, next.size, next.size, label);
   const auto after = observe();
   if (!Seek(file, 0, SEEK_END) || Position(file) != end || before != after)
     throw std::runtime_error("MSU-1 media changed while preparing a checkpoint");

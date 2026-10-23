@@ -1,6 +1,7 @@
 #pragma once
 
 #include "snes/core/Msu1.hpp"
+#include "snes/core/StateOperation.hpp"
 
 #include <array>
 #include <cstdio>
@@ -17,7 +18,7 @@ struct Msu1::Stream::Resource {
     uint64_t size = 0;
     std::array<uint8_t, 32> digest{};
   };
-  const Key &Fingerprint();
+  const Key &Fingerprint(const StateOperation &operation = {});
   size_t Read(uint64_t offset, std::span<uint8_t> bytes);
   uint64_t Size() const noexcept {
     return size;

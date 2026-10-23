@@ -11,7 +11,7 @@ bool Msu1::Stream::SerializeState(detail::StateArchive &archive, const std::file
   if (!archive.Reading()) {
     archive.Validate(state_.opened == IsOpen(), "Invalid MSU-1 stream attachment");
     if (resource_) {
-      const auto &key = resource_->Fingerprint();
+      const auto &key = resource_->Fingerprint(archive.Progress());
       state_.identity = key.digest;
       state_.mediaSize = key.size;
     }
@@ -41,7 +41,7 @@ bool Msu1::Stream::SerializeState(detail::StateArchive &archive, const std::file
     archive.Validate(!path.empty(), "MSU-1 checkpoint needs attached media");
     if (reuse && resource_) {
       try {
-        const auto &key = resource_->Fingerprint();
+        const auto &key = resource_->Fingerprint(archive.Progress());
         if (key.size == next.mediaSize && key.digest == next.identity)
           prepared = resource_;
       } catch (const std::runtime_error &) {
@@ -52,14 +52,15 @@ bool Msu1::Stream::SerializeState(detail::StateArchive &archive, const std::file
       prepared = Resource::Open(path);
       archive.Validate(prepared && prepared->Size() == next.mediaSize,
                        "MSU-1 checkpoint media is missing or has a different size");
-      const auto &key = prepared->Fingerprint();
+      const auto &key = prepared->Fingerprint(archive.Progress());
       archive.Validate(key.size == next.mediaSize && key.digest == next.identity,
                        "MSU-1 checkpoint media content differs");
     }
   }
   if (prepared)
-    archive.RecheckBeforeRestore([prepared, size = next.mediaSize, identity = next.identity]() {
-      const auto &key = prepared->Fingerprint();
+    archive.RecheckBeforeRestore([prepared, size = next.mediaSize, identity = next.identity,
+                                  operation = archive.Progress()]() {
+      const auto &key = prepared->Fingerprint(operation);
       if (key.size != size || key.digest != identity)
         throw std::runtime_error("MSU-1 checkpoint media changed before restore");
     });
