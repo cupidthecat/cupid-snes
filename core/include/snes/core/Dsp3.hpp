@@ -5,12 +5,16 @@
 #include <cstdint>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 // Command-level model of the cartridge's hex-map and bitstream processor.
 class Dsp3 {
 public:
   Dsp3() = default;
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint16_t address);
   void Write(uint16_t address, uint8_t value);
   static bool Selects(uint32_t address) noexcept;

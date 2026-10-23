@@ -28,6 +28,10 @@ add_executable(snes_spc7110_state_tests test_spc7110_state.cpp)
 target_link_libraries(snes_spc7110_state_tests PRIVATE snes_core)
 snes_add_check(snes_spc7110_state_tests snes_spc7110_state_tests)
 
+add_executable(snes_command_dsp_state_tests test_command_dsp_state.cpp)
+target_link_libraries(snes_command_dsp_state_tests PRIVATE snes_core)
+snes_add_check(snes_command_dsp_state_tests snes_command_dsp_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )

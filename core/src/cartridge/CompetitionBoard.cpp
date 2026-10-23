@@ -1,6 +1,7 @@
 #include "snes/core/CompetitionBoard.hpp"
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Timing.hpp"
+#include "snes/core/detail/Sha256.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -10,7 +11,10 @@ namespace snes::core {
 
 CompetitionBoard::CompetitionBoard(Settings settings, Images images)
     : settings_(settings), images_(std::move(images)), save_(settings.saveRamSize, 0xff),
-      commandDsp_(std::make_unique<Dsp1>()), masterFrequency_(Timing::kMasterClockHz) {}
+      commandDsp_(std::make_unique<Dsp1>()), masterFrequency_(Timing::kMasterClockHz) {
+  for (unsigned index = 0; index < images_.size(); ++index)
+    imageDigests_[index] = detail::Sha256(images_[index]);
+}
 
 bool CompetitionBoard::LoadFirmware(std::span<const uint8_t> bytes) {
   auto processor = std::make_unique<UpdDsp>();

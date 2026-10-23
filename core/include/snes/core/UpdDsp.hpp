@@ -6,6 +6,9 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 // The two cartridge DSP revisions share an instruction set and host data port.
 class UpdDsp {
@@ -37,6 +40,7 @@ public:
   explicit UpdDsp(Revision revision = Revision::Upd7725);
   bool LoadFirmware(std::span<const uint8_t> bytes);
   void Reset(); // Processor RAM remains powered.
+  void SerializeState(detail::StateArchive &archive);
   void Step();
   uint8_t ReadStatus() const noexcept;
   uint8_t ReadData();

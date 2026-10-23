@@ -31,7 +31,7 @@ uint8_t Dsp1::GetSr() {
 }
 
 uint8_t Dsp1::GetDr() {
-  uint8_t data;
+  uint8_t data = static_cast<uint8_t>(dr_ >> ((sr_ & DRS) ? 8 : 0));
   fsmStep(true, data);
   return data;
 }

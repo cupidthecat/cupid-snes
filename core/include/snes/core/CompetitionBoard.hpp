@@ -27,6 +27,7 @@ public:
   CompetitionBoard(Settings settings, Images images);
   bool LoadFirmware(std::span<const uint8_t> bytes);
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void SetPal(bool pal);
   void Advance(uint32_t masterClocks);
   void MapCpu(MemoryBus &bus, uint8_t slot) const;
@@ -50,6 +51,7 @@ private:
 
   Settings settings_;
   Images images_;
+  std::array<std::array<uint8_t, 32>, 4> imageDigests_{};
   std::vector<uint8_t> save_;
   std::unique_ptr<UpdDsp> processor_;
   std::unique_ptr<Dsp1> commandDsp_;
