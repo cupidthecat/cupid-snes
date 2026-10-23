@@ -17,6 +17,8 @@ add_library(snes_core
   src/state/CommandDspState.cpp
   src/state/MapDspState.cpp
   src/state/SignalProcessorState.cpp
+  src/state/ArmState.cpp
+  src/state/St018State.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp
