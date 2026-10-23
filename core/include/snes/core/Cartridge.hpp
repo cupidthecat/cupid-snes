@@ -137,6 +137,8 @@ private:
 };
 
 class Cartridge {
+  friend class MemoryInspector;
+
 public:
   using GameBoyAudioSink = std::function<void(int16_t left, int16_t right, uint32_t sampleRate)>;
   Cartridge();

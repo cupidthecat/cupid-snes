@@ -9,9 +9,15 @@ namespace snes::core::detail {
 class StateArchive;
 }
 
+namespace snes::core {
+class MemoryInspector;
+}
+
 namespace snes::core::gameboy {
 
 class Peripherals final : public Machine::Devices {
+  friend class ::snes::core::MemoryInspector;
+
 public:
   void SerializeState(detail::StateArchive &archive);
   Peripherals(Video::Output &video, Audio::Output &audio) : video_(video), audio_(audio) {}

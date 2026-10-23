@@ -1057,4 +1057,8 @@ std::optional<size_t> SuperFx::CheatRomOffset(uint32_t address) const {
   return {};
 }
 
+std::span<const uint8_t> SuperFx::InspectCache() const noexcept {
+  return impl_->cache;
+}
+
 } // namespace snes::core

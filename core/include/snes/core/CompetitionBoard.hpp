@@ -15,6 +15,8 @@ namespace snes::core {
 class MemoryBus;
 
 class CompetitionBoard {
+  friend class MemoryInspector;
+
 public:
   enum class Board { CampusChallenge92, PowerFest94 };
   struct Settings {

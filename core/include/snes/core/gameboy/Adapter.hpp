@@ -14,9 +14,15 @@ namespace snes::core::detail {
 class StateArchive;
 }
 
+namespace snes::core {
+class MemoryInspector;
+}
+
 namespace snes::core::gameboy {
 
 class Adapter final : private Audio::Output {
+  friend class ::snes::core::MemoryInspector;
+
 public:
   void SerializeState(detail::StateArchive &archive);
   using AudioSink = std::function<void(int16_t left, int16_t right, uint32_t sampleRate)>;

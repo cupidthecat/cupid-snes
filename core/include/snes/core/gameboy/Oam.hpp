@@ -8,9 +8,15 @@ namespace snes::core::detail {
 class StateArchive;
 }
 
+namespace snes::core {
+class MemoryInspector;
+}
+
 namespace snes::core::gameboy {
 
 class Oam {
+  friend class ::snes::core::MemoryInspector;
+
 public:
   void SerializeState(detail::StateArchive &archive);
   void Reset(bool secondModel) noexcept;

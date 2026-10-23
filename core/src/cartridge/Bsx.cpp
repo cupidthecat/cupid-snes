@@ -159,6 +159,10 @@ std::span<uint8_t> Bsx::Psram() noexcept {
   return impl_->psram;
 }
 
+std::span<const uint8_t> Bsx::Psram() const noexcept {
+  return impl_->psram;
+}
+
 bool Bsx::Selects(uint32_t address) noexcept {
   address &= 0xffffff;
   const unsigned bank = address >> 16, halfBank = bank & 0x7f, offset = address & 0xffff;

@@ -42,6 +42,7 @@ struct Session::State {
   CheatBook cheats;
   std::filesystem::path cheatPath;
   std::string cheatError;
+  std::unique_ptr<MemoryTools> memory;
 };
 
 Session::Session(core::Emulator::Config config, Outputs outputs,
@@ -251,6 +252,14 @@ void Session::ReloadCheats() {
   state_->machine->SetCheats(book.Compile(state_->machine->CheatsSystem()));
   state_->cheats = std::move(book);
   state_->cheatError.clear();
+}
+
+MemoryTools &Session::InspectMemory() {
+  if (!state_)
+    throw std::runtime_error("Memory tools require a loaded game");
+  if (!state_->memory)
+    state_->memory = std::make_unique<MemoryTools>(*state_->machine);
+  return *state_->memory;
 }
 
 void Session::Close() {

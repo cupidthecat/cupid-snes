@@ -2,6 +2,7 @@
 
 #include "CheatDialog.hpp"
 #include "DesktopMenu.hpp"
+#include "MemoryDialog.hpp"
 #include "PreferencesDialog.hpp"
 #include "StateManagerDialog.hpp"
 #include "snes/core/StateOperation.hpp"
@@ -25,6 +26,7 @@ public:
   PreferencesDialog &PreferencesEditor();
   StateManagerDialog &StateManager();
   CheatDialog &CheatsEditor();
+  MemoryDialog &MemoryEditor();
   void SetStatus(std::string text);
   void ShowError(std::string text);
   bool ErrorOpen() const;

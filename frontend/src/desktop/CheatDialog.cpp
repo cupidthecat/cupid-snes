@@ -126,4 +126,10 @@ void CheatDialog::Applied(const CheatBook &book) {
 void CheatDialog::Rejected(std::string error) {
   error_ = std::move(error);
 }
+void CheatDialog::Append(CheatEntry entry) {
+  if (draft_.entries.size() >= 1024)
+    throw std::runtime_error("At most 1024 cheat groups are supported");
+  draft_.entries.push_back(std::move(entry));
+  selected_ = int(draft_.entries.size() - 1);
+}
 } // namespace snes::frontend

@@ -20,6 +20,7 @@ public:
   bool TakeReload();
   void Applied(const CheatBook &book);
   void Rejected(std::string error);
+  void Append(CheatEntry entry);
 
 private:
   CheatBook draft_;

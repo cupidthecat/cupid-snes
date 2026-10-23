@@ -18,6 +18,8 @@ class ExecutionContext;
 }
 
 class Sa1 final : private Processor65816 {
+  friend class MemoryInspector;
+
 public:
   // The cartridge owns both spans. They must remain valid until Reset(rom, ram).
   Sa1(std::span<const uint8_t> rom, std::span<uint8_t> bwram);

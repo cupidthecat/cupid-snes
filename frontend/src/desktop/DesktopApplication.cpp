@@ -8,6 +8,7 @@
 #include "SdlVideoOutput.hpp"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
+#include "storage/AtomicFile.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -108,6 +109,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     bool preferencesActive = false, preferencesWasPaused = false;
     bool statesActive = false, statesWasPaused = false;
     bool cheatsActive = false, cheatsWasPaused = false;
+    bool memoryActive = false, memoryWasPaused = false;
     bool errorActive = false, errorWasPaused = false;
     unsigned steps = 0;
     uint64_t presentationTime = 0;
@@ -359,7 +361,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       try {
         if (!running ||
             ((dialogs.Active() || ui.PreferencesEditor().Active() || ui.StateManager().Active() ||
-              ui.CheatsEditor().Active() || ui.ErrorOpen()) &&
+              ui.CheatsEditor().Active() || ui.MemoryEditor().Active() || ui.ErrorOpen()) &&
              command != DesktopCommand::Quit))
           return;
         using Command = DesktopCommand;
@@ -430,6 +432,19 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             return;
           }
           switch (command) {
+          case Command::MemoryViewer:
+          case Command::RamSearch:
+            memoryWasPaused = paused;
+            steps = 0;
+            setPaused(true);
+            try {
+              ui.MemoryEditor().Open(session.InspectMemory(), command == Command::RamSearch);
+              memoryActive = true;
+            } catch (...) {
+              setPaused(memoryWasPaused);
+              throw;
+            }
+            break;
           case Command::ToggleCheats: {
             auto book = *session.Cheats();
             book.enabled = !book.enabled;
@@ -570,7 +585,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             execute(command);
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                    !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
-                   !ui.CheatsEditor().Active() && !ui.ErrorOpen()) {
+                   !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() && !ui.ErrorOpen()) {
           try {
             LaunchRequest request;
             request.paths[0] = event.drop.data;
@@ -586,6 +601,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             video.ShowIdle();
         }
       }
+      if (!running)
+        break;
       const auto uiNow = SDL_GetTicksNS();
       const bool uiFrame = uiNow >= nextUiFrame;
       if (uiFrame) {
@@ -628,6 +645,36 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
                                  session.CheatPath());
         } catch (const std::exception &error) {
           ui.CheatsEditor().Rejected(error.what());
+        }
+      }
+      if (auto dump = ui.MemoryEditor().TakeDump()) {
+        try {
+          const auto directory = session.States()->Directory() / "memory-dumps";
+          std::filesystem::create_directories(directory);
+          const auto path =
+              directory / (dump->region + "-" + std::to_string(SDL_GetTicksNS()) + ".bin");
+          WriteFileAtomically(path, dump->bytes);
+          ui.MemoryEditor().Rejected("Memory saved: " + core::PathText(path));
+        } catch (const std::exception &error) {
+          if (ui.MemoryEditor().Active())
+            ui.MemoryEditor().Rejected(error.what());
+          else
+            report(error);
+        }
+      }
+      auto memoryCheat = ui.MemoryEditor().TakeCheat();
+      if (memoryActive && !ui.MemoryEditor().Active()) {
+        memoryActive = false;
+        input.ResetSampling();
+        setPaused(memoryWasPaused);
+      }
+      if (memoryCheat) {
+        try {
+          execute(DesktopCommand::CheatEditor);
+          if (ui.CheatsEditor().Active())
+            ui.CheatsEditor().Append(std::move(*memoryCheat));
+        } catch (const std::exception &error) {
+          report(error);
         }
       }
       if (cheatsActive && !ui.CheatsEditor().Active()) {
@@ -745,8 +792,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       if (SDL_GetWindowRelativeMouseMode(video.Window()) != capture)
         SDL_SetWindowRelativeMouseMode(video.Window(), capture);
       if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
-          ui.StateManager().Active() || ui.CheatsEditor().Active() || ui.ErrorOpen() ||
-          ((paused || focusPaused) && !steps)) {
+          ui.StateManager().Active() || ui.CheatsEditor().Active() || ui.MemoryEditor().Active() ||
+          ui.ErrorOpen() || ((paused || focusPaused) && !steps)) {
         if (uiFrame)
           video.Redraw();
         SDL_Delay(2);

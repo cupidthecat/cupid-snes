@@ -11,6 +11,8 @@ class StateArchive;
 }
 
 class Cx4 {
+  friend class MemoryInspector;
+
 public:
   explicit Cx4(std::span<const uint8_t> rom) : rom_(rom) {}
   static bool Selects(uint32_t address) noexcept {

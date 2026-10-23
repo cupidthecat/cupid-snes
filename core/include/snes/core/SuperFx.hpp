@@ -33,6 +33,7 @@ public:
   uint8_t ReadCpu(uint32_t address, uint8_t openBus = 0xff);
   void WriteCpu(uint32_t address, uint8_t value);
   std::optional<size_t> CheatRomOffset(uint32_t address) const;
+  std::span<const uint8_t> InspectCache() const noexcept;
   // Elapsed cartridge oscillator clocks, not console clocks or an absolute timestamp.
   void Advance(uint64_t clocks);
   // Console master-clock timing. The selected region is retained across resets.

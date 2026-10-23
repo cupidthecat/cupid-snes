@@ -155,6 +155,8 @@ void DesktopMenu::Draw(bool enabled) {
   if (ImGui::BeginMenu("Tools", enabled)) {
     self.Item("Cheats...", C::CheatEditor, self.loaded);
     self.Item("Toggle Cheats", C::ToggleCheats, self.loaded);
+    self.Item("Memory...", C::MemoryViewer, self.loaded);
+    self.Item("RAM Search...", C::RamSearch, self.loaded);
     ImGui::EndMenu();
   }
   ImGui::EndMainMenuBar();

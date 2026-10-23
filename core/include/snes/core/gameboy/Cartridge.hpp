@@ -19,9 +19,15 @@ namespace snes::core::detail {
 class StateArchive;
 }
 
+namespace snes::core {
+class MemoryInspector;
+}
+
 namespace snes::core::gameboy {
 
 class Cartridge {
+  friend class ::snes::core::MemoryInspector;
+
 public:
   void SerializeState(detail::StateArchive &archive);
   using TimeSource = std::function<uint64_t()>;

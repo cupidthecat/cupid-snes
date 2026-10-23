@@ -60,6 +60,8 @@ struct FrameStepResult {
 };
 
 class Emulator {
+  friend class MemoryInspector;
+
 public:
   enum class ExpansionDevice { None, Satellaview };
   struct Config {

@@ -1,5 +1,6 @@
 add_library(snes_core
   src/debug/Cheat.cpp
+  src/debug/MemoryInspection.cpp
   src/debug/CartridgeCheats.cpp
   src/debug/EmulatorCheats.cpp
   src/state/StateArchive.cpp

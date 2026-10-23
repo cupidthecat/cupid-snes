@@ -9,6 +9,8 @@ namespace snes::core {
 class MemoryBus;
 
 class NecDsp {
+  friend class MemoryInspector;
+
 public:
   using Board = NecDspBoard::Layout;
   NecDsp(FirmwareKind firmware, Board board);

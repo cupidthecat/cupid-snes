@@ -8,9 +8,15 @@ namespace snes::core::detail {
 class StateArchive;
 }
 
+namespace snes::core {
+class MemoryInspector;
+}
+
 namespace snes::core::gameboy {
 
 class SoundChannels {
+  friend class ::snes::core::MemoryInspector;
+
 public:
   void SerializeState(detail::StateArchive &archive);
   struct Signal {

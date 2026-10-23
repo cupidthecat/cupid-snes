@@ -13,6 +13,8 @@ class ExecutionContext;
 }
 
 class Cx4Processor : private Hg51b {
+  friend class MemoryInspector;
+
 public:
   enum class Layout { LoRom, HiRom };
   struct RetainedStorage {

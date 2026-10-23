@@ -51,6 +51,8 @@ enum class DesktopCommand {
   Slot9,
   CheatEditor,
   ToggleCheats,
+  MemoryViewer,
+  RamSearch,
   Count
 };
 struct CommandDescription {
@@ -102,5 +104,7 @@ inline constexpr std::array<CommandDescription, size_t(DesktopCommand::Count)> d
      {"state-slot9", "Select quick slot 9"},
      {"state-slot10", "Select quick slot 10"},
      {"cheat-editor", "Cheat editor"},
-     {"toggle-cheats", "Toggle cheats"}}};
+     {"toggle-cheats", "Toggle cheats"},
+     {"memory-viewer", "Memory viewer"},
+     {"ram-search", "RAM search"}}};
 } // namespace snes::frontend

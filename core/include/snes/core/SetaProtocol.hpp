@@ -12,6 +12,8 @@ class StateArchive;
 }
 
 class St011 {
+  friend class MemoryInspector;
+
 public:
   explicit St011(std::span<uint8_t> ram) : ram_(ram) {}
   void Reset();

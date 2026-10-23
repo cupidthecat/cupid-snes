@@ -1,6 +1,7 @@
 # Desktop controls
 
 See [cheats](cheats.md) for code formats, per-game files and the cheat editor.
+See [memory tools](memory-tools.md) for physical memory inspection, exports and RAM search.
 
 Run `snes_frontend` without arguments to open an idle window. Ctrl+O opens a console cartridge. Dropping a cartridge file into the window opens it immediately. You can also pass a game path and controller or firmware options on the command line.
 
@@ -23,6 +24,8 @@ File > Recent Games remembers the last ten successful launch requests. A multi-f
 | F6 / F7 | Select the previous / next quick slot |
 | F8 | Toggle all enabled cheats for the current game |
 | Ctrl+Shift+C | Open the cheat editor |
+| Ctrl+Shift+M | Open the memory viewer |
+| Ctrl+Shift+F | Open RAM search |
 | Ctrl+Z / Ctrl+Y | Undo / redo a state load |
 | Game > Power Cycle | Restart the hardware while retaining cartridge storage |
 | F11 or Alt+Enter | Toggle fullscreen |

@@ -39,6 +39,7 @@ public:
   std::optional<size_t> CheatBiosOffset(uint32_t address) const;
   bool CpuIrqPending() const noexcept;
   std::span<uint8_t> Psram() noexcept;
+  std::span<const uint8_t> Psram() const noexcept;
   std::vector<uint8_t> FlashMetadata() const;
   bool LoadFlashMetadata(std::span<const uint8_t> bytes);
 

@@ -1,5 +1,21 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_memory_inspection_tests test_memory_inspection.cpp)
+target_link_libraries(snes_memory_inspection_tests PRIVATE snes_core)
+snes_add_check(snes_memory_inspection_tests snes_memory_inspection_tests)
+
+add_executable(snes_ram_search_tests test_ram_search.cpp)
+target_link_libraries(snes_ram_search_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_ram_search_tests snes_ram_search_tests)
+
+add_executable(snes_memory_tools_tests test_memory_tools.cpp)
+target_link_libraries(snes_memory_tools_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_memory_tools_tests snes_memory_tools_tests)
+
+add_executable(snes_memory_application_tests test_memory_application.cpp)
+target_link_libraries(snes_memory_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
+snes_add_check(snes_memory_application_tests snes_memory_application_tests)
+
 add_executable(snes_cheat_tests test_cheats.cpp)
 target_link_libraries(snes_cheat_tests PRIVATE snes_core)
 snes_add_check(snes_cheat_tests snes_cheat_tests)
