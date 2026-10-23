@@ -192,9 +192,6 @@ void CachedMediaChanges() {
     const auto saved = Capture(chip);
     Check(Capture(chip) == saved, "Warm the media identity cache");
     const auto path = pcm ? media.Track(1) : media.Data();
-#ifdef _WIN32
-    const auto timesBefore = FileTimes(path);
-#endif
     const auto timestamp = std::filesystem::last_write_time(path);
     std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
     file.seekp(pcm ? 10000 : 19000);
@@ -219,8 +216,8 @@ void CachedMediaChanges() {
                                         reopened.begin() + key)));
 #ifdef _WIN32
       const auto timesAfter = FileTimes(path);
-      std::fprintf(stderr, "File times before/after: write %lld/%lld, change %lld/%lld\n",
-                   (long long)timesBefore[0], (long long)timesAfter[0], (long long)timesBefore[1],
+      std::fprintf(stderr, "File times: saved write-count %lld, current write %lld, change %lld\n",
+                   (long long)timestamp.time_since_epoch().count(), (long long)timesAfter[0],
                    (long long)timesAfter[1]);
 #endif
     }
@@ -228,6 +225,42 @@ void CachedMediaChanges() {
           "Changed bytes invalidate a cached digest even with the same size and modification time");
     Reject(chip, saved);
   }
+}
+void BusyMedia() {
+#ifdef _WIN32
+  stage = "busy media";
+  for (bool pcm : {false, true}) {
+    position = pcm;
+    Media a, b;
+    Msu1 first, second;
+    Check(first.Open(a.rom) && second.Open(b.rom), "Open media lease witnesses");
+    Select(first, 1);
+    Select(second, 2);
+    const auto saved = Capture(first), before = Capture(second);
+    std::fstream writer(pcm ? b.Track(1) : b.Data(),
+                        std::ios::binary | std::ios::in | std::ios::out);
+    Check(bool(writer), "Open a competing host writer");
+    StateArchive archive(saved);
+    bool failed = false;
+    try {
+      second.SerializeState(archive);
+    } catch (const std::runtime_error &) {
+      failed = true;
+    }
+    Check(failed, "An active host writer prevents checkpoint media preparation");
+    failed = false;
+    try {
+      archive.Commit();
+    } catch (const std::runtime_error &) {
+      failed = true;
+    }
+    Check(failed, "A caught media lease failure cannot commit a partial restore");
+    writer.close();
+    Check(Capture(second) == before, "A failed media lease retains target handles and state");
+    Restore(second, saved);
+    Check(first.Clock() == second.Clock(), "Restore succeeds after the competing writer closes");
+  }
+#endif
 }
 void ChangedFileExtents() {
   stage = "changed file extent";
@@ -391,6 +424,7 @@ int main(int argc, char **argv) {
     ActiveTrackAndBinding();
     CacheBoundaries();
     MediaFailures();
+    BusyMedia();
     CachedMediaChanges();
     ChangedFileExtents();
     RenamedOpenMedia();

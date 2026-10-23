@@ -2,6 +2,7 @@
 #include "snes/core/detail/Sha256.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
@@ -15,13 +16,14 @@
 #endif
 #include <io.h>
 #include <windows.h>
+#include <winioctl.h>
 #else
 #include <sys/stat.h>
 #endif
 
 namespace snes::core {
 namespace {
-using Stamp = std::array<uint64_t, 7>;
+using Stamp = std::array<uint64_t, 8>;
 bool Seek(std::FILE *file, int64_t offset, int origin) {
 #ifdef _WIN32
   return ::_fseeki64(file, offset, origin) == 0;
@@ -37,28 +39,72 @@ int64_t Position(std::FILE *file) {
   return int64_t(::ftello(file));
 #endif
 }
-std::optional<Stamp> Observe(std::FILE *file) {
 #ifdef _WIN32
-  const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(file)));
+struct ReadLease {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  explicit ReadLease(const std::filesystem::path &path) {
+    if (path.empty())
+      return;
+    handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE && GetLastError() == ERROR_SHARING_VIOLATION)
+      throw std::runtime_error("MSU-1 checkpoint media has an active writer");
+  }
+  ~ReadLease() {
+    if (handle != INVALID_HANDLE_VALUE)
+      CloseHandle(handle);
+  }
+  ReadLease(const ReadLease &) = delete;
+  ReadLease &operator=(const ReadLease &) = delete;
+};
+std::optional<Stamp> FileStamp(HANDLE handle) {
   if (handle == INVALID_HANDLE_VALUE)
     return {};
   BY_HANDLE_FILE_INFORMATION info{};
   FILE_BASIC_INFO basic{};
-  const bool valid = GetFileInformationByHandle(handle, &info) &&
-                     GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) &&
-                     GetFileType(handle) == FILE_TYPE_DISK &&
-                     !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+  FILE_ID_INFO identity{};
+  const bool valid =
+      GetFileInformationByHandle(handle, &info) &&
+      GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) &&
+      GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity)) &&
+      GetFileType(handle) == FILE_TYPE_DISK && !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
   // Without a change time, equal-size edits can retain the entire cached stamp.
   if (!valid || basic.ChangeTime.QuadPart <= 0)
     return {};
-  return Stamp{info.dwVolumeSerialNumber,
-               (uint64_t(info.nFileIndexHigh) << 32) | info.nFileIndexLow,
+  uint64_t low = 0, high = 0;
+  std::memcpy(&low, identity.FileId.Identifier, sizeof(low));
+  std::memcpy(&high, identity.FileId.Identifier + sizeof(low), sizeof(high));
+  return Stamp{identity.VolumeSerialNumber,
+               low,
                (uint64_t(info.nFileSizeHigh) << 32) | info.nFileSizeLow,
                uint64_t(basic.LastWriteTime.QuadPart),
                uint64_t(basic.ChangeTime.QuadPart),
                0,
-               0};
+               uint64_t(basic.CreationTime.QuadPart),
+               high};
+}
+std::optional<Stamp> Observe(std::FILE *file, const ReadLease &lease) {
+  const auto held = FileStamp(reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(file))));
+  auto current = FileStamp(lease.handle);
+  if (!held || !current || (*held)[0] != (*current)[0] || (*held)[1] != (*current)[1] ||
+      (*held)[7] != (*current)[7])
+    return {};
+  alignas(USN_RECORD) std::array<uint8_t, 4096> bytes{};
+  DWORD count = 0;
+  if (!DeviceIoControl(lease.handle, FSCTL_READ_FILE_USN_DATA, nullptr, 0, bytes.data(),
+                       DWORD(bytes.size()), &count, nullptr) ||
+      count < sizeof(USN_RECORD))
+    return {};
+  USN_RECORD record{};
+  std::memcpy(&record, bytes.data(), sizeof(record));
+  if (record.MajorVersion != 2 || record.RecordLength > count || record.Usn <= 0)
+    return {};
+  // File times can remain identical across multiple writes in one clock tick.
+  (*current)[5] = uint64_t(record.Usn);
+  return current;
+}
 #else
+std::optional<Stamp> Observe(std::FILE *file) {
   struct stat info{};
   if (::fstat(::fileno(file), &info) || !S_ISREG(info.st_mode) || info.st_size < 0)
     return {};
@@ -67,11 +113,12 @@ std::optional<Stamp> Observe(std::FILE *file) {
 #else
   const auto modified = info.st_mtim, changed = info.st_ctim;
 #endif
-  return Stamp{uint64_t(info.st_dev),     uint64_t(info.st_ino),      uint64_t(info.st_size),
-               uint64_t(modified.tv_sec), uint64_t(modified.tv_nsec), uint64_t(changed.tv_sec),
-               uint64_t(changed.tv_nsec)};
-#endif
+  return Stamp{uint64_t(info.st_dev),      uint64_t(info.st_ino),
+               uint64_t(info.st_size),     uint64_t(modified.tv_sec),
+               uint64_t(modified.tv_nsec), uint64_t(changed.tv_sec),
+               uint64_t(changed.tv_nsec),  0};
 }
+#endif
 bool Attached([[maybe_unused]] const std::filesystem::path &path,
               [[maybe_unused]] const std::optional<Stamp> &held) {
 #ifdef _WIN32
@@ -106,11 +153,9 @@ Msu1::Stream::Resource::Open(const std::filesystem::path &path) {
   if (end < 0)
     return {};
   result->size = uint64_t(end);
-#ifndef _WIN32
   result->path = std::filesystem::absolute(path, error);
   if (error)
     result->path.clear();
-#endif
   return result;
 }
 size_t Msu1::Stream::Resource::Read(uint64_t offset, std::span<uint8_t> bytes) {
@@ -121,7 +166,13 @@ size_t Msu1::Stream::Resource::Read(uint64_t offset, std::span<uint8_t> bytes) {
   return std::fread(bytes.data(), 1, bytes.size(), file);
 }
 const Msu1::Stream::Resource::Key &Msu1::Stream::Resource::Fingerprint() {
-  const auto before = Observe(file);
+#ifdef _WIN32
+  ReadLease lease(path);
+  const auto observe = [&] { return Observe(file, lease); };
+#else
+  const auto observe = [&] { return Observe(file); };
+#endif
+  const auto before = observe();
   if (identity && stamp && before == stamp && Attached(path, before))
     return *identity;
   std::clearerr(file);
@@ -152,7 +203,7 @@ const Msu1::Stream::Resource::Key &Msu1::Stream::Resource::Fingerprint() {
     hash.Update(std::span(buffer).first(count));
     remaining -= count;
   }
-  const auto after = Observe(file);
+  const auto after = observe();
   if (!Seek(file, 0, SEEK_END) || Position(file) != end || before != after)
     throw std::runtime_error("MSU-1 media changed while preparing a checkpoint");
   next.digest = hash.Finish();

@@ -26,7 +26,7 @@ struct Msu1::Stream::Resource {
   std::FILE *file = nullptr;
   std::filesystem::path path;
   uint64_t size = 0;
-  std::optional<std::array<uint64_t, 7>> stamp;
+  std::optional<std::array<uint64_t, 8>> stamp;
   std::optional<Key> identity;
 };
 } // namespace snes::core
