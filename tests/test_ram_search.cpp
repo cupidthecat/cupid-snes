@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 
 using snes::frontend::RamSearch;
 namespace {
