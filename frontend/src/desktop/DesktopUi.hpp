@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CheatDialog.hpp"
+#include "CpuDebuggerDialog.hpp"
 #include "DesktopMenu.hpp"
 #include "MemoryDialog.hpp"
 #include "PreferencesDialog.hpp"
@@ -27,6 +28,7 @@ public:
   StateManagerDialog &StateManager();
   CheatDialog &CheatsEditor();
   MemoryDialog &MemoryEditor();
+  CpuDebuggerDialog &CpuEditor();
   void SetStatus(std::string text);
   void ShowError(std::string text);
   bool ErrorOpen() const;

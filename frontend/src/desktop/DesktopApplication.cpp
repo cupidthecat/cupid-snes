@@ -110,6 +110,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
     bool statesActive = false, statesWasPaused = false;
     bool cheatsActive = false, cheatsWasPaused = false;
     bool memoryActive = false, memoryWasPaused = false;
+    bool cpuActive = false, cpuWasPaused = false;
     bool errorActive = false, errorWasPaused = false;
     unsigned steps = 0;
     uint64_t presentationTime = 0;
@@ -361,7 +362,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       try {
         if (!running ||
             ((dialogs.Active() || ui.PreferencesEditor().Active() || ui.StateManager().Active() ||
-              ui.CheatsEditor().Active() || ui.MemoryEditor().Active() || ui.ErrorOpen()) &&
+              ui.CheatsEditor().Active() || ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
+              ui.ErrorOpen()) &&
              command != DesktopCommand::Quit))
           return;
         using Command = DesktopCommand;
@@ -432,6 +434,18 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             return;
           }
           switch (command) {
+          case Command::CpuDebugger:
+            cpuWasPaused = paused;
+            steps = 0;
+            setPaused(true);
+            try {
+              ui.CpuEditor().Open(session.DebugCpu());
+              cpuActive = true;
+            } catch (...) {
+              setPaused(cpuWasPaused);
+              throw;
+            }
+            break;
           case Command::MemoryViewer:
           case Command::RamSearch:
             memoryWasPaused = paused;
@@ -585,7 +599,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
             execute(command);
         } else if (event.type == SDL_EVENT_DROP_FILE && !dialogs.Active() &&
                    !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
-                   !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() && !ui.ErrorOpen()) {
+                   !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() &&
+                   !ui.CpuEditor().Active() && !ui.ErrorOpen()) {
           try {
             LaunchRequest request;
             request.paths[0] = event.drop.data;
@@ -661,6 +676,24 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
           else
             report(error);
         }
+      }
+      if (auto trace = ui.CpuEditor().TakeExport()) {
+        try {
+          const auto directory = session.States()->Directory() / "traces";
+          std::filesystem::create_directories(directory);
+          const auto path = directory / ("cpu-" + std::to_string(SDL_GetTicksNS()) + ".tsv");
+          WriteFileAtomically(
+              path, std::span(reinterpret_cast<const uint8_t *>(trace->data()), trace->size()));
+          ui.CpuEditor().Rejected("Trace saved: " + core::PathText(path));
+        } catch (const std::exception &error) {
+          ui.CpuEditor().Rejected(error.what());
+        }
+      }
+      if (cpuActive && !ui.CpuEditor().Active()) {
+        cpuActive = false;
+        input.ResetSampling();
+        resetPresentation();
+        setPaused(cpuWasPaused);
       }
       auto memoryCheat = ui.MemoryEditor().TakeCheat();
       if (memoryActive && !ui.MemoryEditor().Active()) {
@@ -785,6 +818,24 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides &overrides,
       auto *emulator = session.Machine();
       const bool focused = updateFocus(false);
       input.SetUiCapture(ui.WantsKeyboard(), ui.WantsPointer());
+      if (ui.CpuEditor().Active()) {
+        auto &debugger = ui.CpuEditor().Model();
+        if (!focusPaused && !ui.ErrorOpen() &&
+            debugger.CurrentMode() != CpuDebugger::Mode::Paused) {
+          try {
+            if (debugger.Pump(2048)) {
+              video.PresentPending();
+              audio.Clear();
+            }
+          } catch (const std::exception &error) {
+            ui.CpuEditor().Rejected(error.what());
+          }
+        }
+        if (uiFrame)
+          video.Redraw();
+        SDL_Delay(1);
+        continue;
+      }
       const bool capture = emulator && focused && !paused && !dialogs.Active() &&
                            !ui.WantsPointer() &&
                            (devices[0] == core::ControllerDevice::Mouse ||

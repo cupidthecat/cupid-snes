@@ -43,7 +43,16 @@ struct Session::State {
   std::filesystem::path cheatPath;
   std::string cheatError;
   std::unique_ptr<MemoryTools> memory;
+  std::unique_ptr<CpuDebugger> debugger;
 };
+
+CpuDebugger &Session::DebugCpu() {
+  if (!state_)
+    throw std::runtime_error("The CPU debugger requires a loaded game");
+  if (!state_->debugger)
+    state_->debugger = std::make_unique<CpuDebugger>(*state_->machine);
+  return *state_->debugger;
+}
 
 Session::Session(core::Emulator::Config config, Outputs outputs,
                  std::array<core::ControllerDevice, 2> devices)
@@ -154,6 +163,8 @@ void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
   auto prepared = machine.PrepareStateRestore(bytes, operation);
   auto previous = machine.CaptureState(operation);
   prepared.Commit();
+  if (state_->debugger)
+    state_->debugger->Repositioned();
   if (action == RestoreAction::Undo) {
     state_->redo = std::move(previous);
     state_->undo.clear();
@@ -275,6 +286,8 @@ void Session::Reset(bool powerCycle) {
   if (!(powerCycle ? state_->machine->PowerCycle() : state_->machine->Reset())) {
     throw std::runtime_error("Cannot reset the loaded cartridge");
   }
+  if (state_->debugger)
+    state_->debugger->Repositioned();
 }
 
 } // namespace snes::frontend

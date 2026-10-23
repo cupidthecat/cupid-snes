@@ -4,6 +4,7 @@ add_library(snes_frontend_support STATIC
   src/cheats/CheatBook.cpp
   src/debug/RamSearch.cpp
   src/debug/MemoryTools.cpp
+  src/debug/CpuDebugger.cpp
   src/SdlVideoOutput.cpp
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp
@@ -19,6 +20,7 @@ add_library(snes_frontend_support STATIC
   src/desktop/DesktopMenu.cpp
   src/desktop/CheatDialog.cpp
   src/desktop/MemoryDialog.cpp
+  src/desktop/CpuDebuggerDialog.cpp
   src/desktop/FileDialogs.cpp
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp

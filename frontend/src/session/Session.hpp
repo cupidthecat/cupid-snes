@@ -2,6 +2,7 @@
 
 #include "LaunchRequest.hpp"
 #include "cheats/CheatBook.hpp"
+#include "debug/CpuDebugger.hpp"
 #include "debug/MemoryTools.hpp"
 #include "settings/ConsoleDevices.hpp"
 #include "snes/core/Emulator.hpp"
@@ -49,6 +50,7 @@ public:
   void SaveCheats(CheatBook book, bool replaceUnreadable = false);
   void ReloadCheats();
   MemoryTools &InspectMemory();
+  CpuDebugger &DebugCpu();
   void SaveState(const std::filesystem::path &path, const core::StateOperation &operation = {});
   void LoadState(const std::filesystem::path &path, const core::StateOperation &operation = {});
   bool CanUndoState() const noexcept;

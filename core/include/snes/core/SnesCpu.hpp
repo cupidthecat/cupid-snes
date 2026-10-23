@@ -36,6 +36,9 @@ public:
 
   /// Execute an instruction or pending reset and return its CPU master clocks.
   uint32_t Step();
+  bool NextStepIsInstruction() const noexcept {
+    return !resetPending_ && !nmiPending_ && !irqPending_ && !regs().wai && !regs().stp;
+  }
   void SerializeState(detail::StateArchive &archive);
 
   /// External interrupt requests

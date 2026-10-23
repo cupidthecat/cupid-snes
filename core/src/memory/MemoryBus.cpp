@@ -48,7 +48,10 @@ uint8_t MemoryBus::Read(uint32_t address) {
 
 uint8_t MemoryBus::ReadCpu(uint32_t address) {
   address &= 0x00FFFFFF;
-  return readers_[lookup_[address]](address, mdr_);
+  const auto value = readers_[lookup_[address]](address, mdr_);
+  if (accessObserver_)
+    accessObserver_(address, value, false);
+  return value;
 }
 
 void MemoryBus::Write(uint32_t address, uint8_t value) {
@@ -56,6 +59,8 @@ void MemoryBus::Write(uint32_t address, uint8_t value) {
   uint8_t slot = lookup_[address];
   mdr_ = value;
   writers_[slot](address, value);
+  if (accessObserver_)
+    accessObserver_(address, value, true);
 }
 
 void MemoryBus::WriteCheat(uint32_t address, uint8_t value) {

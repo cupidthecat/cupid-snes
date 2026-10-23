@@ -6,6 +6,23 @@
 #include <stdexcept>
 
 namespace snes::core {
+InstructionStepResult Emulator::StepInstruction() {
+  if (!initialized_)
+    throw std::runtime_error("Instruction stepping requires a loaded cartridge");
+  BeginFrame();
+  instructionFields_ = true;
+  try {
+    ResumeFrameExecution(true);
+  } catch (...) {
+    instructionFields_ = false;
+    throw;
+  }
+  instructionFields_ = false;
+  if (yieldReason_ == YieldReason::Frame)
+    return {false, FinishFrame()};
+  return {true, std::nullopt};
+}
+
 void Emulator::BeginFrame() {
   if (frameOpen_)
     return;

@@ -157,6 +157,7 @@ void DesktopMenu::Draw(bool enabled) {
     self.Item("Toggle Cheats", C::ToggleCheats, self.loaded);
     self.Item("Memory...", C::MemoryViewer, self.loaded);
     self.Item("RAM Search...", C::RamSearch, self.loaded);
+    self.Item("CPU Debugger...", C::CpuDebugger, self.loaded);
     ImGui::EndMenu();
   }
   ImGui::EndMainMenuBar();

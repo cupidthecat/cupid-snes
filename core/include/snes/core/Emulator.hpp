@@ -59,6 +59,11 @@ struct FrameStepResult {
   InputState latchedInput{};
 };
 
+struct InstructionStepResult {
+  bool instructionComplete = false;
+  std::optional<FrameStepResult> field;
+};
+
 class Emulator {
   friend class MemoryInspector;
 
@@ -99,6 +104,7 @@ public:
   // The host clock binding applies to current and future handheld loads.
   void SetGameBoyTimeSource(std::function<uint64_t()> source);
   void AddTraceSink(ITraceSink *sink);
+  void RemoveTraceSink(ITraceSink *sink) noexcept;
 
   bool LoadCartridge(std::span<const uint8_t> romData, std::string *error = nullptr);
   bool LoadCartridgeFromFile(const std::string &path, std::string *error = nullptr);
@@ -180,6 +186,12 @@ public:
   bool PowerCycle();
 
   FrameStepResult StepFrame(const FrameStepOptions &options = {});
+  // Returns at an instruction boundary or a crossed display event. A field
+  // result can retain an unfinished instruction or DMA transfer for the next call.
+  InstructionStepResult StepInstruction();
+  bool AtInstructionBoundary() const noexcept {
+    return atStateBoundary_;
+  }
 
   class PreparedStateRestore {
   public:
@@ -308,6 +320,7 @@ private:
   std::unique_ptr<SnesCpu> cpu_; // created in InitSubsystems()
   std::unique_ptr<detail::ExecutionContext> execution_;
   bool singleInstruction_ = false;
+  bool instructionFields_ = false;
   std::unique_ptr<Dsp1> dsp1_; // created if cartridge uses DSP-1
   std::unique_ptr<Dsp2> dsp2_;
   std::unique_ptr<Srtc> srtc_;

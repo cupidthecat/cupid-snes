@@ -53,6 +53,7 @@ enum class DesktopCommand {
   ToggleCheats,
   MemoryViewer,
   RamSearch,
+  CpuDebugger,
   Count
 };
 struct CommandDescription {
@@ -106,5 +107,6 @@ inline constexpr std::array<CommandDescription, size_t(DesktopCommand::Count)> d
      {"cheat-editor", "Cheat editor"},
      {"toggle-cheats", "Toggle cheats"},
      {"memory-viewer", "Memory viewer"},
-     {"ram-search", "RAM search"}}};
+     {"ram-search", "RAM search"},
+     {"cpu-debugger", "CPU debugger"}}};
 } // namespace snes::frontend

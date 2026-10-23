@@ -75,6 +75,7 @@ struct DesktopUi::Impl {
   PreferencesDialog preferences;
   CheatDialog cheats;
   MemoryDialog memory;
+  CpuDebuggerDialog cpu;
   std::unique_ptr<StateManagerDialog> states;
   std::string status = "Ready", error;
   bool platformReady = false, rendererReady = false, errorOpening = false, errorOpen = false;
@@ -138,7 +139,8 @@ void DesktopUi::Frame() {
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
   self.menu.Draw(!self.stateActive && !self.preferences.Active() && !self.states->Active() &&
-                 !self.cheats.Active() && !self.memory.Active() && !self.errorOpen);
+                 !self.cheats.Active() && !self.memory.Active() && !self.cpu.Active() &&
+                 !self.errorOpen);
   const auto *viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos({viewport->Pos.x, viewport->Pos.y + viewport->Size.y - BottomInset()});
   ImGui::SetNextWindowSize({viewport->Size.x, float(BottomInset())});
@@ -153,6 +155,7 @@ void DesktopUi::Frame() {
     self.states->Draw();
     self.cheats.Draw();
     self.memory.Draw();
+    self.cpu.Draw();
   }
   if (self.errorOpening) {
     ImGui::OpenPopup("Cupid-SNES error");
@@ -213,15 +216,15 @@ int DesktopUi::BottomInset() const {
 bool DesktopUi::WantsKeyboard() const {
   impl_->Activate();
   return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
-         impl_->cheats.Active() || impl_->memory.Active() || impl_->errorOpen ||
-         ImGui::GetIO().WantCaptureKeyboard ||
+         impl_->cheats.Active() || impl_->memory.Active() || impl_->cpu.Active() ||
+         impl_->errorOpen || ImGui::GetIO().WantCaptureKeyboard ||
          ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 }
 bool DesktopUi::WantsPointer() const {
   impl_->Activate();
   return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
-         impl_->cheats.Active() || impl_->memory.Active() || impl_->errorOpen ||
-         ImGui::GetIO().WantCaptureMouse;
+         impl_->cheats.Active() || impl_->memory.Active() || impl_->cpu.Active() ||
+         impl_->errorOpen || ImGui::GetIO().WantCaptureMouse;
 }
 DesktopMenu &DesktopUi::Menu() {
   return impl_->menu;
@@ -237,6 +240,9 @@ CheatDialog &DesktopUi::CheatsEditor() {
 }
 MemoryDialog &DesktopUi::MemoryEditor() {
   return impl_->memory;
+}
+CpuDebuggerDialog &DesktopUi::CpuEditor() {
+  return impl_->cpu;
 }
 void DesktopUi::SetStatus(std::string text) {
   impl_->status = std::move(text);

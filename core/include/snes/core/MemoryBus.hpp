@@ -54,6 +54,10 @@ public:
   uint8_t Speed(uint32_t address) const override;
   // Host cheat writes use mapped devices without replacing the CPU data latch.
   void WriteCheat(uint32_t address, uint8_t value);
+  // Observes mapped CPU and DMA accesses. Host cheat writes are excluded.
+  void SetAccessObserver(std::function<void(uint32_t, uint8_t, bool)> observer) {
+    accessObserver_ = std::move(observer);
+  }
 
   // Handler registration
 
@@ -154,6 +158,7 @@ private:
   int nextSlot_ = 1; // next free slot (0 is reserved for open bus)
   Cartridge *cheatCartridge_ = nullptr;
   uint8_t cartridgeSlot_ = 0;
+  std::function<void(uint32_t, uint8_t, bool)> accessObserver_;
 
   // 128 KB WRAM
   std::array<uint8_t, WramSize> wram_{};

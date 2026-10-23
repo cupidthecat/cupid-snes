@@ -110,10 +110,21 @@ void Emulator::SetGameBoyTimeSource(std::function<uint64_t()> source) {
 }
 
 void Emulator::AddTraceSink(ITraceSink *sink) {
-  if (sink == nullptr) {
+  if (sink == nullptr ||
+      std::find(traceSinks_.begin(), traceSinks_.end(), sink) != traceSinks_.end()) {
     return;
   }
   traceSinks_.push_back(sink);
+  if (traceSinks_.size() == 1)
+    bus_.SetAccessObserver([this](uint32_t address, uint8_t value, bool write) {
+      EmitTrace(CpuBusTraceEvent{CurrentMasterCycles(), address, value, write});
+    });
+}
+
+void Emulator::RemoveTraceSink(ITraceSink *sink) noexcept {
+  std::erase(traceSinks_, sink);
+  if (traceSinks_.empty())
+    bus_.SetAccessObserver({});
 }
 
 // Cartridge loading
@@ -529,7 +540,8 @@ void Emulator::InitSubsystems() {
     autoJoypad_.Ports().LatchLightGuns();
     ppu_.VBlankBegin();
     SynchronizeDevices();
-    if (execution_ && execution_->Running() && (!singleInstruction_ || synchronizingState_))
+    if (execution_ && execution_->Running() &&
+        (!singleInstruction_ || synchronizingState_ || instructionFields_))
       SuspendFrame();
   };
 
@@ -894,6 +906,7 @@ void Emulator::StopFrameExecution() {
     cpu_->stepSuspended_ = false;
   singleInstruction_ = false;
   // Cancellation unwinds any DMA guards before a reset or cartridge reload.
+  instructionFields_ = false;
   atStateBoundary_ = true;
   synchronizingState_ = false;
   frameOpen_ = false;
