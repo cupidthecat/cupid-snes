@@ -48,7 +48,8 @@ std::optional<Stamp> Observe(std::FILE *file) {
                      GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) &&
                      GetFileType(handle) == FILE_TYPE_DISK &&
                      !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
-  if (!valid)
+  // Without a change time, equal-size edits can retain the entire cached stamp.
+  if (!valid || basic.ChangeTime.QuadPart <= 0)
     return {};
   return Stamp{info.dwVolumeSerialNumber,
                (uint64_t(info.nFileIndexHigh) << 32) | info.nFileIndexLow,

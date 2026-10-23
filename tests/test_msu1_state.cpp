@@ -158,6 +158,7 @@ void MediaFailures() {
 void CachedMediaChanges() {
   stage = "cached media mutation";
   for (bool pcm : {false, true}) {
+    position = pcm;
     Media media;
     Msu1 chip;
     Check(chip.Open(media.rom), "Open mutable media pack");
