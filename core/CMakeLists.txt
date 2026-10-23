@@ -13,6 +13,7 @@ add_library(snes_core
   src/state/ClockState.cpp
   src/state/CartridgeMemoryState.cpp
   src/state/DecoderState.cpp
+  src/state/Spc7110State.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp

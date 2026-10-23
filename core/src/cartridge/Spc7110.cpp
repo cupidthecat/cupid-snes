@@ -2,7 +2,6 @@
 #include "snes/core/EpsonRtc.hpp"
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Timing.hpp"
-#include "snes/core/detail/ExecutionContext.hpp"
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -23,14 +22,14 @@ Spc7110::Spc7110(std::span<const uint8_t> rom, std::span<uint8_t> save, bool rtc
 }
 Spc7110::~Spc7110() = default;
 void Spc7110::Reset() {
-  execution_.reset();
+  phase_ = Phase::Begin;
   registers_ = {};
   registers_[0x32] = 1;
   registers_[0x33] = 2;
   mode_ = 0;
   streamAddress_ = 0;
   balance_ = 0;
-  idleCycle_ = decodePending_ = multiplyPending_ = dividePending_ = false;
+  decodePending_ = multiplyPending_ = dividePending_ = false;
   if (rtc_)
     rtc_->Reset();
 }
@@ -43,50 +42,63 @@ void Spc7110::Advance(uint32_t masterClocks) {
   if (rtc_)
     rtc_->Advance(masterClocks);
   balance_ -= int64_t(masterClocks) * 21'477'272;
-  if (balance_ < 0 && (!execution_ || idleCycle_) && !decodePending_ && !multiplyPending_ &&
-      !dividePending_) {
+  if (balance_ < 0 && (phase_ == Phase::Begin || phase_ == Phase::Idle) && !decodePending_ &&
+      !multiplyPending_ && !dividePending_) {
     balance_ += ((-balance_ + masterFrequency_ - 1) / masterFrequency_) * masterFrequency_;
     return;
   }
   Synchronize();
 }
 void Spc7110::Synchronize() {
-  if (balance_ >= 0)
-    return;
-  if (!execution_)
-    execution_ = std::make_unique<detail::ExecutionContext>([this] { Work(); });
-  execution_->Resume();
-}
-void Spc7110::Cycle(unsigned clocks) {
-  balance_ += int64_t(clocks) * masterFrequency_;
-  if (balance_ >= 0)
-    execution_->Suspend();
-}
-void Spc7110::Work() {
-  for (;;) {
-    if (decodePending_) {
-      decodePending_ = false;
+  while (balance_ < 0) {
+    switch (phase_) {
+    case Phase::Begin:
+      if (decodePending_) {
+        decodePending_ = false;
+        if (mode_ != 3) {
+          Cycle(20, Phase::Decode);
+          break;
+        }
+      }
+      phase_ = Phase::CheckMultiply;
+      break;
+    case Phase::Decode:
       BeginStream();
-    }
-    if (multiplyPending_) {
-      multiplyPending_ = false;
-      Cycle(30);
+      phase_ = Phase::CheckMultiply;
+      break;
+    case Phase::CheckMultiply:
+      if (multiplyPending_) {
+        multiplyPending_ = false;
+        Cycle(30, Phase::Multiply);
+      } else
+        phase_ = Phase::CheckDivide;
+      break;
+    case Phase::Multiply:
       Multiply();
-    }
-    if (dividePending_) {
-      dividePending_ = false;
-      Cycle(40);
+      phase_ = Phase::CheckDivide;
+      break;
+    case Phase::CheckDivide:
+      if (dividePending_) {
+        dividePending_ = false;
+        Cycle(40, Phase::Divide);
+      } else
+        Cycle(1, Phase::Idle);
+      break;
+    case Phase::Divide:
       Divide();
+      Cycle(1, Phase::Idle);
+      break;
+    case Phase::Idle:
+      phase_ = Phase::Begin;
+      break;
     }
-    idleCycle_ = true;
-    Cycle(1);
-    idleCycle_ = false;
   }
 }
+void Spc7110::Cycle(unsigned clocks, Phase next) {
+  balance_ += int64_t(clocks) * masterFrequency_;
+  phase_ = next;
+}
 void Spc7110::BeginStream() {
-  if (mode_ == 3)
-    return;
-  Cycle(20);
   if (mode_ == 3)
     return;
   decoder_.Initialize(mode_, streamAddress_);
