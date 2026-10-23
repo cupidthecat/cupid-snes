@@ -171,13 +171,17 @@ int64_t Smp::CpuClockLead() const {
   return distance * synchronizationFrequency_ - synchronizationPhase_;
 }
 
-void Smp::SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency) {
+void Smp::SetSynchronizationTarget(uint64_t masterClocks, uint32_t masterFrequency) {
   synchronizationFrequency_ = masterFrequency;
   const auto hardwareHz = HardwareClockFrequency();
   const auto fraction = (masterClocks % masterFrequency) * hardwareHz;
   synchronizationTarget_ =
       (masterClocks / masterFrequency) * hardwareHz + fraction / masterFrequency;
   synchronizationPhase_ = uint32_t(fraction % masterFrequency);
+}
+
+void Smp::SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency) {
+  SetSynchronizationTarget(masterClocks, masterFrequency);
   if (CpuClockLead() >= 0)
     return;
   synchronizingCpu_ = true;
@@ -185,6 +189,23 @@ void Smp::SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency) {
   while (!yieldedCpu_)
     StepCycle();
   synchronizingCpu_ = false;
+}
+
+bool Smp::TrySynchronizeState(uint64_t masterClocks, uint32_t masterFrequency) {
+  if (!InstructionInProgress())
+    return true;
+  SetSynchronizationTarget(masterClocks, masterFrequency);
+  synchronizingCpu_ = true;
+  yieldedCpu_ = false;
+  try {
+    while (InstructionInProgress() && CpuClockLead() < 0 && !yieldedCpu_)
+      StepCycle();
+  } catch (...) {
+    synchronizingCpu_ = false;
+    throw;
+  }
+  synchronizingCpu_ = false;
+  return !InstructionInProgress();
 }
 
 bool Smp::ExecuteBusCycle(const PendingCycle &cycle) {

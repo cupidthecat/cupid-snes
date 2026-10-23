@@ -119,6 +119,9 @@ public:
   void RunUntilHardwareClock(uint64_t targetClocks);
   // Resume through the next communication handoff after this console clock.
   void SynchronizeCpu(uint64_t masterClocks, uint32_t masterFrequency);
+  // Finish only the current instruction, respecting the console clock deadline.
+  // False asks the console to advance before trying again.
+  bool TrySynchronizeState(uint64_t masterClocks, uint32_t masterFrequency);
   uint64_t HardwareClockCount() const noexcept {
     return hardwareClocks_;
   }
@@ -217,6 +220,7 @@ private:
   bool synchronizingCpu_ = false, yieldedCpu_ = false;
   std::function<void()> synchronizeCpu_;
   int64_t CpuClockLead() const;
+  void SetSynchronizationTarget(uint64_t masterClocks, uint32_t masterFrequency);
 
   bool ExecuteBusCycle(const PendingCycle &cycle) override;
   bool ClockBusCycle(const PendingCycle &cycle, BusWait &wait);
