@@ -3,12 +3,36 @@
 
 #include <cstdio>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 using namespace snes::tests::msu_state;
 using snes::core::Msu1;
 using snes::core::detail::StateArchive;
 namespace {
 const char *stage = "startup";
 unsigned position = 0;
+#ifdef _WIN32
+std::array<int64_t, 2> FileTimes(const std::filesystem::path &path) {
+  const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (handle == INVALID_HANDLE_VALUE)
+    return {};
+  FILE_BASIC_INFO info{};
+  const bool valid = GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(info));
+  CloseHandle(handle);
+  return valid ? std::array<int64_t, 2>{info.LastWriteTime.QuadPart, info.ChangeTime.QuadPart}
+               : std::array<int64_t, 2>{};
+}
+#endif
 template <class T> std::vector<uint8_t> Capture(T &device) {
   StateArchive archive;
   device.SerializeState(archive);
@@ -168,6 +192,9 @@ void CachedMediaChanges() {
     const auto saved = Capture(chip);
     Check(Capture(chip) == saved, "Warm the media identity cache");
     const auto path = pcm ? media.Track(1) : media.Data();
+#ifdef _WIN32
+    const auto timesBefore = FileTimes(path);
+#endif
     const auto timestamp = std::filesystem::last_write_time(path);
     std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
     file.seekp(pcm ? 10000 : 19000);
@@ -178,6 +205,11 @@ void CachedMediaChanges() {
     const auto changed = Capture(chip);
     const size_t key = pcm ? 8331 : 78;
     if (std::equal(saved.begin() + key, saved.begin() + key + 32, changed.begin() + key)) {
+      if (!pcm) {
+        Seek(chip, 19000);
+        std::fprintf(stderr, "Held data byte after mutation: %u (expected 113)\n",
+                     unsigned(chip.Read(0x2001)));
+      }
       Msu1 fresh;
       Check(fresh.Open(media.rom), "Open a fresh media identity witness");
       Select(fresh, 1);
@@ -185,6 +217,12 @@ void CachedMediaChanges() {
       std::fprintf(stderr, "Unchanged media identity after mutation; fresh handle differs: %u\n",
                    unsigned(!std::equal(saved.begin() + key, saved.begin() + key + 32,
                                         reopened.begin() + key)));
+#ifdef _WIN32
+      const auto timesAfter = FileTimes(path);
+      std::fprintf(stderr, "File times before/after: write %lld/%lld, change %lld/%lld\n",
+                   (long long)timesBefore[0], (long long)timesAfter[0], (long long)timesBefore[1],
+                   (long long)timesAfter[1]);
+#endif
     }
     Check(changed != saved,
           "Changed bytes invalidate a cached digest even with the same size and modification time");
