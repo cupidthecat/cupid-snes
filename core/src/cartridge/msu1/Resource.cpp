@@ -98,7 +98,9 @@ Msu1::Stream::Resource::Open(const std::filesystem::path &path) {
 #else
   result->file = std::fopen(path.c_str(), "rb");
 #endif
-  if (!result->file || !Seek(result->file, 0, SEEK_END))
+  // Stream owns every cached byte that can survive a checkpoint.
+  if (!result->file || std::setvbuf(result->file, nullptr, _IONBF, 0) != 0 ||
+      !Seek(result->file, 0, SEEK_END))
     return {};
   const auto end = Position(result->file);
   if (end < 0)

@@ -175,9 +175,20 @@ void CachedMediaChanges() {
     file.close();
     Check(bool(file), "Modify media beyond the emulated read cache");
     std::filesystem::last_write_time(path, timestamp);
-    Reject(chip, saved);
-    Check(Capture(chip) != saved,
+    const auto changed = Capture(chip);
+    const size_t key = pcm ? 8331 : 78;
+    if (std::equal(saved.begin() + key, saved.begin() + key + 32, changed.begin() + key)) {
+      Msu1 fresh;
+      Check(fresh.Open(media.rom), "Open a fresh media identity witness");
+      Select(fresh, 1);
+      const auto reopened = Capture(fresh);
+      std::fprintf(stderr, "Unchanged media identity after mutation; fresh handle differs: %u\n",
+                   unsigned(!std::equal(saved.begin() + key, saved.begin() + key + 32,
+                                        reopened.begin() + key)));
+    }
+    Check(changed != saved,
           "Changed bytes invalidate a cached digest even with the same size and modification time");
+    Reject(chip, saved);
   }
 }
 void ChangedFileExtents() {

@@ -128,6 +128,14 @@ jobs:
             bundle: "ON"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check native streamed-media state
+        if: matrix.mode == 'optimized'
+        run: |
+          cmake -S tests/native_media -B out/build/native-media -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build out/build/native-media --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir out/build/native-media -C Release --output-on-failure --timeout 120 --no-tests=error
       - name: Cache SDL build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
