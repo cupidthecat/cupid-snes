@@ -145,8 +145,24 @@ void Emulator::ReplaceCartridge(Cartridge&& cartridge) {
     cartridge_ = std::move(cartridge);
 }
 
-bool Emulator::LoadCartridge(std::span<const uint8_t> romData, std::string* error) {
-    return LoadCartridgeWithFirmware(romData, config_.cartridgeFirmware.get(), error);
+bool Emulator::LoadCartridge(std::span<const uint8_t> romData, std::string* error,
+                             const std::string& sourcePath) {
+    CartridgeFirmware adjacentFirmware;
+    auto* firmware = config_.cartridgeFirmware.get();
+    if (!sourcePath.empty()) {
+        const auto directory = FilePath(sourcePath).parent_path() / "firmware";
+        std::error_code fileError;
+        if (!firmware && std::filesystem::is_directory(directory, fileError)) {
+            if (!adjacentFirmware.LoadDirectory(directory, error))
+                return false;
+            firmware = &adjacentFirmware;
+        }
+    }
+    if (!LoadCartridgeWithFirmware(romData, firmware, error))
+        return false;
+    if (!sourcePath.empty())
+        AttachMsu1(sourcePath);
+    return true;
 }
 
 bool Emulator::LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
@@ -197,19 +213,7 @@ bool Emulator::LoadCartridgeFromFile(const std::string& path, std::string* error
     const auto data = ReadImage(path, error);
     if (!data)
         return false;
-    CartridgeFirmware adjacentFirmware;
-    auto* firmware = config_.cartridgeFirmware.get();
-    const auto directory = FilePath(path).parent_path() / "firmware";
-    std::error_code fileError;
-    if (!firmware && std::filesystem::is_directory(directory, fileError)) {
-        if (!adjacentFirmware.LoadDirectory(directory, error))
-            return false;
-        firmware = &adjacentFirmware;
-    }
-    if (!LoadCartridgeWithFirmware(*data, firmware, error))
-        return false;
-    AttachMsu1(path);
-    return true;
+    return LoadCartridge(*data, error, path);
 }
 
 void Emulator::AttachMsu1(const std::string& path) {
@@ -236,12 +240,15 @@ void Emulator::AttachMsu1(const std::string& path) {
 }
 
 bool Emulator::LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
-                                std::span<const uint8_t> boot, std::string* error) {
+                                std::span<const uint8_t> boot, std::string* error,
+                                const std::string& sourcePath) {
     auto cartridge = Cartridge::FromSuperGameBoy(bios, game, boot, error, handheldTimeSource_);
     if (!cartridge)
         return false;
     ReplaceCartridge(std::move(*cartridge));
     InitSubsystems();
+    if (!sourcePath.empty())
+        AttachMsu1(sourcePath);
     return true;
 }
 
@@ -254,10 +261,7 @@ bool Emulator::LoadSuperGameBoyFromFiles(const std::string& biosPath, const std:
     if (!game)
         return false;
     const auto boot = ReadImage(bootPath, error);
-    if (!boot || !LoadSuperGameBoy(*bios, *game, *boot, error))
-        return false;
-    AttachMsu1(biosPath);
-    return true;
+    return boot && LoadSuperGameBoy(*bios, *game, *boot, error, biosPath);
 }
 
 bool Emulator::LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<const uint8_t> pack,
@@ -301,9 +305,19 @@ bool Emulator::LoadSufamiTurboFromFiles(const std::string& biosPath, const std::
 
 bool Emulator::LoadCompetitionCartridge(CompetitionBoard::Settings settings,
                                         const std::array<std::span<const uint8_t>, 4>& images,
-                                        std::string* error) {
-    auto cartridge = Cartridge::FromCompetitionCartridge(settings, images, error,
-                                                         config_.cartridgeFirmware.get());
+                                        std::string* error, const std::string& sourcePath) {
+    CartridgeFirmware adjacentFirmware;
+    auto* firmware = config_.cartridgeFirmware.get();
+    if (!sourcePath.empty()) {
+        const auto directory = FilePath(sourcePath).parent_path() / "firmware";
+        std::error_code fileError;
+        if (!firmware && std::filesystem::is_directory(directory, fileError)) {
+            if (!adjacentFirmware.LoadDirectory(directory, error))
+                return false;
+            firmware = &adjacentFirmware;
+        }
+    }
+    auto cartridge = Cartridge::FromCompetitionCartridge(settings, images, error, firmware);
     if (!cartridge)
         return false;
     ReplaceCartridge(std::move(*cartridge));
@@ -323,21 +337,7 @@ bool Emulator::LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings sett
         images[i] = std::move(*image);
         views[i] = images[i];
     }
-    CartridgeFirmware adjacentFirmware;
-    auto* firmware = config_.cartridgeFirmware.get();
-    const auto directory = FilePath(paths[0]).parent_path() / "firmware";
-    std::error_code fileError;
-    if (!firmware && std::filesystem::is_directory(directory, fileError)) {
-        if (!adjacentFirmware.LoadDirectory(directory, error))
-            return false;
-        firmware = &adjacentFirmware;
-    }
-    auto cartridge = Cartridge::FromCompetitionCartridge(settings, views, error, firmware);
-    if (!cartridge)
-        return false;
-    ReplaceCartridge(std::move(*cartridge));
-    InitSubsystems();
-    return true;
+    return LoadCompetitionCartridge(settings, views, error, paths[0]);
 }
 
 const Cartridge* Emulator::LoadedCartridge() const noexcept {

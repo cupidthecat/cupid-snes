@@ -1,8 +1,8 @@
 # Building and testing
 
-Build from the repository directory with Ninja and a C++20 compiler. The provided presets require CMake 3.25 or newer; manual configuration requires 3.21 or newer. Windows and Linux share the SDL3 frontend and Dear ImGui desktop UI.
+Build from the repository directory with Ninja and a compiler toolchain supporting C and C++20. The provided presets require CMake 3.25 or newer; manual configuration requires 3.21 or newer. Windows and Linux share the SDL3 frontend and Dear ImGui desktop UI.
 
-CMake uses an installed SDL3 when available. Otherwise it fetches SDL3 release 3.2.8 and builds a static library. Dear ImGui 1.92.5 comes from a release archive with a checked SHA-256 digest. The first configure needs network access for missing dependencies.
+CMake uses an installed SDL3 when available. Otherwise it fetches SDL3 release 3.2.8 and builds a static library. Dear ImGui 1.92.5 comes from a release archive with a checked SHA-256 digest. Archive support builds static libarchive 3.8.10 with zlib 1.3.2, XZ 5.8.4, bzip2 1.0.8, LZ4 1.10.0 and Zstandard 1.5.7 from pinned release archives with checked SHA-256 digests. Decoder license notices are copied beside the frontend executable. The first configure needs network access for missing dependencies.
 
 ## Presets
 

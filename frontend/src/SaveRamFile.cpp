@@ -38,6 +38,8 @@ std::vector<uint8_t> SaveRamFile::Read(size_t size) {
 void SaveRamFile::Flush(std::span<const uint8_t> data) {
     if (data.empty() || std::equal(data.begin(), data.end(), saved_.begin(), saved_.end()))
         return;
+    if (!path_.parent_path().empty())
+        std::filesystem::create_directories(path_.parent_path());
     WriteFileAtomically(path_, data);
     saved_.assign(data.begin(), data.end());
 }

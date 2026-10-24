@@ -1,5 +1,6 @@
 #include "DesktopMenu.hpp"
 #include "SdlInputProvider.hpp"
+#include "session/GameAssets.hpp"
 
 #include "imgui.h"
 #include "snes/core/FilePath.hpp"
@@ -44,7 +45,7 @@ void DesktopMenu::SetRecent(std::span<const LaunchRequest> requests) {
                 return;
             if (!name.empty())
                 name += " + ";
-            name += core::PathText(core::FilePath(request.paths[index]).filename());
+            name += GameAssets::Label(request, index);
         };
         if (request.kind == LaunchRequest::Kind::Handheld)
             asset(1);

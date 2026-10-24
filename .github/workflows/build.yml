@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: out/build/ci/_deps
-          key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('cmake/SDL3.cmake') }}
+          key: sdl-${{ runner.os }}-vs2022-${{ hashFiles('cmake/SDL3.cmake', 'cmake/Archive.cmake') }}
           restore-keys: sdl-${{ runner.os }}-vs2022-
       - name: Configure
         run: >-
@@ -177,7 +177,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: out/build/linux/_deps
-          key: desktop-${{ runner.os }}-gcc-${{ hashFiles('cmake/SDL3.cmake', 'cmake/ImGui.cmake') }}
+          key: desktop-${{ runner.os }}-gcc-${{ hashFiles('cmake/SDL3.cmake', 'cmake/ImGui.cmake', 'cmake/Archive.cmake') }}
       - name: Configure
         run: cmake -S . -B out/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DSNES_ENABLE_LTO=OFF
       - name: Build frontend and desktop checks
@@ -185,7 +185,7 @@ jobs:
           cmake --build out/build/linux --parallel 4 --target snes_frontend snes_desktop_tests
           snes_desktop_application_tests snes_preferences_tests snes_session_tests snes_sdl_video_tests snes_sdl_audio_tests
           snes_sdl_input_tests snes_battery_directory_tests snes_state_storage_tests snes_state_application_tests snes_input_frame_progress_tests
-          snes_input_journal_tests snes_input_movie_tests
+          snes_input_journal_tests snes_input_movie_tests snes_rom_archive_tests snes_archive_application_tests
           snes_deferred_state_capture_tests snes_playback_tests snes_playback_application_tests snes_frame_pacing_tests
           snes_cheat_tests snes_cheat_storage_tests snes_cheat_application_tests
           snes_memory_inspection_tests snes_ram_search_tests snes_memory_tools_tests snes_memory_application_tests
@@ -208,7 +208,7 @@ jobs:
       - name: Test shared UI and host services
         run: >-
           ctest --test-dir out/build/linux --output-on-failure --parallel 2 --timeout 120 --no-tests=error
-          -R '^snes_(hardware_inspection_tests|hardware_application_tests|disassembly_tests|cpu_debugger_tests|cpu_debugger_application_tests|memory_inspection_tests|ram_search_tests|memory_tools_tests|memory_application_tests|cheat_tests|cheat_storage_tests|cheat_application_tests|sha256_tests|msu1_state_tests|state_archive_tests|processor_state_tests|audio_state_tests|smp_state_boundary_tests|emulator_state_tests|ppu_state_tests|system_state_tests|cartridge_memory_state_tests|spc7110_state_tests|command_dsp_state_tests|arm_state_tests|cx4_state_tests|superfx_state_tests|gameboy_state_tests|cartridge_state_tests|desktop_tests|desktop_application_tests|state_application_tests|state_storage_tests|input_frame_progress_tests|input_journal_tests|input_movie_tests|deferred_state_capture_tests|playback_tests|playback_application_tests|frame_pacing_tests|preferences_tests|session_tests|battery_directory_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
+          -R '^snes_(rom_archive_tests|archive_application_tests|hardware_inspection_tests|hardware_application_tests|disassembly_tests|cpu_debugger_tests|cpu_debugger_application_tests|memory_inspection_tests|ram_search_tests|memory_tools_tests|memory_application_tests|cheat_tests|cheat_storage_tests|cheat_application_tests|sha256_tests|msu1_state_tests|state_archive_tests|processor_state_tests|audio_state_tests|smp_state_boundary_tests|emulator_state_tests|ppu_state_tests|system_state_tests|cartridge_memory_state_tests|spc7110_state_tests|command_dsp_state_tests|arm_state_tests|cx4_state_tests|superfx_state_tests|gameboy_state_tests|cartridge_state_tests|desktop_tests|desktop_application_tests|state_application_tests|state_storage_tests|input_frame_progress_tests|input_journal_tests|input_movie_tests|deferred_state_capture_tests|playback_tests|playback_application_tests|frame_pacing_tests|preferences_tests|session_tests|battery_directory_tests|sdl_video_tests|sdl_input_tests|sdl_audio_[0-9]+)$'
       - name: Test X11 desktop integration
         run: xvfb-run -a env SDL_VIDEODRIVER=x11 SNES_TEST_WINDOW=1 out/build/linux/tests/snes_desktop_tests
       - name: Test native application gamepad shortcuts
@@ -225,6 +225,8 @@ jobs:
         run: xvfb-run -a python3 tests/run_x11_application.py out/build/linux/tests/snes_hardware_application_tests
       - name: Test native recording, rewind and speed workflow
         run: xvfb-run -a python3 tests/run_x11_application.py out/build/linux/tests/snes_playback_application_tests
+      - name: Test native archive selection workflow
+        run: xvfb-run -a python3 tests/run_x11_application.py out/build/linux/tests/snes_archive_application_tests
   windows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

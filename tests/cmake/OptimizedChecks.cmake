@@ -1,6 +1,8 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_rom_archive_tests
+  snes_archive_application_tests
   snes_playback_tests
   snes_playback_application_tests
   snes_deferred_state_capture_tests

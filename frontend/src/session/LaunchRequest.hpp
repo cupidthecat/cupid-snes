@@ -10,6 +10,7 @@ struct LaunchRequest {
     Kind kind = Kind::Cartridge;
     std::array<std::string, 4> paths;
     uint8_t competitionDip = 0;
+    std::array<std::string, 4> archiveMembers;
     bool operator==(const LaunchRequest&) const = default;
 };
 } // namespace snes::frontend
