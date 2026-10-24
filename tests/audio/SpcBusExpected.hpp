@@ -3,6 +3,7 @@
 // and final state. Fixtures include both direct pages, branch paths, and wraps.
 #include <array>
 #include <cstdint>
+
 namespace spc_bus_test {
 inline constexpr std::array<uint64_t, 1024> ExpectedDigests{
     0x3eee3f308562e3deULL, 0xad65507a623aa70dULL, 0x8ecce729c7e9fb9aULL, 0x578cf67c5432ffa9ULL,

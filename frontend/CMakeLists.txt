@@ -1,11 +1,18 @@
 include(${PROJECT_SOURCE_DIR}/cmake/ImGui.cmake)
 
 add_library(snes_frontend_support STATIC
+  src/cheats/CheatBook.cpp
+  src/debug/RamSearch.cpp
+  src/debug/MemoryTools.cpp
+  src/debug/CpuDebugger.cpp
+  src/debug/Disassembly.cpp
+  src/debug/HardwareSnapshot.cpp
   src/SdlVideoOutput.cpp
   src/SdlAudioOutput.cpp
   src/SdlInputProvider.cpp
   src/SaveRamFile.cpp
   src/storage/AtomicFile.cpp
+  src/storage/InspectionBitmap.cpp
   src/storage/BatteryStorage.cpp
   src/storage/StateStorage.cpp
   src/settings/Preferences.cpp
@@ -14,6 +21,10 @@ add_library(snes_frontend_support STATIC
   src/input/InputBindings.cpp
   src/session/Session.cpp
   src/desktop/DesktopMenu.cpp
+  src/desktop/CheatDialog.cpp
+  src/desktop/MemoryDialog.cpp
+  src/desktop/CpuDebuggerDialog.cpp
+  src/desktop/HardwareDialog.cpp
   src/desktop/FileDialogs.cpp
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp

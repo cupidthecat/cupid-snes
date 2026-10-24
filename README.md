@@ -1,33 +1,17 @@
 # cupid-snes
 
-A C++20 SNES emulator with an SDL3 frontend and a core that can be used from tests and command-line tools. The project focuses on the console bus, cartridge hardware, audio, video timing, and the parts of the system that can be checked without a game running.
+A C++20 SNES emulator with an SDL3 desktop for Windows and Linux. The core can also run from tests and command-line tools.
 
 <img src="img/smw.png" alt="smw" width="500"/>
 <img src="img/rpg.png" alt="rpg" width="500"/>
 
-This is still a work in progress. A cartridge can load and pass focused hardware tests while games that use it may still need more work.
+The desktop provides game loading, recent games, controller and hotkey remapping, save states, cheats, RAM search, CPU debugging and graphics/audio inspection. The core models the console CPU, bus, DMA, clocked graphics and audio, cartridge mapping and enhancement hardware. MSU-1 data and PCM sidecars are supported.
 
-## What is implemented
-
-The core includes:
-
-- A 65816 CPU core connected to the SNES memory bus, interrupt lines, stack behavior, wait and stop states, and CPU I/O registers.
-- A 24-bit bus with WRAM, open-bus behavior, PPU and APU ports, DMA and HDMA, controller polling, and master-clock timing.
-- A scanline renderer with tiled backgrounds, sprites, windows, color math, Mode 7, high-resolution and pseudo-hires output, overscan, and interlace.
-- An SPC700 and S-DSP audio path with BRR samples, envelopes, Gaussian interpolation, pitch modulation, noise, stereo mixing, and echo at 32 kHz.
-- Cartridge header detection, 512-byte copier-header removal, LoROM and HiROM mirrors, extended layouts, SRAM, and fast-ROM access timing.
-- Cartridge hardware for DSP-1, DSP-2, DSP-3, DSP-4, OBC1, S-RTC, S-DD1, SPC7110, SA-1, Super FX, Cx4, ST010, BS-X, Sufami Turbo, and timed competition boards. DSP-1 through DSP-4, ST010/ST011, and ST018 can execute supplied cartridge firmware. Cx4 executes cartridge programs with a supplied data ROM.
-- MSU-1 data streaming and PCM playback from `.msu` and numbered `.pcm` sidecars.
-- SDL input for gamepads, keyboard controls, mouse, multitap, Super Scope, Justifiers, and the MACS rifle.
-- `.srm`, `.rtc`, and flash sidecar saves, written through temporary files before replacement.
-
-The implementation details and validation boundaries are documented below. The [Original hardware support](docs/original-hardware.md) page is the best place to start for cartridge processor coverage and remaining gaps.
+This is a work in progress. Passing focused hardware tests or displaying a game does not establish complete compatibility. See [hardware support and remaining gaps](docs/original-hardware.md) and [game checks](docs/compatibility.md).
 
 ## Build
 
-Build from the repository directory with CMake 3.21 or newer, Ninja, and a C++20 compiler. CMake uses an installed SDL3 when it finds one. Otherwise it fetches SDL3 release 3.2.8 and builds it as a static library. The desktop UI uses Dear ImGui 1.92.5, fetched from a release archive with a checked SHA-256 digest. The first configure needs network access for missing dependencies.
-
-The repository provides Debug and Release presets. The usual Release build and test commands are:
+Use CMake 3.25 or newer, Ninja and a C++20 compiler for the provided presets. CMake fetches missing SDL3 and Dear ImGui dependencies during the first configure.
 
 ```powershell
 cmake --preset release
@@ -35,71 +19,29 @@ cmake --build --preset build-release
 ctest --test-dir out/build/release --output-on-failure
 ```
 
-Use the `debug` preset and `out/build/debug` when you need an instrumented development build. If you configure a Windows build with Clang AddressSanitizer, keep the matching `clang_rt.asan_dynamic-x86_64.dll` on `PATH` or beside the executable. The sanitizer runtime is installed with LLVM; it is not part of the Release output.
+[Building and testing](docs/building.md) covers dependency versions, Debug builds, sanitizers and optimized checks.
 
-## Run a game
+## Run
 
-Launch the SDL frontend without arguments to open the desktop window, or pass a ROM path. It accepts ordinary `.sfc` and `.smc` images, including images with a 512-byte copier header when the loader can identify the header. Use Ctrl+O or drop a file into the window to open a game. [Desktop controls](docs/desktop.md) covers menus, pause, frame advance, reset, fullscreen, screenshots, and save handling.
+Launch without arguments for the desktop, or pass a cartridge path:
 
 ```powershell
 .\out\build\release\frontend\snes_frontend.exe "C:\path\to\game.sfc"
 ```
 
-Both controller ports default to gamepads. The keyboard maps the arrow keys to the D-pad, Z/X to B/A, A/S to Y/X, Q/W to L/R, Enter to Start, and Right Shift to Select. Escape closes the window. Host gamepads are assigned in connection order.
+Ctrl+O or a dropped file opens a game. P pauses, N advances one field, F2/F4 save/load the selected quick slot, F3 opens the state manager and F11 toggles fullscreen. Preferences remaps keyboard/gamepad controls and selects controllers, display/audio options, firmware and save paths. See [desktop controls](docs/desktop.md) for the complete shortcuts and save behavior.
 
-Use `--port1=` or `--port2=` to select `pad`, `mouse`, `multitap`, or `none`. Port 2 also accepts `scope`, `justifier`, `justifiers`, and `rifle`. The same frontend can load separate Sufami Turbo files with `--sufami` or a BS cartridge and pack with `--broadcast`. Their file layouts and controller details are in [Controllers and cartridge slots](docs/controllers-and-slots.md), [Cartridge devices and region timing](docs/cartridge-devices.md), and [Light guns and raster memory](docs/light-guns-and-raster.md).
+Default player-one keys are arrows for the D-pad, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start and Right Shift for Select. Both console ports default to gamepads; connected host gamepads fill player slots in connection order. Escape saves and quits.
 
-When a cartridge has battery RAM, the frontend looks for an `.srm` file beside the ROM. S-RTC and SPC7110 RTC state use `.rtc` files. Broadcast flash packs use a `.flash` sidecar. Changed saves are flushed every 300 frames and again when the frontend exits normally.
+## Documentation
 
-For an MSU-1 game, place `game.msu` and its `game-<track>.pcm` files beside `game.sfc`. The loader detects the data file automatically. [MSU-1 data and audio](docs/msu1.md) describes file formats, playback behavior and supported pack layouts.
+| Area | Details |
+| --- | --- |
+| Desktop and tools | [Controls, preferences and save states](docs/desktop.md), [cheats](docs/cheats.md), [memory and RAM search](docs/memory-tools.md), [CPU debugger](docs/cpu-debugger.md), [graphics/audio inspection](docs/hardware-inspection.md) |
+| Games and cartridges | [Compatibility and saves](docs/compatibility.md), [hardware support](docs/original-hardware.md), [controllers and slots](docs/controllers-and-slots.md), [cartridge devices and regions](docs/cartridge-devices.md), [competition cartridges](docs/competition-cartridges.md) |
+| Graphics and timing | [Rendering and LoROM](docs/accuracy-notes.md), [background fetches](docs/background-fetch.md), [object fetches](docs/object-fetch.md), [PPU ports](docs/ppu-memory-ports.md), [light guns](docs/light-guns-and-raster.md), [DMA and S-DD1](docs/dma-video-and-sdd1.md) |
+| Cartridge processors | [Clocked processors](docs/clocked-cartridge-processors.md), [Cx4](docs/cx4.md), [SPC7110](docs/spc7110.md), [ST010](docs/st010.md), [ST018](docs/st018.md), [S-RTC](docs/srtc.md) |
+| Audio and validation | [Audio playback](docs/audio.md), [MSU-1 packs](docs/msu1.md), [performance checks](docs/performance.md), [CPU regressions](docs/cpu-regressions.md), [cartridge/PPU/DMA regressions](docs/hardware-regressions.md) |
+| Development | [Build and test](docs/building.md), [source layout](docs/source-layout.md) |
 
-Pictures are prepared ahead of deadlines derived from the console clock. Audio queue feedback corrects device-clock drift gradually, and output buffers are reused across frames. [Audio playback](docs/audio.md) describes pacing, underrun recovery and the remaining display limits.
-
-## Tests and tools
-
-The CTest suite uses generated ROMs, small 65816 and coprocessor programs, command streams, known output vectors, and deterministic clocks. It covers CPU and interrupt behavior, bus scheduling, PPU rendering, DMA and HDMA, audio phases, controllers, cartridge mapping, saves, and the supported cartridge devices. The committed tests do not need commercial game files.
-
-The build also includes two small command-line tools:
-
-- `snes_rom_smoke` runs a ROM without opening a window, counts visible frames and audible samples, reports frame-time percentiles, presses Start for a short scripted interval, and can save the last frame as a BMP.
-- `snes_trace_dump` demonstrates a trace sink for CPU bus, PPU register, and DMA events.
-
-The smoke tool's arguments and exit codes are documented in [Cartridge compatibility and saves](docs/compatibility.md). [Source layout](docs/source-layout.md) maps the core's folders to the hardware they contain.
-
-[Performance checks](docs/performance.md) records paired local measurements, frame-time ranges and the limits of the game smoke tests.
-
-## Current limits
-
-The emulator is not cycle exact. SA-1 cache timing still needs validation, PPU memory collisions within a clock still need validation, and several cartridge chips are modeled at the command or board-protocol level. Backgrounds and objects use clocked fetch state. BS-X live reception and SoundLink audio are not implemented. Light-gun input uses scheduled beam positions rather than modeling the optical sensor.
-
-Passing a mapper test, recognizing a chip, or getting visible output from a smoke run is not the same as full game compatibility. The detailed notes call out the limits for each subsystem:
-
-[Cartridge compatibility and saves](docs/compatibility.md) covers supported board layouts, prototype header detection, battery saves, headless game checks, and remaining gaps.
-
-[Original hardware support](docs/original-hardware.md) covers cartridge processors and command engines, CPU and DMA bus timing, phased audio, differential checks, and the limits of the current implementations.
-
-[Audio playback](docs/audio.md) explains buffering, frame pacing, and audio regression tests.
-
-[Rendering and LoROM checks](docs/accuracy-notes.md) covers coordinate handling, ROM mapping, and their regression tests.
-
-[Cartridge, PPU, and DMA regression checks](docs/hardware-regressions.md) covers DSP-1 addressing, ROM mirrors, counter latching, palette access, OAM, overscan timing, and indirect HDMA termination. [Background fetch timing](docs/background-fetch.md) and [object fetch timing](docs/object-fetch.md) describe the clocked graphics pipeline. [PPU memory ports](docs/ppu-memory-ports.md) covers palette ownership, access restrictions, and byte phases.
-
-[CPU regression checks](docs/cpu-regressions.md) covers stop and wait states, interrupt entry, and stack boundaries.
-
-[Cartridge devices and region timing](docs/cartridge-devices.md) covers DSP-2, OBC1, S-RTC, Sufami Turbo, cartridge saves, and PAL timing.
-
-[Controllers and cartridge slots](docs/controllers-and-slots.md) covers mouse and multitap setup, host gamepads, BS slot boards and flash saves, and combined Sufami Turbo images.
-
-[Timed competition cartridges](docs/competition-cartridges.md) covers four-chip loading, game selection, countdown settings, save RAM, and DSP-1 ports.
-
-[S-DD1, DMA timing, and video output](docs/dma-video-and-sdd1.md) covers decompression, expanded cartridge images, DMA stalls, high resolution, interlace, tests, and remaining hardware gaps.
-
-[Light guns and raster memory](docs/light-guns-and-raster.md) covers Super Scope, Justifiers, MACS rifle, aiming controls, beam latches, and graphics-memory timing.
-
-[Clocked cartridge processors](docs/clocked-cartridge-processors.md) covers DSP and ST firmware files, processor clocks, board maps, and saves. [ST010 cartridge support](docs/st010.md) describes the fallback math commands. [ST018 firmware execution](docs/st018.md) covers the ARM processor and CPU bridge.
-
-[Cx4 processor execution](docs/cx4.md) covers data firmware, instruction caches, DMA, ROM ownership, and CPU IRQ controls.
-
-[SPC7110 and cartridge RTC](docs/spc7110.md) covers decompression, arithmetic timing, data ports, memory maps, and clock saves.
-
-[S-RTC cartridge clock](docs/srtc.md) covers calendar programming, oscillator timing, live reads, and persistence.
+The emulator is not cycle exact. SA-1 cache timing and PPU memory collisions need more validation. Some cartridge devices use command or board protocols. BS-X live reception and SoundLink audio remain unimplemented; light guns use scheduled beam positions. The linked pages describe each subsystem's validation limits.

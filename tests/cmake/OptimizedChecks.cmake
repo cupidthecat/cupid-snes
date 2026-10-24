@@ -1,6 +1,18 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_hardware_inspection_tests
+  snes_hardware_application_tests
+  snes_disassembly_tests
+  snes_cpu_debugger_tests
+  snes_cpu_debugger_application_tests
+  snes_memory_inspection_tests
+  snes_ram_search_tests
+  snes_memory_tools_tests
+  snes_memory_application_tests
+  snes_cheat_tests
+  snes_cheat_storage_tests
+  snes_cheat_application_tests
   snes_sha256_tests
   snes_msu1_state_tests
   snes_state_archive_tests
@@ -118,7 +130,6 @@ function(snes_configure_optimized_checks)
       if(NOT entry_source)
         message(FATAL_ERROR "${check} has no test entry point")
       endif()
-      set(SNES_CHECK_NAME ${check})
       set(SNES_CHECK_SOURCE "${entry_source}")
       configure_file("${SNES_CHECK_RUNNER_DIR}/Entry.cpp.in" "${generated_dir}/${check}.cpp" @ONLY)
       set(object_target ${check}_entry)
@@ -132,6 +143,10 @@ function(snes_configure_optimized_checks)
           set_property(TARGET ${object_target} PROPERTY ${property} "${value}")
         endif()
       endforeach()
+      target_compile_definitions(${object_target} PRIVATE
+        SNES_FIXTURE_ENTRY=snes_fixture_${check}
+        SNES_FIXTURE_WRAPPER=Run_${check}
+      )
       # A renamed main follows ordinary function return rules.
       if(MSVC)
         target_compile_options(${object_target} PRIVATE /we4715 /we4716)

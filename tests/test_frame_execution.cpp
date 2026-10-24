@@ -11,282 +11,290 @@
 using namespace snes::core;
 
 namespace {
-void Check(bool condition, const char *message) {
-  if (!condition)
-    throw std::runtime_error(message);
+void Check(bool condition, const char* message) {
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
 std::vector<uint8_t> Rom(bool pal = false) {
-  std::vector<uint8_t> rom(0x8000);
-  std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
-  rom[0x7fc0] = 'T';
-  rom[0x7fd5] = 0x20;
-  rom[0x7fd7] = 5;
-  rom[0x7fd9] = pal ? 2 : 1;
-  rom[0x7fdc] = rom[0x7fdd] = 0xff;
-  rom[0x7ffd] = 0x80;
-  rom[0] = 0xdb; // STP keeps the fixture independent of instruction throughput.
-  return rom;
+    std::vector<uint8_t> rom(0x8000);
+    std::fill_n(rom.begin() + 0x7fc0, 21, ' ');
+    rom[0x7fc0] = 'T';
+    rom[0x7fd5] = 0x20;
+    rom[0x7fd7] = 5;
+    rom[0x7fd9] = pal ? 2 : 1;
+    rom[0x7fdc] = rom[0x7fdd] = 0xff;
+    rom[0x7ffd] = 0x80;
+    rom[0] = 0xdb; // STP keeps the fixture independent of instruction throughput.
+    return rom;
 }
 
 std::unique_ptr<Emulator> Machine(bool pal = false) {
-  auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
-  std::string error;
-  Check(machine->LoadCartridge(Rom(pal), &error), "The frame fixture loads");
-  return machine;
+    auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+    std::string error;
+    Check(machine->LoadCartridge(Rom(pal), &error), "The frame fixture loads");
+    return machine;
 }
 
 struct Output final : IVideoOutput, IAudioOutput {
-  unsigned videoCalls = 0, audioCalls = 0;
-  uint64_t samples = 0;
-  void Present(const VideoFrame &) override {
-    ++videoCalls;
-  }
-  void Submit(const AudioBuffer &buffer) override {
-    ++audioCalls;
-    Check(buffer.sampleRate == AudioTiming::SampleRate, "Output retains the native audio rate");
-    Check(buffer.interleavedStereo.size() < 1400, "One field contains one field of audio");
-    samples += buffer.interleavedStereo.size() / 2;
-  }
+    unsigned videoCalls = 0, audioCalls = 0;
+    uint64_t samples = 0;
+
+    void Present(const VideoFrame&) override {
+        ++videoCalls;
+    }
+
+    void Submit(const AudioBuffer& buffer) override {
+        ++audioCalls;
+        Check(buffer.sampleRate == AudioTiming::SampleRate, "Output retains the native audio rate");
+        Check(buffer.interleavedStereo.size() < 1400, "One field contains one field of audio");
+        samples += buffer.interleavedStereo.size() / 2;
+    }
 };
 
 void BoundaryDelivery() {
-  for (bool pal : {false, true}) {
-    for (uint8_t setting : {0, 1, 4, 5}) {
-      auto machine = Machine(pal);
-      machine->GetBus().Write(0x2133, setting);
-      Output output;
-      machine->AttachVideoOutput(&output);
-      machine->AttachAudioOutput(&output);
-      for (unsigned frame = 0; frame < 4; ++frame) {
-        const auto result = machine->StepFrame();
-        const auto &timing = machine->GetTiming();
-        Check(timing.VCounter() == timing.VDisp() && timing.HCounter() == 0,
-              "StepFrame returns at the display boundary inside the current CPU cycle");
-        Check(timing.FrameCount() == frame && result.frameIndex == frame + 1,
-              "Host frames count display events, including the first partial field");
-        Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
-              "Every field delivers exactly one video frame and one audio block");
-        const auto hardwareClocks = machine->GetSmp().HardwareClockCount();
-        Check(output.samples > 0 &&
-                  output.samples == sound_clock_test::UnityStreamFrames(hardwareClocks) &&
-                  machine->GetDsp().Phase() == sound_clock_test::DspClocks(hardwareClocks) % 32,
-              "Field delivery retains stream priming and the DSP half-cycle phase");
-      }
+    for (bool pal : {false, true}) {
+        for (uint8_t setting : {0, 1, 4, 5}) {
+            auto machine = Machine(pal);
+            machine->GetBus().Write(0x2133, setting);
+            Output output;
+            machine->AttachVideoOutput(&output);
+            machine->AttachAudioOutput(&output);
+            for (unsigned frame = 0; frame < 4; ++frame) {
+                const auto result = machine->StepFrame();
+                const auto& timing = machine->GetTiming();
+                Check(timing.VCounter() == timing.VDisp() && timing.HCounter() == 0,
+                      "StepFrame returns at the display boundary inside the current CPU cycle");
+                Check(timing.FrameCount() == frame && result.frameIndex == frame + 1,
+                      "Host frames count display events, including the first partial field");
+                Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
+                      "Every field delivers exactly one video frame and one audio block");
+                const auto hardwareClocks = machine->GetSmp().HardwareClockCount();
+                Check(output.samples > 0 &&
+                          output.samples == sound_clock_test::UnityStreamFrames(hardwareClocks) &&
+                          machine->GetDsp().Phase() ==
+                              sound_clock_test::DspClocks(hardwareClocks) % 32,
+                      "Field delivery retains stream priming and the DSP half-cycle phase");
+            }
+        }
     }
-  }
 }
 
-void StartLongDma(Emulator &machine, unsigned &writes) {
-  machine.GetBus().Write(0x7e0100, 0xa5);
-  machine.GetBus().Map(
-      0, 0, 0x21e0, 0x21e0, [](uint32_t, uint8_t value) { return value; },
-      [&](uint32_t, uint8_t value) {
-        Check(value == 0xa5, "A suspended DMA retains its sampled byte");
-        ++writes;
-      });
-  for (unsigned index = 0; index < 8; ++index) {
-    auto &channel = machine.GetDma().Channel(index);
-    channel.writeControl(8);
-    channel.sourceBank = 0x7e;
-    channel.sourceAddress = 0x100;
-    channel.targetAddress = 0xe0;
-    channel.transferSize = 0; // Each channel transfers 65536 bytes.
-  }
-  machine.GetDma().EnableDma(0xff);
+void StartLongDma(Emulator& machine, unsigned& writes) {
+    machine.GetBus().Write(0x7e0100, 0xa5);
+    machine.GetBus().Map(
+        0, 0, 0x21e0, 0x21e0, [](uint32_t, uint8_t value) { return value; },
+        [&](uint32_t, uint8_t value) {
+            Check(value == 0xa5, "A suspended DMA retains its sampled byte");
+            ++writes;
+        });
+    for (unsigned index = 0; index < 8; ++index) {
+        auto& channel = machine.GetDma().Channel(index);
+        channel.writeControl(8);
+        channel.sourceBank = 0x7e;
+        channel.sourceAddress = 0x100;
+        channel.targetAddress = 0xe0;
+        channel.transferSize = 0; // Each channel transfers 65536 bytes.
+    }
+    machine.GetDma().EnableDma(0xff);
 }
 
 void DmaAcrossFields() {
-  for (bool pal : {false, true}) {
-    auto machine = Machine(pal);
-    unsigned writes = 0;
-    StartLongDma(*machine, writes);
-    Output output;
-    machine->AttachVideoOutput(&output);
-    machine->AttachAudioOutput(&output);
-    for (unsigned frame = 0; frame < 15; ++frame) {
-      machine->StepFrame();
-      Check(machine->GetTiming().FrameCount() == frame,
-            "A DMA spanning several fields never skips a display event");
-      Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
-            "Long DMA delivers video and audio on every field");
-      Check(output.samples > 0 && output.samples == sound_clock_test::UnityStreamFrames(
-                                                        machine->GetSmp().HardwareClockCount()),
-            "Resuming DMA neither repeats nor drops audio samples");
-      if (frame == 0)
-        Check(writes > 0 && writes < 65536 && machine->GetDma().InDma(),
-              "The first field suspends inside the first DMA channel");
+    for (bool pal : {false, true}) {
+        auto machine = Machine(pal);
+        unsigned writes = 0;
+        StartLongDma(*machine, writes);
+        Output output;
+        machine->AttachVideoOutput(&output);
+        machine->AttachAudioOutput(&output);
+        for (unsigned frame = 0; frame < 15; ++frame) {
+            machine->StepFrame();
+            Check(machine->GetTiming().FrameCount() == frame,
+                  "A DMA spanning several fields never skips a display event");
+            Check(output.videoCalls == frame + 1 && output.audioCalls == frame + 1,
+                  "Long DMA delivers video and audio on every field");
+            Check(output.samples > 0 &&
+                      output.samples == sound_clock_test::UnityStreamFrames(
+                                            machine->GetSmp().HardwareClockCount()),
+                  "Resuming DMA neither repeats nor drops audio samples");
+            if (frame == 0)
+                Check(writes > 0 && writes < 65536 && machine->GetDma().InDma(),
+                      "The first field suspends inside the first DMA channel");
+        }
+        Check(writes == 8 * 65536 && !machine->GetDma().AnyDmaEnabled() &&
+                  machine->GetCpu()->regs().stp,
+              "All DMA bytes execute once before CPU reset and the program complete");
     }
-    Check(writes == 8 * 65536 && !machine->GetDma().AnyDmaEnabled() &&
-              machine->GetCpu()->regs().stp,
-          "All DMA bytes execute once before CPU reset and the program complete");
-  }
 }
 
 void CartridgeAtScanlineBoundary() {
-  for (bool pal : {false, true}) {
-    for (bool crossingCycle : {false, true}) {
-      auto rom = Rom(pal);
-      rom[0x7fd5] = 0x23;
-      rom[0x7fd6] = 0x35;
-      auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
-      std::string error;
-      Check(machine->LoadCartridge(rom, &error), "The scanline cartridge fixture loads");
-      machine->GetCpu()->Step();
-      machine->GetCpu()->Step();
-      Check(machine->GetCpu()->regs().stp, "The console stops before releasing the cartridge CPU");
-      auto &bus = machine->GetBus();
-      bus.Write(0x2229, 0xff);
-      const std::vector<uint8_t> program =
-          crossingCycle
-              ? std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0x8d, 0, 0x30, 0xdb}
-              : std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0xa9, 0x5a, 0x8d, 0, 0x30, 0xdb};
-      for (unsigned index = 0; index < program.size(); ++index)
-        bus.Write(0x3100 + index, program[index]);
-      bus.Write(0x2203, 0);
-      bus.Write(0x2204, 1);
-      auto &timing = machine->GetTiming();
-      if (crossingCycle) {
-        timing.onDramRefresh = nullptr;
-        timing.Tick(timing.HPeriod() - timing.HCounter() - 26);
-        machine->GetCpu()->write(0x2200, 0);
-        Check(timing.HCounter() == timing.HPeriod() - 20,
-              "The worker starts twenty clocks before the scanline edge");
-        for (unsigned cycle = 0; cycle < 4; ++cycle)
-          machine->GetCpu()->idle();
-        Check(timing.HCounter() == 4 && bus.ReadCpu(0x3000) == 0xff,
-              "Scanline synchronization includes the clocks of the CPU cycle crossing the edge");
-      } else {
-        bus.Write(0x2200, 0);
-        Check(bus.ReadCpu(0x3000) == 0, "The worker has not run before the scanline edge");
-        timing.Tick(timing.HPeriod() - timing.HCounter());
-        Check(timing.HCounter() == 0 && bus.ReadCpu(0x3000) == 0x5a,
-              "A scanline edge synchronizes cartridge work while the console is stopped");
-      }
+    for (bool pal : {false, true}) {
+        for (bool crossingCycle : {false, true}) {
+            auto rom = Rom(pal);
+            rom[0x7fd5] = 0x23;
+            rom[0x7fd6] = 0x35;
+            auto machine = std::make_unique<Emulator>(snes::tests::DeterministicConsoleConfig());
+            std::string error;
+            Check(machine->LoadCartridge(rom, &error), "The scanline cartridge fixture loads");
+            machine->GetCpu()->Step();
+            machine->GetCpu()->Step();
+            Check(machine->GetCpu()->regs().stp,
+                  "The console stops before releasing the cartridge CPU");
+            auto& bus = machine->GetBus();
+            bus.Write(0x2229, 0xff);
+            const std::vector<uint8_t> program =
+                crossingCycle
+                    ? std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0x8d, 0, 0x30, 0xdb}
+                    : std::vector<uint8_t>{0xa9, 0xff, 0x8d, 0x2a, 0x22, 0xa9,
+                                           0x5a, 0x8d, 0,    0x30, 0xdb};
+            for (unsigned index = 0; index < program.size(); ++index)
+                bus.Write(0x3100 + index, program[index]);
+            bus.Write(0x2203, 0);
+            bus.Write(0x2204, 1);
+            auto& timing = machine->GetTiming();
+            if (crossingCycle) {
+                timing.onDramRefresh = nullptr;
+                timing.Tick(timing.HPeriod() - timing.HCounter() - 26);
+                machine->GetCpu()->write(0x2200, 0);
+                Check(timing.HCounter() == timing.HPeriod() - 20,
+                      "The worker starts twenty clocks before the scanline edge");
+                for (unsigned cycle = 0; cycle < 4; ++cycle)
+                    machine->GetCpu()->idle();
+                Check(timing.HCounter() == 4 && bus.ReadCpu(0x3000) == 0xff,
+                      "Scanline synchronization includes the clocks of the CPU cycle crossing the "
+                      "edge");
+            } else {
+                bus.Write(0x2200, 0);
+                Check(bus.ReadCpu(0x3000) == 0, "The worker has not run before the scanline edge");
+                timing.Tick(timing.HPeriod() - timing.HCounter());
+                Check(timing.HCounter() == 0 && bus.ReadCpu(0x3000) == 0x5a,
+                      "A scanline edge synchronizes cartridge work while the console is stopped");
+            }
+        }
     }
-  }
 }
 
 void InterlaceFrameLatch() {
-  for (bool pal : {false, true}) {
-    auto machine = Machine(pal);
-    auto &timing = machine->GetTiming();
-    auto &ppu = machine->GetPpu();
-    machine->GetBus().Write(0x2133, 1);
-    while (timing.VCounter() < 128)
-      machine->GetCpu()->idle();
-    Check(!ppu.Interlace() && !timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
-          "Interlace written inside the initial field waits for the next frame latch");
-    while (timing.FrameCount() == 0)
-      machine->GetCpu()->idle();
-    Check(ppu.Interlace(), "The frame edge latches interlace before the next counter sample");
-    while (timing.VCounter() < 128)
-      machine->GetCpu()->idle();
-    Check(timing.Interlace(), "The counter samples the frame's latched interlace mode");
-    machine->GetBus().Write(0x2133, 0);
-    Check(ppu.Interlace(), "Disabling interlace retains the current field's display mode");
-    while (timing.FrameCount() == 1)
-      machine->GetCpu()->idle();
-    Check(!ppu.Interlace(), "The following frame latches the disabled mode");
-    while (timing.VCounter() < 128)
-      machine->GetCpu()->idle();
-    Check(!timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
-          "The counter samples the new mode without extending the field");
-  }
+    for (bool pal : {false, true}) {
+        auto machine = Machine(pal);
+        auto& timing = machine->GetTiming();
+        auto& ppu = machine->GetPpu();
+        machine->GetBus().Write(0x2133, 1);
+        while (timing.VCounter() < 128)
+            machine->GetCpu()->idle();
+        Check(!ppu.Interlace() && !timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
+              "Interlace written inside the initial field waits for the next frame latch");
+        while (timing.FrameCount() == 0)
+            machine->GetCpu()->idle();
+        Check(ppu.Interlace(), "The frame edge latches interlace before the next counter sample");
+        while (timing.VCounter() < 128)
+            machine->GetCpu()->idle();
+        Check(timing.Interlace(), "The counter samples the frame's latched interlace mode");
+        machine->GetBus().Write(0x2133, 0);
+        Check(ppu.Interlace(), "Disabling interlace retains the current field's display mode");
+        while (timing.FrameCount() == 1)
+            machine->GetCpu()->idle();
+        Check(!ppu.Interlace(), "The following frame latches the disabled mode");
+        while (timing.VCounter() < 128)
+            machine->GetCpu()->idle();
+        Check(!timing.Interlace() && timing.VPeriod() == (pal ? 312 : 262),
+              "The counter samples the new mode without extending the field");
+    }
 }
 
 void ReloadAndDebuggerOperations() {
-  unsigned writes = 0;
-  auto machine = Machine();
-  StartLongDma(*machine, writes);
-  machine->StepFrame();
-  const auto firstWrites = writes;
-  std::string error;
-  Check(!machine->LoadCartridge({}, &error), "An invalid replacement image is rejected");
-  machine->StepFrame();
-  Check(writes > firstWrites && machine->GetTiming().FrameCount() == 1,
-        "A failed reload leaves the suspended operation resumable");
-  const auto before = machine->GetCpu()->Cycles();
-  const auto remaining = machine->GetCpu()->Step();
-  Check(writes == 8 * 65536 && !machine->GetDma().InDma() && remaining > 0 &&
-            remaining == machine->GetCpu()->Cycles() - before,
-        "A debugger step completes the retained CPU operation and DMA exactly once");
-  machine->GetCpu()->Step();
-  Check(machine->GetCpu()->regs().stp, "The following debugger step executes the next instruction");
-  machine->StepFrame();
-  Check(machine->GetTiming().HCounter() == 0 &&
-            machine->GetTiming().VCounter() == machine->GetTiming().VDisp(),
-        "Normal frame execution resumes after debugger instruction stepping");
+    unsigned writes = 0;
+    auto machine = Machine();
+    StartLongDma(*machine, writes);
+    machine->StepFrame();
+    const auto firstWrites = writes;
+    std::string error;
+    Check(!machine->LoadCartridge({}, &error), "An invalid replacement image is rejected");
+    machine->StepFrame();
+    Check(writes > firstWrites && machine->GetTiming().FrameCount() == 1,
+          "A failed reload leaves the suspended operation resumable");
+    const auto before = machine->GetCpu()->Cycles();
+    const auto remaining = machine->GetCpu()->Step();
+    Check(writes == 8 * 65536 && !machine->GetDma().InDma() && remaining > 0 &&
+              remaining == machine->GetCpu()->Cycles() - before,
+          "A debugger step completes the retained CPU operation and DMA exactly once");
+    machine->GetCpu()->Step();
+    Check(machine->GetCpu()->regs().stp,
+          "The following debugger step executes the next instruction");
+    machine->StepFrame();
+    Check(machine->GetTiming().HCounter() == 0 &&
+              machine->GetTiming().VCounter() == machine->GetTiming().VDisp(),
+          "Normal frame execution resumes after debugger instruction stepping");
 
-  writes = 0;
-  machine = Machine();
-  StartLongDma(*machine, writes);
-  machine->StepFrame();
-  const auto oldWrites = writes;
-  Check(machine->LoadCartridge(Rom(true), &error), "A valid replacement cartridge loads");
-  machine->StepFrame();
-  Check(writes == oldWrites && machine->CurrentFrame() == 1 &&
-            machine->GetTiming().FrameCount() == 0 && !machine->GetDma().InDma(),
-        "Reload unwinds old DMA before replacing its mapped devices");
+    writes = 0;
+    machine = Machine();
+    StartLongDma(*machine, writes);
+    machine->StepFrame();
+    const auto oldWrites = writes;
+    Check(machine->LoadCartridge(Rom(true), &error), "A valid replacement cartridge loads");
+    machine->StepFrame();
+    Check(writes == oldWrites && machine->CurrentFrame() == 1 &&
+              machine->GetTiming().FrameCount() == 0 && !machine->GetDma().InDma(),
+          "Reload unwinds old DMA before replacing its mapped devices");
 
-  writes = 0;
-  machine = Machine();
-  StartLongDma(*machine, writes);
-  machine->StepFrame();
-  machine->GetCpu()->Reset();
-  const auto resetWrites = writes;
-  Check(!machine->GetDma().InDma(), "Reset unwinds the suspended DMA guard");
-  machine->GetDma().EnableDma(0);
-  machine->StepFrame();
-  Check(writes == resetWrites && machine->GetCpu()->regs().stp,
-        "Reset replaces the retained CPU stack without replaying its pending bus phase");
+    writes = 0;
+    machine = Machine();
+    StartLongDma(*machine, writes);
+    machine->StepFrame();
+    machine->GetCpu()->Reset();
+    const auto resetWrites = writes;
+    Check(!machine->GetDma().InDma(), "Reset unwinds the suspended DMA guard");
+    machine->GetDma().EnableDma(0);
+    machine->StepFrame();
+    Check(writes == resetWrites && machine->GetCpu()->regs().stp,
+          "Reset replaces the retained CPU stack without replaying its pending bus phase");
 
-  writes = 0;
-  machine = Machine();
-  StartLongDma(*machine, writes);
-  machine->StepFrame();
-  const auto finalWrites = writes;
-  machine.reset();
-  Check(writes == finalWrites, "Destruction cancels a paused DMA without further bus writes");
+    writes = 0;
+    machine = Machine();
+    StartLongDma(*machine, writes);
+    machine->StepFrame();
+    const auto finalWrites = writes;
+    machine.reset();
+    Check(writes == finalWrites, "Destruction cancels a paused DMA without further bus writes");
 }
 
 void ManualClocksAtDisplayEvent() {
-  for (bool reset : {false, true}) {
-    auto machine = Machine();
-    machine->StepFrame();
-    auto &timing = machine->GetTiming();
-    unsigned nmiPoints = 0;
-    timing.onNmiPoint = [&]() { ++nmiPoints; };
-    const auto poll = timing.onIrqPoll;
-    uint64_t previousPoll = 0;
-    timing.onIrqPoll = [&](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t period) {
-      Check(timing.MasterClocksElapsed() > previousPoll,
-            "Resuming a timing callback never repeats an interrupt sampling edge");
-      previousPoll = timing.MasterClocksElapsed();
-      poll(h, v, vdisp, period);
-    };
-    if (reset)
-      machine->GetCpu()->Reset();
-    machine->GetCpu()->idle();
-    Check(nmiPoints == 1, "Manual clocks immediately after a frame retain the VBlank NMI edge");
-    machine->StepFrame();
-    Check(nmiPoints == 1, "The following frame ends before its next NMI edge");
-  }
+    for (bool reset : {false, true}) {
+        auto machine = Machine();
+        machine->StepFrame();
+        auto& timing = machine->GetTiming();
+        unsigned nmiPoints = 0;
+        timing.onNmiPoint = [&]() { ++nmiPoints; };
+        const auto poll = timing.onIrqPoll;
+        uint64_t previousPoll = 0;
+        timing.onIrqPoll = [&](uint16_t h, uint16_t v, uint16_t vdisp, uint16_t period) {
+            Check(timing.MasterClocksElapsed() > previousPoll,
+                  "Resuming a timing callback never repeats an interrupt sampling edge");
+            previousPoll = timing.MasterClocksElapsed();
+            poll(h, v, vdisp, period);
+        };
+        if (reset)
+            machine->GetCpu()->Reset();
+        machine->GetCpu()->idle();
+        Check(nmiPoints == 1, "Manual clocks immediately after a frame retain the VBlank NMI edge");
+        machine->StepFrame();
+        Check(nmiPoints == 1, "The following frame ends before its next NMI edge");
+    }
 }
 } // namespace
 
 int main() {
-  try {
-    BoundaryDelivery();
-    DmaAcrossFields();
-    CartridgeAtScanlineBoundary();
-    InterlaceFrameLatch();
-    ReloadAndDebuggerOperations();
-    ManualClocksAtDisplayEvent();
-  } catch (const std::exception &error) {
-    std::fprintf(stderr, "%s\n", error.what());
-    return 1;
-  }
-  std::puts("Frame boundary and suspended DMA checks passed");
-  return 0;
+    try {
+        BoundaryDelivery();
+        DmaAcrossFields();
+        CartridgeAtScanlineBoundary();
+        InterlaceFrameLatch();
+        ReloadAndDebuggerOperations();
+        ManualClocksAtDisplayEvent();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
+    std::puts("Frame boundary and suspended DMA checks passed");
+    return 0;
 }

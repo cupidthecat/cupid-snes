@@ -10,120 +10,120 @@ namespace snes::core {
 // Construction / Reset
 
 Dsp1::Dsp1() {
-  Reset();
+    Reset();
 }
 
 void Dsp1::Reset() {
-  sr_ = DRC | RQM;
-  statusReadHigh_ = false;
-  dr_ = 0x0080;
-  freeze_ = false;
-  fsmMajorState_ = WAIT_COMMAND;
-  std::memset(&shared_, 0, sizeof(SharedData));
+    sr_ = DRC | RQM;
+    statusReadHigh_ = false;
+    dr_ = 0x0080;
+    freeze_ = false;
+    fsmMajorState_ = WAIT_COMMAND;
+    std::memset(&shared_, 0, sizeof(SharedData));
 }
 
 // Register access
 
 uint8_t Dsp1::GetSr() {
-  const uint8_t value = statusReadHigh_ ? sr_ : 0;
-  statusReadHigh_ = !statusReadHigh_;
-  return value;
+    const uint8_t value = statusReadHigh_ ? sr_ : 0;
+    statusReadHigh_ = !statusReadHigh_;
+    return value;
 }
 
 uint8_t Dsp1::GetDr() {
-  uint8_t data = static_cast<uint8_t>(dr_ >> ((sr_ & DRS) ? 8 : 0));
-  fsmStep(true, data);
-  return data;
+    uint8_t data = static_cast<uint8_t>(dr_ >> ((sr_ & DRS) ? 8 : 0));
+    fsmStep(true, data);
+    return data;
 }
 
 void Dsp1::SetDr(uint8_t value) {
-  fsmStep(false, value);
+    fsmStep(false, value);
 }
 
 // Finite State Machine
 
-void Dsp1::fsmStep(bool read, uint8_t &data) {
-  if (0 == (sr_ & RQM))
-    return;
+void Dsp1::fsmStep(bool read, uint8_t& data) {
+    if (0 == (sr_ & RQM))
+        return;
 
-  // Binding between external byte and internal 16-bit DR
-  if (read) {
-    if (sr_ & DRS)
-      data = static_cast<uint8_t>(dr_ >> 8);
-    else
-      data = static_cast<uint8_t>(dr_);
-  } else {
-    if (sr_ & DRS) {
-      dr_ &= 0x00ff;
-      dr_ |= static_cast<uint16_t>(data) << 8;
+    // Binding between external byte and internal 16-bit DR
+    if (read) {
+        if (sr_ & DRS)
+            data = static_cast<uint8_t>(dr_ >> 8);
+        else
+            data = static_cast<uint8_t>(dr_);
     } else {
-      dr_ &= 0xff00;
-      dr_ |= data;
-    }
-  }
-
-  switch (fsmMajorState_) {
-  case WAIT_COMMAND:
-    command_ = static_cast<uint8_t>(dr_);
-    if (!(command_ & 0xc0)) {
-      switch (command_) {
-      case 0x1a:
-      case 0x2a:
-      case 0x3a:
-        freeze_ = true;
-        break;
-      default:
-        dataCounter_ = 0;
-        fsmMajorState_ = READ_DATA;
-        sr_ &= ~DRC;
-        break;
-      }
-    }
-    break;
-
-  case READ_DATA:
-    sr_ ^= DRS;
-    if (!(sr_ & DRS)) {
-      readBuffer_[dataCounter_++] = static_cast<int16_t>(dr_);
-      if (dataCounter_ >= kCommandTable[command_].reads) {
-        (this->*kCommandTable[command_].callback)(readBuffer_, writeBuffer_);
-        if (0 != kCommandTable[command_].writes) {
-          dataCounter_ = 0;
-          dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
-          fsmMajorState_ = WRITE_DATA;
+        if (sr_ & DRS) {
+            dr_ &= 0x00ff;
+            dr_ |= static_cast<uint16_t>(data) << 8;
         } else {
-          dr_ = 0x0080;
-          fsmMajorState_ = WAIT_COMMAND;
-          sr_ |= DRC;
+            dr_ &= 0xff00;
+            dr_ |= data;
         }
-      }
     }
-    break;
 
-  case WRITE_DATA:
-    sr_ ^= DRS;
-    if (!(sr_ & DRS)) {
-      ++dataCounter_;
-      if (dataCounter_ >= kCommandTable[command_].writes) {
-        if ((command_ == 0x0a) && (dr_ != 0x8000)) {
-          readBuffer_[0]++;
-          (this->*kCommandTable[command_].callback)(readBuffer_, writeBuffer_);
-          dataCounter_ = 0;
-          dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
-        } else {
-          dr_ = 0x0080;
-          fsmMajorState_ = WAIT_COMMAND;
-          sr_ |= DRC;
+    switch (fsmMajorState_) {
+    case WAIT_COMMAND:
+        command_ = static_cast<uint8_t>(dr_);
+        if (!(command_ & 0xc0)) {
+            switch (command_) {
+            case 0x1a:
+            case 0x2a:
+            case 0x3a:
+                freeze_ = true;
+                break;
+            default:
+                dataCounter_ = 0;
+                fsmMajorState_ = READ_DATA;
+                sr_ &= ~DRC;
+                break;
+            }
         }
-      } else {
-        dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
-      }
-    }
-    break;
-  }
+        break;
 
-  if (freeze_)
-    sr_ &= ~RQM;
+    case READ_DATA:
+        sr_ ^= DRS;
+        if (!(sr_ & DRS)) {
+            readBuffer_[dataCounter_++] = static_cast<int16_t>(dr_);
+            if (dataCounter_ >= kCommandTable[command_].reads) {
+                (this->*kCommandTable[command_].callback)(readBuffer_, writeBuffer_);
+                if (0 != kCommandTable[command_].writes) {
+                    dataCounter_ = 0;
+                    dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
+                    fsmMajorState_ = WRITE_DATA;
+                } else {
+                    dr_ = 0x0080;
+                    fsmMajorState_ = WAIT_COMMAND;
+                    sr_ |= DRC;
+                }
+            }
+        }
+        break;
+
+    case WRITE_DATA:
+        sr_ ^= DRS;
+        if (!(sr_ & DRS)) {
+            ++dataCounter_;
+            if (dataCounter_ >= kCommandTable[command_].writes) {
+                if ((command_ == 0x0a) && (dr_ != 0x8000)) {
+                    readBuffer_[0]++;
+                    (this->*kCommandTable[command_].callback)(readBuffer_, writeBuffer_);
+                    dataCounter_ = 0;
+                    dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
+                } else {
+                    dr_ = 0x0080;
+                    fsmMajorState_ = WAIT_COMMAND;
+                    sr_ |= DRC;
+                }
+            } else {
+                dr_ = static_cast<uint16_t>(writeBuffer_[dataCounter_]);
+            }
+        }
+        break;
+    }
+
+    if (freeze_)
+        sr_ &= ~RQM;
 }
 
 // Command table
@@ -200,349 +200,349 @@ const Dsp1::Command Dsp1::kCommandTable[0x40] = {
 
 // DSP-1 Commands
 
-void Dsp1::memoryTest(int16_t *input, int16_t *output) {
-  output[0] = 0x0000;
+void Dsp1::memoryTest(int16_t* input, int16_t* output) {
+    output[0] = 0x0000;
 }
 
-void Dsp1::memoryDump(int16_t *input, int16_t *output) {
-  std::memcpy(output, kDataRom, 1024 * sizeof(int16_t));
+void Dsp1::memoryDump(int16_t* input, int16_t* output) {
+    std::memcpy(output, kDataRom, 1024 * sizeof(int16_t));
 }
 
-void Dsp1::memorySize(int16_t *input, int16_t *output) {
-  output[0] = 0x0100;
+void Dsp1::memorySize(int16_t* input, int16_t* output) {
+    output[0] = 0x0100;
 }
 
-void Dsp1::multiply(int16_t *input, int16_t *output) {
-  int16_t &Multiplicand = input[0];
-  int16_t &Multiplier = input[1];
-  output[0] = static_cast<int16_t>(Multiplicand * Multiplier >> 15);
+void Dsp1::multiply(int16_t* input, int16_t* output) {
+    int16_t& Multiplicand = input[0];
+    int16_t& Multiplier = input[1];
+    output[0] = static_cast<int16_t>(Multiplicand * Multiplier >> 15);
 }
 
-void Dsp1::multiply2(int16_t *input, int16_t *output) {
-  int16_t &Multiplicand = input[0];
-  int16_t &Multiplier = input[1];
-  output[0] = static_cast<int16_t>((Multiplicand * Multiplier >> 15) + 1);
+void Dsp1::multiply2(int16_t* input, int16_t* output) {
+    int16_t& Multiplicand = input[0];
+    int16_t& Multiplier = input[1];
+    output[0] = static_cast<int16_t>((Multiplicand * Multiplier >> 15) + 1);
 }
 
-void Dsp1::inverseCmd(int16_t *input, int16_t *output) {
-  inverse(input[0], input[1], output[0], output[1]);
+void Dsp1::inverseCmd(int16_t* input, int16_t* output) {
+    inverse(input[0], input[1], output[0], output[1]);
 }
 
-void Dsp1::triangle(int16_t *input, int16_t *output) {
-  int16_t &Angle = input[0];
-  int16_t &Radius = input[1];
-  output[0] = static_cast<int16_t>(sinLut(Angle) * Radius >> 15); // Y
-  output[1] = static_cast<int16_t>(cosLut(Angle) * Radius >> 15); // X
+void Dsp1::triangle(int16_t* input, int16_t* output) {
+    int16_t& Angle = input[0];
+    int16_t& Radius = input[1];
+    output[0] = static_cast<int16_t>(sinLut(Angle) * Radius >> 15); // Y
+    output[1] = static_cast<int16_t>(cosLut(Angle) * Radius >> 15); // X
 }
 
-void Dsp1::radius(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  int32_t Rad = (X * X + Y * Y + Z * Z) << 1;
-  output[0] = static_cast<int16_t>(Rad);
-  output[1] = static_cast<int16_t>(Rad >> 16);
+void Dsp1::radius(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    int32_t Rad = (X * X + Y * Y + Z * Z) << 1;
+    output[0] = static_cast<int16_t>(Rad);
+    output[1] = static_cast<int16_t>(Rad >> 16);
 }
 
-void Dsp1::range(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  int16_t &R = input[3];
-  output[0] = static_cast<int16_t>((X * X + Y * Y + Z * Z - R * R) >> 15);
+void Dsp1::range(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    int16_t& R = input[3];
+    output[0] = static_cast<int16_t>((X * X + Y * Y + Z * Z - R * R) >> 15);
 }
 
-void Dsp1::range2(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  int16_t &R = input[3];
-  output[0] = static_cast<int16_t>(((X * X + Y * Y + Z * Z - R * R) >> 15) + 1);
+void Dsp1::range2(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    int16_t& R = input[3];
+    output[0] = static_cast<int16_t>(((X * X + Y * Y + Z * Z - R * R) >> 15) + 1);
 }
 
-void Dsp1::distance(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
+void Dsp1::distance(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
 
-  int32_t Rad = X * X + Y * Y + Z * Z;
-  if (Rad == 0) {
-    output[0] = 0;
-    return;
-  }
+    int32_t Rad = X * X + Y * Y + Z * Z;
+    if (Rad == 0) {
+        output[0] = 0;
+        return;
+    }
 
-  int16_t C, E;
-  normalizeDouble(Rad, C, E);
-  if (E & 1)
-    C = static_cast<int16_t>(C * 0x4000 >> 15);
+    int16_t C, E;
+    normalizeDouble(Rad, C, E);
+    if (E & 1)
+        C = static_cast<int16_t>(C * 0x4000 >> 15);
 
-  int16_t Pos = static_cast<int16_t>(C * 0x0040 >> 15);
-  int16_t Node1 = static_cast<int16_t>(kDataRom[0x00d5 + Pos]);
-  int16_t Node2 = static_cast<int16_t>(kDataRom[0x00d6 + Pos]);
-  int16_t Dist = static_cast<int16_t>(((Node2 - Node1) * (C & 0x1ff) >> 9) + Node1);
-  Dist >>= (E >> 1);
-  output[0] = Dist;
+    int16_t Pos = static_cast<int16_t>(C * 0x0040 >> 15);
+    int16_t Node1 = static_cast<int16_t>(kDataRom[0x00d5 + Pos]);
+    int16_t Node2 = static_cast<int16_t>(kDataRom[0x00d6 + Pos]);
+    int16_t Dist = static_cast<int16_t>(((Node2 - Node1) * (C & 0x1ff) >> 9) + Node1);
+    Dist >>= (E >> 1);
+    output[0] = Dist;
 }
 
-void Dsp1::rotate(int16_t *input, int16_t *output) {
-  int16_t &Angle = input[0];
-  int16_t &X1 = input[1];
-  int16_t &Y1 = input[2];
-  output[0] = static_cast<int16_t>((Y1 * sinLut(Angle) >> 15) + (X1 * cosLut(Angle) >> 15));
-  output[1] = static_cast<int16_t>((Y1 * cosLut(Angle) >> 15) - (X1 * sinLut(Angle) >> 15));
+void Dsp1::rotate(int16_t* input, int16_t* output) {
+    int16_t& Angle = input[0];
+    int16_t& X1 = input[1];
+    int16_t& Y1 = input[2];
+    output[0] = static_cast<int16_t>((Y1 * sinLut(Angle) >> 15) + (X1 * cosLut(Angle) >> 15));
+    output[1] = static_cast<int16_t>((Y1 * cosLut(Angle) >> 15) - (X1 * sinLut(Angle) >> 15));
 }
 
-void Dsp1::polar(int16_t *input, int16_t *output) {
-  int16_t &Az = input[0];
-  int16_t &Ay = input[1];
-  int16_t &Ax = input[2];
-  int16_t &X1 = input[3];
-  int16_t &Y1 = input[4];
-  int16_t &Z1 = input[5];
+void Dsp1::polar(int16_t* input, int16_t* output) {
+    int16_t& Az = input[0];
+    int16_t& Ay = input[1];
+    int16_t& Ax = input[2];
+    int16_t& X1 = input[3];
+    int16_t& Y1 = input[4];
+    int16_t& Z1 = input[5];
 
-  int16_t X, Y, Z;
-  // Rotate around Z
-  X = static_cast<int16_t>((Y1 * sinLut(Az) >> 15) + (X1 * cosLut(Az) >> 15));
-  Y = static_cast<int16_t>((Y1 * cosLut(Az) >> 15) - (X1 * sinLut(Az) >> 15));
-  X1 = X;
-  Y1 = Y;
-  // Rotate around Y
-  Z = static_cast<int16_t>((X1 * sinLut(Ay) >> 15) + (Z1 * cosLut(Ay) >> 15));
-  X = static_cast<int16_t>((X1 * cosLut(Ay) >> 15) - (Z1 * sinLut(Ay) >> 15));
-  output[0] = X;
-  Z1 = Z;
-  // Rotate around X
-  Y = static_cast<int16_t>((Z1 * sinLut(Ax) >> 15) + (Y1 * cosLut(Ax) >> 15));
-  Z = static_cast<int16_t>((Z1 * cosLut(Ax) >> 15) - (Y1 * sinLut(Ax) >> 15));
-  output[1] = Y;
-  output[2] = Z;
+    int16_t X, Y, Z;
+    // Rotate around Z
+    X = static_cast<int16_t>((Y1 * sinLut(Az) >> 15) + (X1 * cosLut(Az) >> 15));
+    Y = static_cast<int16_t>((Y1 * cosLut(Az) >> 15) - (X1 * sinLut(Az) >> 15));
+    X1 = X;
+    Y1 = Y;
+    // Rotate around Y
+    Z = static_cast<int16_t>((X1 * sinLut(Ay) >> 15) + (Z1 * cosLut(Ay) >> 15));
+    X = static_cast<int16_t>((X1 * cosLut(Ay) >> 15) - (Z1 * sinLut(Ay) >> 15));
+    output[0] = X;
+    Z1 = Z;
+    // Rotate around X
+    Y = static_cast<int16_t>((Z1 * sinLut(Ax) >> 15) + (Y1 * cosLut(Ax) >> 15));
+    Z = static_cast<int16_t>((Z1 * cosLut(Ax) >> 15) - (Y1 * sinLut(Ax) >> 15));
+    output[1] = Y;
+    output[2] = Z;
 }
 
 // Attitude matrices
 
-void Dsp1::attitudeA(int16_t *input, int16_t *output) {
-  int16_t &S = input[0];
-  int16_t &Rz = input[1];
-  int16_t &Ry = input[2];
-  int16_t &Rx = input[3];
-  int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
-  int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
-  int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
-  S >>= 1;
-  shared_.MatrixA[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
-  shared_.MatrixA[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
-                                               (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixA[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
-                                               (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixA[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
-  shared_.MatrixA[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
-                                               (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixA[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
-                                               (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixA[2][0] = static_cast<int16_t>(S * SinRy >> 15);
-  shared_.MatrixA[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
-  shared_.MatrixA[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
+void Dsp1::attitudeA(int16_t* input, int16_t* output) {
+    int16_t& S = input[0];
+    int16_t& Rz = input[1];
+    int16_t& Ry = input[2];
+    int16_t& Rx = input[3];
+    int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
+    int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
+    int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
+    S >>= 1;
+    shared_.MatrixA[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
+    shared_.MatrixA[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
+                                                 (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixA[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
+                                                 (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixA[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
+    shared_.MatrixA[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
+                                                 (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixA[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
+                                                 (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixA[2][0] = static_cast<int16_t>(S * SinRy >> 15);
+    shared_.MatrixA[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
+    shared_.MatrixA[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
 }
 
-void Dsp1::attitudeB(int16_t *input, int16_t *output) {
-  int16_t &S = input[0];
-  int16_t &Rz = input[1];
-  int16_t &Ry = input[2];
-  int16_t &Rx = input[3];
-  int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
-  int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
-  int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
-  S >>= 1;
-  shared_.MatrixB[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
-  shared_.MatrixB[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
-                                               (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixB[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
-                                               (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixB[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
-  shared_.MatrixB[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
-                                               (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixB[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
-                                               (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixB[2][0] = static_cast<int16_t>(S * SinRy >> 15);
-  shared_.MatrixB[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
-  shared_.MatrixB[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
+void Dsp1::attitudeB(int16_t* input, int16_t* output) {
+    int16_t& S = input[0];
+    int16_t& Rz = input[1];
+    int16_t& Ry = input[2];
+    int16_t& Rx = input[3];
+    int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
+    int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
+    int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
+    S >>= 1;
+    shared_.MatrixB[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
+    shared_.MatrixB[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
+                                                 (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixB[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
+                                                 (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixB[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
+    shared_.MatrixB[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
+                                                 (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixB[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
+                                                 (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixB[2][0] = static_cast<int16_t>(S * SinRy >> 15);
+    shared_.MatrixB[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
+    shared_.MatrixB[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
 }
 
-void Dsp1::attitudeC(int16_t *input, int16_t *output) {
-  int16_t &S = input[0];
-  int16_t &Rz = input[1];
-  int16_t &Ry = input[2];
-  int16_t &Rx = input[3];
-  int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
-  int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
-  int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
-  S >>= 1;
-  shared_.MatrixC[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
-  shared_.MatrixC[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
-                                               (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixC[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
-                                               (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixC[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
-  shared_.MatrixC[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
-                                               (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
-  shared_.MatrixC[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
-                                               (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
-  shared_.MatrixC[2][0] = static_cast<int16_t>(S * SinRy >> 15);
-  shared_.MatrixC[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
-  shared_.MatrixC[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
+void Dsp1::attitudeC(int16_t* input, int16_t* output) {
+    int16_t& S = input[0];
+    int16_t& Rz = input[1];
+    int16_t& Ry = input[2];
+    int16_t& Rx = input[3];
+    int16_t SinRz = sinLut(Rz), CosRz = cosLut(Rz);
+    int16_t SinRy = sinLut(Ry), CosRy = cosLut(Ry);
+    int16_t SinRx = sinLut(Rx), CosRx = cosLut(Rx);
+    S >>= 1;
+    shared_.MatrixC[0][0] = static_cast<int16_t>((S * CosRz >> 15) * CosRy >> 15);
+    shared_.MatrixC[0][1] = static_cast<int16_t>(((S * SinRz >> 15) * CosRx >> 15) +
+                                                 (((S * CosRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixC[0][2] = static_cast<int16_t>(((S * SinRz >> 15) * SinRx >> 15) -
+                                                 (((S * CosRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixC[1][0] = static_cast<int16_t>(-((S * SinRz >> 15) * CosRy >> 15));
+    shared_.MatrixC[1][1] = static_cast<int16_t>(((S * CosRz >> 15) * CosRx >> 15) -
+                                                 (((S * SinRz >> 15) * SinRx >> 15) * SinRy >> 15));
+    shared_.MatrixC[1][2] = static_cast<int16_t>(((S * CosRz >> 15) * SinRx >> 15) +
+                                                 (((S * SinRz >> 15) * CosRx >> 15) * SinRy >> 15));
+    shared_.MatrixC[2][0] = static_cast<int16_t>(S * SinRy >> 15);
+    shared_.MatrixC[2][1] = static_cast<int16_t>(-((S * SinRx >> 15) * CosRy >> 15));
+    shared_.MatrixC[2][2] = static_cast<int16_t>((S * CosRx >> 15) * CosRy >> 15);
 }
 
 // Objective (global → object coordinates)
 
-void Dsp1::objectiveA(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixA[0][0] * X >> 15) + (shared_.MatrixA[1][0] * Y >> 15) +
-                           (shared_.MatrixA[2][0] * Z >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixA[0][1] * X >> 15) + (shared_.MatrixA[1][1] * Y >> 15) +
-                           (shared_.MatrixA[2][1] * Z >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixA[0][2] * X >> 15) + (shared_.MatrixA[1][2] * Y >> 15) +
-                           (shared_.MatrixA[2][2] * Z >> 15));
+void Dsp1::objectiveA(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixA[0][0] * X >> 15) + (shared_.MatrixA[1][0] * Y >> 15) +
+                             (shared_.MatrixA[2][0] * Z >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixA[0][1] * X >> 15) + (shared_.MatrixA[1][1] * Y >> 15) +
+                             (shared_.MatrixA[2][1] * Z >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixA[0][2] * X >> 15) + (shared_.MatrixA[1][2] * Y >> 15) +
+                             (shared_.MatrixA[2][2] * Z >> 15));
 }
 
-void Dsp1::objectiveB(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixB[0][0] * X >> 15) + (shared_.MatrixB[1][0] * Y >> 15) +
-                           (shared_.MatrixB[2][0] * Z >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixB[0][1] * X >> 15) + (shared_.MatrixB[1][1] * Y >> 15) +
-                           (shared_.MatrixB[2][1] * Z >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixB[0][2] * X >> 15) + (shared_.MatrixB[1][2] * Y >> 15) +
-                           (shared_.MatrixB[2][2] * Z >> 15));
+void Dsp1::objectiveB(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixB[0][0] * X >> 15) + (shared_.MatrixB[1][0] * Y >> 15) +
+                             (shared_.MatrixB[2][0] * Z >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixB[0][1] * X >> 15) + (shared_.MatrixB[1][1] * Y >> 15) +
+                             (shared_.MatrixB[2][1] * Z >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixB[0][2] * X >> 15) + (shared_.MatrixB[1][2] * Y >> 15) +
+                             (shared_.MatrixB[2][2] * Z >> 15));
 }
 
-void Dsp1::objectiveC(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixC[0][0] * X >> 15) + (shared_.MatrixC[1][0] * Y >> 15) +
-                           (shared_.MatrixC[2][0] * Z >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixC[0][1] * X >> 15) + (shared_.MatrixC[1][1] * Y >> 15) +
-                           (shared_.MatrixC[2][1] * Z >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixC[0][2] * X >> 15) + (shared_.MatrixC[1][2] * Y >> 15) +
-                           (shared_.MatrixC[2][2] * Z >> 15));
+void Dsp1::objectiveC(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixC[0][0] * X >> 15) + (shared_.MatrixC[1][0] * Y >> 15) +
+                             (shared_.MatrixC[2][0] * Z >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixC[0][1] * X >> 15) + (shared_.MatrixC[1][1] * Y >> 15) +
+                             (shared_.MatrixC[2][1] * Z >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixC[0][2] * X >> 15) + (shared_.MatrixC[1][2] * Y >> 15) +
+                             (shared_.MatrixC[2][2] * Z >> 15));
 }
 
 // Subjective (object → global coordinates)
 
-void Dsp1::subjectiveA(int16_t *input, int16_t *output) {
-  int16_t &F = input[0];
-  int16_t &L = input[1];
-  int16_t &U = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixA[0][0] * F >> 15) + (shared_.MatrixA[0][1] * L >> 15) +
-                           (shared_.MatrixA[0][2] * U >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixA[1][0] * F >> 15) + (shared_.MatrixA[1][1] * L >> 15) +
-                           (shared_.MatrixA[1][2] * U >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixA[2][0] * F >> 15) + (shared_.MatrixA[2][1] * L >> 15) +
-                           (shared_.MatrixA[2][2] * U >> 15));
+void Dsp1::subjectiveA(int16_t* input, int16_t* output) {
+    int16_t& F = input[0];
+    int16_t& L = input[1];
+    int16_t& U = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixA[0][0] * F >> 15) + (shared_.MatrixA[0][1] * L >> 15) +
+                             (shared_.MatrixA[0][2] * U >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixA[1][0] * F >> 15) + (shared_.MatrixA[1][1] * L >> 15) +
+                             (shared_.MatrixA[1][2] * U >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixA[2][0] * F >> 15) + (shared_.MatrixA[2][1] * L >> 15) +
+                             (shared_.MatrixA[2][2] * U >> 15));
 }
 
-void Dsp1::subjectiveB(int16_t *input, int16_t *output) {
-  int16_t &F = input[0];
-  int16_t &L = input[1];
-  int16_t &U = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixB[0][0] * F >> 15) + (shared_.MatrixB[0][1] * L >> 15) +
-                           (shared_.MatrixB[0][2] * U >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixB[1][0] * F >> 15) + (shared_.MatrixB[1][1] * L >> 15) +
-                           (shared_.MatrixB[1][2] * U >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixB[2][0] * F >> 15) + (shared_.MatrixB[2][1] * L >> 15) +
-                           (shared_.MatrixB[2][2] * U >> 15));
+void Dsp1::subjectiveB(int16_t* input, int16_t* output) {
+    int16_t& F = input[0];
+    int16_t& L = input[1];
+    int16_t& U = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixB[0][0] * F >> 15) + (shared_.MatrixB[0][1] * L >> 15) +
+                             (shared_.MatrixB[0][2] * U >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixB[1][0] * F >> 15) + (shared_.MatrixB[1][1] * L >> 15) +
+                             (shared_.MatrixB[1][2] * U >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixB[2][0] * F >> 15) + (shared_.MatrixB[2][1] * L >> 15) +
+                             (shared_.MatrixB[2][2] * U >> 15));
 }
 
-void Dsp1::subjectiveC(int16_t *input, int16_t *output) {
-  int16_t &F = input[0];
-  int16_t &L = input[1];
-  int16_t &U = input[2];
-  output[0] =
-      static_cast<int16_t>((shared_.MatrixC[0][0] * F >> 15) + (shared_.MatrixC[0][1] * L >> 15) +
-                           (shared_.MatrixC[0][2] * U >> 15));
-  output[1] =
-      static_cast<int16_t>((shared_.MatrixC[1][0] * F >> 15) + (shared_.MatrixC[1][1] * L >> 15) +
-                           (shared_.MatrixC[1][2] * U >> 15));
-  output[2] =
-      static_cast<int16_t>((shared_.MatrixC[2][0] * F >> 15) + (shared_.MatrixC[2][1] * L >> 15) +
-                           (shared_.MatrixC[2][2] * U >> 15));
+void Dsp1::subjectiveC(int16_t* input, int16_t* output) {
+    int16_t& F = input[0];
+    int16_t& L = input[1];
+    int16_t& U = input[2];
+    output[0] =
+        static_cast<int16_t>((shared_.MatrixC[0][0] * F >> 15) + (shared_.MatrixC[0][1] * L >> 15) +
+                             (shared_.MatrixC[0][2] * U >> 15));
+    output[1] =
+        static_cast<int16_t>((shared_.MatrixC[1][0] * F >> 15) + (shared_.MatrixC[1][1] * L >> 15) +
+                             (shared_.MatrixC[1][2] * U >> 15));
+    output[2] =
+        static_cast<int16_t>((shared_.MatrixC[2][0] * F >> 15) + (shared_.MatrixC[2][1] * L >> 15) +
+                             (shared_.MatrixC[2][2] * U >> 15));
 }
 
 // Scalar products
 
-void Dsp1::scalarA(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] = static_cast<int16_t>(
-      (X * shared_.MatrixA[0][0] + Y * shared_.MatrixA[1][0] + Z * shared_.MatrixA[2][0]) >> 15);
+void Dsp1::scalarA(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] = static_cast<int16_t>(
+        (X * shared_.MatrixA[0][0] + Y * shared_.MatrixA[1][0] + Z * shared_.MatrixA[2][0]) >> 15);
 }
 
-void Dsp1::scalarB(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] = static_cast<int16_t>(
-      (X * shared_.MatrixB[0][0] + Y * shared_.MatrixB[1][0] + Z * shared_.MatrixB[2][0]) >> 15);
+void Dsp1::scalarB(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] = static_cast<int16_t>(
+        (X * shared_.MatrixB[0][0] + Y * shared_.MatrixB[1][0] + Z * shared_.MatrixB[2][0]) >> 15);
 }
 
-void Dsp1::scalarC(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
-  output[0] = static_cast<int16_t>(
-      (X * shared_.MatrixC[0][0] + Y * shared_.MatrixC[1][0] + Z * shared_.MatrixC[2][0]) >> 15);
+void Dsp1::scalarC(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
+    output[0] = static_cast<int16_t>(
+        (X * shared_.MatrixC[0][0] + Y * shared_.MatrixC[1][0] + Z * shared_.MatrixC[2][0]) >> 15);
 }
 
 // Gyrate
 
-void Dsp1::gyrate(int16_t *input, int16_t *output) {
-  int16_t &Az = input[0];
-  int16_t &Ax = input[1];
-  int16_t &Ay = input[2];
-  int16_t &U = input[3];
-  int16_t &F = input[4];
-  int16_t &L = input[5];
+void Dsp1::gyrate(int16_t* input, int16_t* output) {
+    int16_t& Az = input[0];
+    int16_t& Ax = input[1];
+    int16_t& Ay = input[2];
+    int16_t& U = input[3];
+    int16_t& F = input[4];
+    int16_t& L = input[5];
 
-  int16_t CSec, ESec, CSin, C, E;
-  int16_t SinAy = sinLut(Ay);
-  int16_t CosAy = cosLut(Ay);
+    int16_t CSec, ESec, CSin, C, E;
+    int16_t SinAy = sinLut(Ay);
+    int16_t CosAy = cosLut(Ay);
 
-  inverse(cosLut(Ax), 0, CSec, ESec);
+    inverse(cosLut(Ax), 0, CSec, ESec);
 
-  // Rotation around Z
-  normalizeDouble(U * CosAy - F * SinAy, C, E);
-  E = static_cast<int16_t>(ESec - E);
-  normalize(static_cast<int16_t>(C * CSec >> 15), C, E);
-  output[0] = static_cast<int16_t>(Az + denormalizeAndClip(C, E)); // Rz
+    // Rotation around Z
+    normalizeDouble(U * CosAy - F * SinAy, C, E);
+    E = static_cast<int16_t>(ESec - E);
+    normalize(static_cast<int16_t>(C * CSec >> 15), C, E);
+    output[0] = static_cast<int16_t>(Az + denormalizeAndClip(C, E)); // Rz
 
-  // Rotation around X
-  output[1] = static_cast<int16_t>(Ax + (U * SinAy >> 15) + (F * CosAy >> 15)); // Rx
+    // Rotation around X
+    output[1] = static_cast<int16_t>(Ax + (U * SinAy >> 15) + (F * CosAy >> 15)); // Rx
 
-  // Rotation around Y
-  normalizeDouble(U * CosAy + F * SinAy, C, E);
-  E = static_cast<int16_t>(ESec - E);
-  normalize(sinLut(Ax), CSin, E);
-  normalize(static_cast<int16_t>(-(C * (CSec * CSin >> 15) >> 15)), C, E);
-  output[2] = static_cast<int16_t>(Ay + denormalizeAndClip(C, E) + L); // Ry
+    // Rotation around Y
+    normalizeDouble(U * CosAy + F * SinAy, C, E);
+    E = static_cast<int16_t>(ESec - E);
+    normalize(sinLut(Ax), CSin, E);
+    normalize(static_cast<int16_t>(-(C * (CSec * CSin >> 15) >> 15)), C, E);
+    output[2] = static_cast<int16_t>(Ay + denormalizeAndClip(C, E) + L); // Ry
 }
 
 // Projection: parameter, raster, target, project
@@ -551,394 +551,397 @@ const int16_t Dsp1::kMaxAZS_Exp[16] = {0x38b4, 0x38b7, 0x38ba, 0x38be, 0x38c0, 0
                                        0x38c7, 0x38ca, 0x38ce, 0x38d0, 0x38d4, 0x38d7,
                                        0x38da, 0x38dd, 0x38e0, 0x38e4};
 
-void Dsp1::parameter(int16_t *input, int16_t *output) {
-  int16_t &Fx = input[0];
-  int16_t &Fy = input[1];
-  int16_t &Fz = input[2];
-  int16_t &Lfe = input[3];
-  int16_t &Les = input[4];
-  int16_t &Aas = input[5];
-  int16_t &Azs = input[6];
+void Dsp1::parameter(int16_t* input, int16_t* output) {
+    int16_t& Fx = input[0];
+    int16_t& Fy = input[1];
+    int16_t& Fz = input[2];
+    int16_t& Lfe = input[3];
+    int16_t& Les = input[4];
+    int16_t& Aas = input[5];
+    int16_t& Azs = input[6];
 
-  int16_t CSec, C, E;
-  int16_t LfeNx, LfeNy, LfeNz;
-  int16_t LesNx, LesNy, LesNz;
-  int16_t AZS = Azs;
+    int16_t CSec, C, E;
+    int16_t LfeNx, LfeNy, LfeNz;
+    int16_t LesNx, LesNy, LesNz;
+    int16_t AZS = Azs;
 
-  shared_.Les = Les;
-  shared_.E_Les = 0;
-  normalize(Les, shared_.C_Les, shared_.E_Les);
+    shared_.Les = Les;
+    shared_.E_Les = 0;
+    normalize(Les, shared_.C_Les, shared_.E_Les);
 
-  shared_.SinAas = sinLut(Aas);
-  shared_.CosAas = cosLut(Aas);
-  shared_.SinAzs = sinLut(Azs);
-  shared_.CosAzs = cosLut(Azs);
+    shared_.SinAas = sinLut(Aas);
+    shared_.CosAas = cosLut(Aas);
+    shared_.SinAzs = sinLut(Azs);
+    shared_.CosAzs = cosLut(Azs);
 
-  shared_.Nx = static_cast<int16_t>(shared_.SinAzs * -shared_.SinAas >> 15);
-  shared_.Ny = static_cast<int16_t>(shared_.SinAzs * shared_.CosAas >> 15);
-  shared_.Nz = static_cast<int16_t>(shared_.CosAzs * 0x7fff >> 15);
+    shared_.Nx = static_cast<int16_t>(shared_.SinAzs * -shared_.SinAas >> 15);
+    shared_.Ny = static_cast<int16_t>(shared_.SinAzs * shared_.CosAas >> 15);
+    shared_.Nz = static_cast<int16_t>(shared_.CosAzs * 0x7fff >> 15);
 
-  shared_.Hx = static_cast<int16_t>(shared_.CosAas * 0x7fff >> 15);
-  shared_.Hy = static_cast<int16_t>(shared_.SinAas * 0x7fff >> 15);
+    shared_.Hx = static_cast<int16_t>(shared_.CosAas * 0x7fff >> 15);
+    shared_.Hy = static_cast<int16_t>(shared_.SinAas * 0x7fff >> 15);
 
-  shared_.Vx = static_cast<int16_t>(shared_.CosAzs * -shared_.SinAas >> 15);
-  shared_.Vy = static_cast<int16_t>(shared_.CosAzs * shared_.CosAas >> 15);
-  shared_.Vz = static_cast<int16_t>(-shared_.SinAzs * 0x7fff >> 15);
+    shared_.Vx = static_cast<int16_t>(shared_.CosAzs * -shared_.SinAas >> 15);
+    shared_.Vy = static_cast<int16_t>(shared_.CosAzs * shared_.CosAas >> 15);
+    shared_.Vz = static_cast<int16_t>(-shared_.SinAzs * 0x7fff >> 15);
 
-  LfeNx = static_cast<int16_t>(Lfe * shared_.Nx >> 15);
-  LfeNy = static_cast<int16_t>(Lfe * shared_.Ny >> 15);
-  LfeNz = static_cast<int16_t>(Lfe * shared_.Nz >> 15);
+    LfeNx = static_cast<int16_t>(Lfe * shared_.Nx >> 15);
+    LfeNy = static_cast<int16_t>(Lfe * shared_.Ny >> 15);
+    LfeNz = static_cast<int16_t>(Lfe * shared_.Nz >> 15);
 
-  shared_.CentreX = static_cast<int16_t>(Fx + LfeNx);
-  shared_.CentreY = static_cast<int16_t>(Fy + LfeNy);
-  shared_.CentreZ = static_cast<int16_t>(Fz + LfeNz);
+    shared_.CentreX = static_cast<int16_t>(Fx + LfeNx);
+    shared_.CentreY = static_cast<int16_t>(Fy + LfeNy);
+    shared_.CentreZ = static_cast<int16_t>(Fz + LfeNz);
 
-  LesNx = static_cast<int16_t>(Les * shared_.Nx >> 15);
-  LesNy = static_cast<int16_t>(Les * shared_.Ny >> 15);
-  LesNz = static_cast<int16_t>(Les * shared_.Nz >> 15);
+    LesNx = static_cast<int16_t>(Les * shared_.Nx >> 15);
+    LesNy = static_cast<int16_t>(Les * shared_.Ny >> 15);
+    LesNz = static_cast<int16_t>(Les * shared_.Nz >> 15);
 
-  shared_.Gx = static_cast<int16_t>(shared_.CentreX - LesNx);
-  shared_.Gy = static_cast<int16_t>(shared_.CentreY - LesNy);
-  shared_.Gz = static_cast<int16_t>(shared_.CentreZ - LesNz);
+    shared_.Gx = static_cast<int16_t>(shared_.CentreX - LesNx);
+    shared_.Gy = static_cast<int16_t>(shared_.CentreY - LesNy);
+    shared_.Gz = static_cast<int16_t>(shared_.CentreZ - LesNz);
 
-  E = 0;
-  normalize(shared_.CentreZ, C, E);
-  shared_.CentreZ_C = C;
-  shared_.CentreZ_E = E;
+    E = 0;
+    normalize(shared_.CentreZ, C, E);
+    shared_.CentreZ_C = C;
+    shared_.CentreZ_E = E;
 
-  int16_t MaxAZS = kMaxAZS_Exp[-E];
-  if (AZS < 0) {
-    MaxAZS = static_cast<int16_t>(-MaxAZS);
-    if (AZS < MaxAZS + 1)
-      AZS = static_cast<int16_t>(MaxAZS + 1);
-  } else {
-    if (AZS > MaxAZS)
-      AZS = MaxAZS;
-  }
+    int16_t MaxAZS = kMaxAZS_Exp[-E];
+    if (AZS < 0) {
+        MaxAZS = static_cast<int16_t>(-MaxAZS);
+        if (AZS < MaxAZS + 1)
+            AZS = static_cast<int16_t>(MaxAZS + 1);
+    } else {
+        if (AZS > MaxAZS)
+            AZS = MaxAZS;
+    }
 
-  shared_.SinAZS = sinLut(AZS);
-  shared_.CosAZS = cosLut(AZS);
+    shared_.SinAZS = sinLut(AZS);
+    shared_.CosAZS = cosLut(AZS);
 
-  inverse(shared_.CosAZS, 0, shared_.SecAZS_C1, shared_.SecAZS_E1);
-  normalize(static_cast<int16_t>(C * shared_.SecAZS_C1 >> 15), C, E);
-  E = static_cast<int16_t>(E + shared_.SecAZS_E1);
-  C = static_cast<int16_t>(denormalizeAndClip(C, E) * shared_.SinAZS >> 15);
+    inverse(shared_.CosAZS, 0, shared_.SecAZS_C1, shared_.SecAZS_E1);
+    normalize(static_cast<int16_t>(C * shared_.SecAZS_C1 >> 15), C, E);
+    E = static_cast<int16_t>(E + shared_.SecAZS_E1);
+    C = static_cast<int16_t>(denormalizeAndClip(C, E) * shared_.SinAZS >> 15);
 
-  shared_.CentreX = static_cast<int16_t>(shared_.CentreX + (C * shared_.SinAas >> 15));
-  shared_.CentreY = static_cast<int16_t>(shared_.CentreY - (C * shared_.CosAas >> 15));
+    shared_.CentreX = static_cast<int16_t>(shared_.CentreX + (C * shared_.SinAas >> 15));
+    shared_.CentreY = static_cast<int16_t>(shared_.CentreY - (C * shared_.CosAas >> 15));
 
-  output[2] = shared_.CentreX; // Cx
-  output[3] = shared_.CentreY; // Cy
+    output[2] = shared_.CentreX; // Cx
+    output[3] = shared_.CentreY; // Cy
 
-  int16_t Vof = 0;
-  if ((Azs != AZS) || (Azs == MaxAZS)) {
-    if (Azs == -32768)
-      Azs = -32767;
-    C = static_cast<int16_t>(Azs - MaxAZS);
-    if (C >= 0)
-      C--;
-    int16_t Aux = static_cast<int16_t>(~(C << 2));
+    int16_t Vof = 0;
+    if ((Azs != AZS) || (Azs == MaxAZS)) {
+        if (Azs == -32768)
+            Azs = -32767;
+        C = static_cast<int16_t>(Azs - MaxAZS);
+        if (C >= 0)
+            C--;
+        int16_t Aux = static_cast<int16_t>(~(C << 2));
 
-    C = static_cast<int16_t>(Aux * static_cast<int16_t>(kDataRom[0x0328]) >> 15);
-    C = static_cast<int16_t>((C * Aux >> 15) + static_cast<int16_t>(kDataRom[0x0327]));
-    Vof = static_cast<int16_t>(Vof - static_cast<int16_t>((C * Aux >> 15) * Les >> 15));
+        C = static_cast<int16_t>(Aux * static_cast<int16_t>(kDataRom[0x0328]) >> 15);
+        C = static_cast<int16_t>((C * Aux >> 15) + static_cast<int16_t>(kDataRom[0x0327]));
+        Vof = static_cast<int16_t>(Vof - static_cast<int16_t>((C * Aux >> 15) * Les >> 15));
 
-    C = static_cast<int16_t>(Aux * Aux >> 15);
-    Aux = static_cast<int16_t>((C * static_cast<int16_t>(kDataRom[0x0324]) >> 15) +
-                               static_cast<int16_t>(kDataRom[0x0325]));
-    shared_.CosAZS =
-        static_cast<int16_t>(shared_.CosAZS + ((C * Aux >> 15) * shared_.CosAZS >> 15));
-  }
+        C = static_cast<int16_t>(Aux * Aux >> 15);
+        Aux = static_cast<int16_t>((C * static_cast<int16_t>(kDataRom[0x0324]) >> 15) +
+                                   static_cast<int16_t>(kDataRom[0x0325]));
+        shared_.CosAZS =
+            static_cast<int16_t>(shared_.CosAZS + ((C * Aux >> 15) * shared_.CosAZS >> 15));
+    }
 
-  shared_.VOffset = static_cast<int16_t>(Les * shared_.CosAZS >> 15);
+    shared_.VOffset = static_cast<int16_t>(Les * shared_.CosAZS >> 15);
 
-  inverse(shared_.SinAZS, 0, CSec, E);
-  normalize(shared_.VOffset, C, E);
-  normalize(static_cast<int16_t>(C * CSec >> 15), C, E);
+    inverse(shared_.SinAZS, 0, CSec, E);
+    normalize(shared_.VOffset, C, E);
+    normalize(static_cast<int16_t>(C * CSec >> 15), C, E);
 
-  if (C == -32768) {
-    C >>= 1;
-    E++;
-  }
+    if (C == -32768) {
+        C >>= 1;
+        E++;
+    }
 
-  output[0] = Vof;                                             // Vof
-  output[1] = denormalizeAndClip(static_cast<int16_t>(-C), E); // Vva
+    output[0] = Vof;                                             // Vof
+    output[1] = denormalizeAndClip(static_cast<int16_t>(-C), E); // Vva
 
-  inverse(shared_.CosAZS, 0, shared_.SecAZS_C2, shared_.SecAZS_E2);
+    inverse(shared_.CosAZS, 0, shared_.SecAZS_C2, shared_.SecAZS_E2);
 }
 
-void Dsp1::raster(int16_t *input, int16_t *output) {
-  int16_t &Vs = input[0];
-  int16_t C, E, C1, E1;
+void Dsp1::raster(int16_t* input, int16_t* output) {
+    int16_t& Vs = input[0];
+    int16_t C, E, C1, E1;
 
-  inverse(static_cast<int16_t>((Vs * shared_.SinAzs >> 15) + shared_.VOffset), 7, C, E);
-  E = static_cast<int16_t>(E + shared_.CentreZ_E);
-  C1 = static_cast<int16_t>(C * shared_.CentreZ_C >> 15);
+    inverse(static_cast<int16_t>((Vs * shared_.SinAzs >> 15) + shared_.VOffset), 7, C, E);
+    E = static_cast<int16_t>(E + shared_.CentreZ_E);
+    C1 = static_cast<int16_t>(C * shared_.CentreZ_C >> 15);
 
-  E1 = static_cast<int16_t>(E + shared_.SecAZS_E2);
+    E1 = static_cast<int16_t>(E + shared_.SecAZS_E2);
 
-  normalize(C1, C, E);
-  C = denormalizeAndClip(C, E);
+    normalize(C1, C, E);
+    C = denormalizeAndClip(C, E);
 
-  output[0] = static_cast<int16_t>(C * shared_.CosAas >> 15); // An
-  output[2] = static_cast<int16_t>(C * shared_.SinAas >> 15); // Cn
+    output[0] = static_cast<int16_t>(C * shared_.CosAas >> 15); // An
+    output[2] = static_cast<int16_t>(C * shared_.SinAas >> 15); // Cn
 
-  normalize(static_cast<int16_t>(C1 * shared_.SecAZS_C2 >> 15), C, E1);
-  C = denormalizeAndClip(C, E1);
+    normalize(static_cast<int16_t>(C1 * shared_.SecAZS_C2 >> 15), C, E1);
+    C = denormalizeAndClip(C, E1);
 
-  output[1] = static_cast<int16_t>(C * -shared_.SinAas >> 15); // Bn
-  output[3] = static_cast<int16_t>(C * shared_.CosAas >> 15);  // Dn
+    output[1] = static_cast<int16_t>(C * -shared_.SinAas >> 15); // Bn
+    output[3] = static_cast<int16_t>(C * shared_.CosAas >> 15);  // Dn
 }
 
-void Dsp1::target(int16_t *input, int16_t *output) {
-  int16_t &H = input[0];
-  int16_t &V = input[1];
-  int16_t C, E, C1, E1;
+void Dsp1::target(int16_t* input, int16_t* output) {
+    int16_t& H = input[0];
+    int16_t& V = input[1];
+    int16_t C, E, C1, E1;
 
-  inverse(static_cast<int16_t>((V * shared_.SinAzs >> 15) + shared_.VOffset), 8, C, E);
-  E = static_cast<int16_t>(E + shared_.CentreZ_E);
-  C1 = static_cast<int16_t>(C * shared_.CentreZ_C >> 15);
-  E1 = static_cast<int16_t>(E + shared_.SecAZS_E1);
+    inverse(static_cast<int16_t>((V * shared_.SinAzs >> 15) + shared_.VOffset), 8, C, E);
+    E = static_cast<int16_t>(E + shared_.CentreZ_E);
+    C1 = static_cast<int16_t>(C * shared_.CentreZ_C >> 15);
+    E1 = static_cast<int16_t>(E + shared_.SecAZS_E1);
 
-  int16_t Hsh = static_cast<int16_t>(H << 8);
-  normalize(C1, C, E);
-  C = static_cast<int16_t>(denormalizeAndClip(C, E) * Hsh >> 15);
+    int16_t Hsh = static_cast<int16_t>(H << 8);
+    normalize(C1, C, E);
+    C = static_cast<int16_t>(denormalizeAndClip(C, E) * Hsh >> 15);
 
-  output[0] = static_cast<int16_t>(shared_.CentreX + (C * shared_.CosAas >> 15));
-  output[1] = static_cast<int16_t>(shared_.CentreY - (C * shared_.SinAas >> 15));
+    output[0] = static_cast<int16_t>(shared_.CentreX + (C * shared_.CosAas >> 15));
+    output[1] = static_cast<int16_t>(shared_.CentreY - (C * shared_.SinAas >> 15));
 
-  int16_t Vsh = static_cast<int16_t>(V << 8);
-  normalize(static_cast<int16_t>(C1 * shared_.SecAZS_C1 >> 15), C, E1);
-  C = static_cast<int16_t>(denormalizeAndClip(C, E1) * Vsh >> 15);
+    int16_t Vsh = static_cast<int16_t>(V << 8);
+    normalize(static_cast<int16_t>(C1 * shared_.SecAZS_C1 >> 15), C, E1);
+    C = static_cast<int16_t>(denormalizeAndClip(C, E1) * Vsh >> 15);
 
-  output[0] = static_cast<int16_t>(output[0] + (C * -shared_.SinAas >> 15));
-  output[1] = static_cast<int16_t>(output[1] + (C * shared_.CosAas >> 15));
+    output[0] = static_cast<int16_t>(output[0] + (C * -shared_.SinAas >> 15));
+    output[1] = static_cast<int16_t>(output[1] + (C * shared_.CosAas >> 15));
 }
 
-void Dsp1::project(int16_t *input, int16_t *output) {
-  int16_t &X = input[0];
-  int16_t &Y = input[1];
-  int16_t &Z = input[2];
+void Dsp1::project(int16_t* input, int16_t* output) {
+    int16_t& X = input[0];
+    int16_t& Y = input[1];
+    int16_t& Z = input[2];
 
-  int32_t aux, aux4;
-  int16_t E, E2, E3, E4, E5, refE, E6, E7;
-  int16_t C2, C4, C6, C8, C9, C10, C11, C12, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26;
-  int16_t Px, Py, Pz;
+    int32_t aux, aux4;
+    int16_t E, E2, E3, E4, E5, refE, E6, E7;
+    int16_t C2, C4, C6, C8, C9, C10, C11, C12, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25,
+        C26;
+    int16_t Px, Py, Pz;
 
-  E4 = E3 = E2 = E = E5 = 0;
+    E4 = E3 = E2 = E = E5 = 0;
 
-  normalizeDouble(static_cast<int32_t>(X) - shared_.Gx, Px, E4);
-  normalizeDouble(static_cast<int32_t>(Y) - shared_.Gy, Py, E);
-  normalizeDouble(static_cast<int32_t>(Z) - shared_.Gz, Pz, E3);
-  Px >>= 1;
-  E4--;
-  Py >>= 1;
-  E--;
-  Pz >>= 1;
-  E3--;
+    normalizeDouble(static_cast<int32_t>(X) - shared_.Gx, Px, E4);
+    normalizeDouble(static_cast<int32_t>(Y) - shared_.Gy, Py, E);
+    normalizeDouble(static_cast<int32_t>(Z) - shared_.Gz, Pz, E3);
+    Px >>= 1;
+    E4--;
+    Py >>= 1;
+    E--;
+    Pz >>= 1;
+    E3--;
 
-  refE = (E < E3) ? E : E3;
-  refE = (refE < E4) ? refE : E4;
+    refE = (E < E3) ? E : E3;
+    refE = (refE < E4) ? refE : E4;
 
-  Px = shiftR(Px, static_cast<int16_t>(E4 - refE));
-  Py = shiftR(Py, static_cast<int16_t>(E - refE));
-  Pz = shiftR(Pz, static_cast<int16_t>(E3 - refE));
+    Px = shiftR(Px, static_cast<int16_t>(E4 - refE));
+    Py = shiftR(Py, static_cast<int16_t>(E - refE));
+    Pz = shiftR(Pz, static_cast<int16_t>(E3 - refE));
 
-  C11 = static_cast<int16_t>(-(Px * shared_.Nx >> 15));
-  C8 = static_cast<int16_t>(-(Py * shared_.Ny >> 15));
-  C9 = static_cast<int16_t>(-(Pz * shared_.Nz >> 15));
-  C12 = static_cast<int16_t>(C11 + C8 + C9);
+    C11 = static_cast<int16_t>(-(Px * shared_.Nx >> 15));
+    C8 = static_cast<int16_t>(-(Py * shared_.Ny >> 15));
+    C9 = static_cast<int16_t>(-(Pz * shared_.Nz >> 15));
+    C12 = static_cast<int16_t>(C11 + C8 + C9);
 
-  aux4 = C12;
-  refE = static_cast<int16_t>(16 - refE);
-  if (refE >= 0)
-    aux4 <<= refE;
-  else
-    aux4 >>= (-refE);
-  if (aux4 == -1)
-    aux4 = 0;
-  aux4 >>= 1;
+    aux4 = C12;
+    refE = static_cast<int16_t>(16 - refE);
+    if (refE >= 0)
+        aux4 <<= refE;
+    else
+        aux4 >>= (-refE);
+    if (aux4 == -1)
+        aux4 = 0;
+    aux4 >>= 1;
 
-  aux = static_cast<uint16_t>(shared_.Les) + aux4;
-  normalizeDouble(static_cast<int32_t>(aux), C10, E2);
-  E2 = static_cast<int16_t>(15 - E2);
+    aux = static_cast<uint16_t>(shared_.Les) + aux4;
+    normalizeDouble(static_cast<int32_t>(aux), C10, E2);
+    E2 = static_cast<int16_t>(15 - E2);
 
-  inverse(C10, 0, C4, E4);
-  C2 = static_cast<int16_t>(C4 * shared_.C_Les >> 15);
+    inverse(C10, 0, C4, E4);
+    C2 = static_cast<int16_t>(C4 * shared_.C_Les >> 15);
 
-  // H
-  E7 = 0;
-  C16 = static_cast<int16_t>(Px * shared_.Hx >> 15);
-  C20 = static_cast<int16_t>(Py * shared_.Hy >> 15);
-  C17 = static_cast<int16_t>(C16 + C20);
-  C18 = static_cast<int16_t>(C17 * C2 >> 15);
-  normalize(C18, C19, E7);
-  output[0] = denormalizeAndClip(C19, static_cast<int16_t>(shared_.E_Les - E2 + refE + E7)); // H
+    // H
+    E7 = 0;
+    C16 = static_cast<int16_t>(Px * shared_.Hx >> 15);
+    C20 = static_cast<int16_t>(Py * shared_.Hy >> 15);
+    C17 = static_cast<int16_t>(C16 + C20);
+    C18 = static_cast<int16_t>(C17 * C2 >> 15);
+    normalize(C18, C19, E7);
+    output[0] = denormalizeAndClip(C19, static_cast<int16_t>(shared_.E_Les - E2 + refE + E7)); // H
 
-  // V
-  E6 = 0;
-  C21 = static_cast<int16_t>(Px * shared_.Vx >> 15);
-  C22 = static_cast<int16_t>(Py * shared_.Vy >> 15);
-  C23 = static_cast<int16_t>(Pz * shared_.Vz >> 15);
-  C24 = static_cast<int16_t>(C21 + C22 + C23);
-  C26 = static_cast<int16_t>(C24 * C2 >> 15);
-  normalize(C26, C25, E6);
-  output[1] = denormalizeAndClip(C25, static_cast<int16_t>(shared_.E_Les - E2 + refE + E6)); // V
+    // V
+    E6 = 0;
+    C21 = static_cast<int16_t>(Px * shared_.Vx >> 15);
+    C22 = static_cast<int16_t>(Py * shared_.Vy >> 15);
+    C23 = static_cast<int16_t>(Pz * shared_.Vz >> 15);
+    C24 = static_cast<int16_t>(C21 + C22 + C23);
+    C26 = static_cast<int16_t>(C24 * C2 >> 15);
+    normalize(C26, C25, E6);
+    output[1] = denormalizeAndClip(C25, static_cast<int16_t>(shared_.E_Les - E2 + refE + E6)); // V
 
-  // M
-  normalize(C2, C6, E4);
-  output[2] = denormalizeAndClip(C6, static_cast<int16_t>(E4 + shared_.E_Les - E2 - 7)); // M
+    // M
+    normalize(C2, C6, E4);
+    output[2] = denormalizeAndClip(C6, static_cast<int16_t>(E4 + shared_.E_Les - E2 - 7)); // M
 }
 
 // Auxiliary math functions
 
 int16_t Dsp1::sinLut(int16_t Angle) {
-  if (Angle < 0) {
-    if (Angle == -32768)
-      return 0;
-    return static_cast<int16_t>(-sinLut(static_cast<int16_t>(-Angle)));
-  }
-  int32_t S =
-      kSinTable[Angle >> 8] + (kMulTable[Angle & 0xff] * kSinTable[0x40 + (Angle >> 8)] >> 15);
-  if (S > 32767)
-    S = 32767;
-  return static_cast<int16_t>(S);
+    if (Angle < 0) {
+        if (Angle == -32768)
+            return 0;
+        return static_cast<int16_t>(-sinLut(static_cast<int16_t>(-Angle)));
+    }
+    int32_t S =
+        kSinTable[Angle >> 8] + (kMulTable[Angle & 0xff] * kSinTable[0x40 + (Angle >> 8)] >> 15);
+    if (S > 32767)
+        S = 32767;
+    return static_cast<int16_t>(S);
 }
 
 int16_t Dsp1::cosLut(int16_t Angle) {
-  if (Angle < 0) {
-    if (Angle == -32768)
-      return -32768;
-    Angle = static_cast<int16_t>(-Angle);
-  }
-  int32_t S =
-      kSinTable[0x40 + (Angle >> 8)] - (kMulTable[Angle & 0xff] * kSinTable[Angle >> 8] >> 15);
-  if (S < -32768)
-    S = -32767;
-  return static_cast<int16_t>(S);
+    if (Angle < 0) {
+        if (Angle == -32768)
+            return -32768;
+        Angle = static_cast<int16_t>(-Angle);
+    }
+    int32_t S =
+        kSinTable[0x40 + (Angle >> 8)] - (kMulTable[Angle & 0xff] * kSinTable[Angle >> 8] >> 15);
+    if (S < -32768)
+        S = -32767;
+    return static_cast<int16_t>(S);
 }
 
-void Dsp1::inverse(int16_t Coefficient, int16_t Exponent, int16_t &iCoefficient,
-                   int16_t &iExponent) {
-  if (Coefficient == 0x0000) {
-    iCoefficient = 0x7fff;
-    iExponent = 0x002f;
-  } else {
-    int16_t Sign = 1;
-    if (Coefficient < 0) {
-      if (Coefficient < -32767)
-        Coefficient = -32767;
-      Coefficient = static_cast<int16_t>(-Coefficient);
-      Sign = -1;
-    }
-    while (Coefficient < 0x4000) {
-      Coefficient = static_cast<int16_t>(Coefficient << 1);
-      Exponent--;
-    }
-    if (Coefficient == 0x4000) {
-      if (Sign == 1)
+void Dsp1::inverse(int16_t Coefficient, int16_t Exponent, int16_t& iCoefficient,
+                   int16_t& iExponent) {
+    if (Coefficient == 0x0000) {
         iCoefficient = 0x7fff;
-      else {
-        iCoefficient = -0x4000;
-        Exponent--;
-      }
+        iExponent = 0x002f;
     } else {
-      int16_t i = static_cast<int16_t>(kDataRom[((Coefficient - 0x4000) >> 7) + 0x0065]);
-      i = static_cast<int16_t>((i + (-i * (Coefficient * i >> 15) >> 15)) << 1);
-      i = static_cast<int16_t>((i + (-i * (Coefficient * i >> 15) >> 15)) << 1);
-      iCoefficient = static_cast<int16_t>(i * Sign);
+        int16_t Sign = 1;
+        if (Coefficient < 0) {
+            if (Coefficient < -32767)
+                Coefficient = -32767;
+            Coefficient = static_cast<int16_t>(-Coefficient);
+            Sign = -1;
+        }
+        while (Coefficient < 0x4000) {
+            Coefficient = static_cast<int16_t>(Coefficient << 1);
+            Exponent--;
+        }
+        if (Coefficient == 0x4000) {
+            if (Sign == 1)
+                iCoefficient = 0x7fff;
+            else {
+                iCoefficient = -0x4000;
+                Exponent--;
+            }
+        } else {
+            int16_t i = static_cast<int16_t>(kDataRom[((Coefficient - 0x4000) >> 7) + 0x0065]);
+            i = static_cast<int16_t>((i + (-i * (Coefficient * i >> 15) >> 15)) << 1);
+            i = static_cast<int16_t>((i + (-i * (Coefficient * i >> 15) >> 15)) << 1);
+            iCoefficient = static_cast<int16_t>(i * Sign);
+        }
+        iExponent = static_cast<int16_t>(1 - Exponent);
     }
-    iExponent = static_cast<int16_t>(1 - Exponent);
-  }
 }
 
 int16_t Dsp1::denormalizeAndClip(int16_t C, int16_t E) {
-  if (E > 0) {
-    if (C > 0)
-      return 32767;
-    else if (C < 0)
-      return -32767;
-  } else {
-    if (E < 0)
-      return static_cast<int16_t>(C * static_cast<int16_t>(kDataRom[0x0031 + E]) >> 15);
-  }
-  return C;
+    if (E > 0) {
+        if (C > 0)
+            return 32767;
+        else if (C < 0)
+            return -32767;
+    } else {
+        if (E < 0)
+            return static_cast<int16_t>(C * static_cast<int16_t>(kDataRom[0x0031 + E]) >> 15);
+    }
+    return C;
 }
 
-void Dsp1::normalize(int16_t m, int16_t &Coefficient, int16_t &Exponent) {
-  int16_t i = 0x4000;
-  int16_t e = 0;
+void Dsp1::normalize(int16_t m, int16_t& Coefficient, int16_t& Exponent) {
+    int16_t i = 0x4000;
+    int16_t e = 0;
 
-  if (m < 0) {
-    while ((m & i) && i) {
-      i >>= 1;
-      e++;
+    if (m < 0) {
+        while ((m & i) && i) {
+            i >>= 1;
+            e++;
+        }
+    } else {
+        while (!(m & i) && i) {
+            i >>= 1;
+            e++;
+        }
     }
-  } else {
-    while (!(m & i) && i) {
-      i >>= 1;
-      e++;
-    }
-  }
 
-  if (e > 0)
-    Coefficient = static_cast<int16_t>(m * static_cast<int16_t>(kDataRom[0x21 + e]) << 1);
-  else
-    Coefficient = m;
+    if (e > 0)
+        Coefficient = static_cast<int16_t>(m * static_cast<int16_t>(kDataRom[0x21 + e]) << 1);
+    else
+        Coefficient = m;
 
-  Exponent = static_cast<int16_t>(Exponent - e);
+    Exponent = static_cast<int16_t>(Exponent - e);
 }
 
-void Dsp1::normalizeDouble(int32_t Product, int16_t &Coefficient, int16_t &Exponent) {
-  int16_t n = static_cast<int16_t>(Product & 0x7fff);
-  int16_t m = static_cast<int16_t>(Product >> 15);
-  int16_t i = 0x4000;
-  int16_t e = 0;
+void Dsp1::normalizeDouble(int32_t Product, int16_t& Coefficient, int16_t& Exponent) {
+    int16_t n = static_cast<int16_t>(Product & 0x7fff);
+    int16_t m = static_cast<int16_t>(Product >> 15);
+    int16_t i = 0x4000;
+    int16_t e = 0;
 
-  if (m < 0) {
-    while ((m & i) && i) {
-      i >>= 1;
-      e++;
-    }
-  } else {
-    while (!(m & i) && i) {
-      i >>= 1;
-      e++;
-    }
-  }
-
-  if (e > 0) {
-    Coefficient = static_cast<int16_t>(m * static_cast<int16_t>(kDataRom[0x0021 + e]) << 1);
-    if (e < 15)
-      Coefficient = static_cast<int16_t>(
-          Coefficient + static_cast<int16_t>(n * static_cast<int16_t>(kDataRom[0x0040 - e]) >> 15));
-    else {
-      i = 0x4000;
-      if (m < 0) {
-        while ((n & i) && i) {
-          i >>= 1;
-          e++;
+    if (m < 0) {
+        while ((m & i) && i) {
+            i >>= 1;
+            e++;
         }
-      } else {
-        while (!(n & i) && i) {
-          i >>= 1;
-          e++;
+    } else {
+        while (!(m & i) && i) {
+            i >>= 1;
+            e++;
         }
-      }
-      if (e > 15)
-        Coefficient = static_cast<int16_t>(n * static_cast<int16_t>(kDataRom[0x0012 + e]) << 1);
-      else
-        Coefficient = static_cast<int16_t>(Coefficient + n);
     }
-  } else {
-    Coefficient = m;
-  }
 
-  Exponent = e;
+    if (e > 0) {
+        Coefficient = static_cast<int16_t>(m * static_cast<int16_t>(kDataRom[0x0021 + e]) << 1);
+        if (e < 15)
+            Coefficient = static_cast<int16_t>(
+                Coefficient +
+                static_cast<int16_t>(n * static_cast<int16_t>(kDataRom[0x0040 - e]) >> 15));
+        else {
+            i = 0x4000;
+            if (m < 0) {
+                while ((n & i) && i) {
+                    i >>= 1;
+                    e++;
+                }
+            } else {
+                while (!(n & i) && i) {
+                    i >>= 1;
+                    e++;
+                }
+            }
+            if (e > 15)
+                Coefficient =
+                    static_cast<int16_t>(n * static_cast<int16_t>(kDataRom[0x0012 + e]) << 1);
+            else
+                Coefficient = static_cast<int16_t>(Coefficient + n);
+        }
+    } else {
+        Coefficient = m;
+    }
+
+    Exponent = e;
 }
 
 int16_t Dsp1::shiftR(int16_t C, int16_t E) {
-  return static_cast<int16_t>(C * static_cast<int16_t>(kDataRom[0x0031 + E]) >> 15);
+    return static_cast<int16_t>(C * static_cast<int16_t>(kDataRom[0x0031 + E]) >> 15);
 }
 
 // Lookup tables

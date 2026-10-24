@@ -19,20 +19,21 @@ namespace snes::core {
 
 namespace {
 bool PpuDebugEnabled() {
-  static int enabled = -1;
-  if (enabled == -1) {
-    const char *v = std::getenv("SNES_PPU_IO_TRACE");
-    if (!v || !*v) {
-      v = std::getenv("SNES_PPU_DEBUG");
+    static int enabled = -1;
+    if (enabled == -1) {
+        const char* v = std::getenv("SNES_PPU_IO_TRACE");
+        if (!v || !*v) {
+            v = std::getenv("SNES_PPU_DEBUG");
+        }
+        enabled = (v && *v && *v != '0') ? 1 : 0;
     }
-    enabled = (v && *v && *v != '0') ? 1 : 0;
-  }
-  return enabled == 1;
+    return enabled == 1;
 }
 } // namespace
 
 // Constructor / Reset
-Ppu::Ppu() : Ppu(Config{}) {}
+Ppu::Ppu() : Ppu(Config{}) {
+}
 
 Ppu::Ppu(Config config)
     : config_(config), background_(std::make_unique<PpuBackground>()),
@@ -41,1318 +42,1327 @@ Ppu::Ppu(Config config)
       output_(std::make_unique<uint32_t[]>(static_cast<size_t>(OutputWidth) * OutputHeight)),
       progressiveOutput_(std::make_unique<uint16_t[]>(OutputWidth * OutputHeight)),
       displayFeedback_(std::make_unique<std::array<uint16_t, 8192>>()) {
-  BuildLightTable();
-  Reset();
+    BuildLightTable();
+    Reset();
 }
 
 Ppu::~Ppu() = default;
 
 void Ppu::Reset(bool retainVram) {
-  PowerOnState state(EntropyMode::None, 0);
-  Power(state, retainVram);
+    PowerOnState state(EntropyMode::None, 0);
+    Power(state, retainVram);
 }
 
-void Ppu::Power(PowerOnState &state, bool retainVram) {
-  Power(state, config_, retainVram);
+void Ppu::Power(PowerOnState& state, bool retainVram) {
+    Power(state, config_, retainVram);
 }
 
-void Ppu::Power(PowerOnState &state, Config config, bool retainVram) {
-  config_ = config;
-  config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
-  config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
-  config_.renderCycle = std::clamp<uint16_t>(config_.renderCycle, 2, 1360);
-  background_->Reset();
-  object_->Reset();
-  pipelineClock_ = 0;
-  pipelineMath_ = {};
-  InitializePowerOnState(state, retainVram);
-  object_->BeginLine(0, io_.obj);
+void Ppu::Power(PowerOnState& state, Config config, bool retainVram) {
+    config_ = config;
+    config_.revision2 = std::clamp<uint8_t>(config_.revision2, 1, 3);
+    config_.vramBytes = config_.vramBytes == 131072 ? 131072 : 65536;
+    config_.renderCycle = std::clamp<uint16_t>(config_.renderCycle, 2, 1360);
+    background_->Reset();
+    object_->Reset();
+    pipelineClock_ = 0;
+    pipelineMath_ = {};
+    InitializePowerOnState(state, retainVram);
+    object_->BeginLine(0, io_.obj);
 
-  // Clear rendering state
-  lineStart_ = 0;
-  lineCount_ = 0;
-  pendingScanline_ = 0;
-  scanlineHires_ = false;
-  for (auto &events : rasterEvents_)
-    events.clear();
-  mosaicCounterLine_ = 0xffff;
-  std::memset(output_.get(), 0, static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
-  if (!ScanlineModel())
-    std::fill_n(progressiveOutput_.get(), OutputWidth * OutputHeight, 0);
-  LatchProgressiveDisplay();
+    // Clear rendering state
+    lineStart_ = 0;
+    lineCount_ = 0;
+    pendingScanline_ = 0;
+    scanlineHires_ = false;
+    for (auto& events : rasterEvents_)
+        events.clear();
+    mosaicCounterLine_ = 0xffff;
+    std::memset(output_.get(), 0,
+                static_cast<size_t>(OutputWidth) * OutputHeight * sizeof(uint32_t));
+    if (!ScanlineModel())
+        std::fill_n(progressiveOutput_.get(), OutputWidth * OutputHeight, 0);
+    LatchProgressiveDisplay();
 
-  currentLine_ = 0;
-  currentHClock_ = 0;
-  cpuPio_ = 0xFF;
-  fieldId_ = false;
-  frameOverscan_ = false;
-  displayInterlace_ = false;
-  frameWidth_ = 256;
-  frameHeight_ = 224;
-  frameInterlace_ = false;
-  isPal_ = false;
+    currentLine_ = 0;
+    currentHClock_ = 0;
+    cpuPio_ = 0xFF;
+    fieldId_ = false;
+    frameOverscan_ = false;
+    displayInterlace_ = false;
+    frameWidth_ = 256;
+    frameHeight_ = 224;
+    frameInterlace_ = false;
+    isPal_ = false;
 
-  UpdateVideoMode();
+    UpdateVideoMode();
 }
 
 // Frame / scanline hooks
 void Ppu::FrameBegin() {
-  if (currentLine_ != 0)
-    SetCurrentLine(0);
-  // Toggle interlace field each frame
-  fieldId_ = !fieldId_;
-  LatchProgressiveDisplay();
-  frameOverscan_ = io_.overscan;
-  displayInterlace_ = io_.interlace;
-  background_->BeginLine(0, fieldId_, io_);
-  object_->BeginLine(0, io_.obj);
-  pipelineClock_ = 0;
-  pipelineMath_ = {};
-  latch_.cgramAddress = 0;
+    if (currentLine_ != 0)
+        SetCurrentLine(0);
+    // Toggle interlace field each frame
+    fieldId_ = !fieldId_;
+    LatchProgressiveDisplay();
+    frameOverscan_ = io_.overscan;
+    displayInterlace_ = io_.interlace;
+    background_->BeginLine(0, fieldId_, io_);
+    object_->BeginLine(0, io_.obj);
+    pipelineClock_ = 0;
+    pipelineMath_ = {};
+    latch_.cgramAddress = 0;
 
-  io_.obj.rangeOver = false;
-  io_.obj.timeOver = false;
+    io_.obj.rangeOver = false;
+    io_.obj.timeOver = false;
 
-  // Reset scanline cache for new frame
-  lineStart_ = 0;
-  lineCount_ = 0;
-  pendingScanline_ = 0;
-  scanlineHires_ = false;
-  for (auto &events : rasterEvents_)
-    events.clear();
-  mosaicCounterLine_ = 0xffff;
+    // Reset scanline cache for new frame
+    lineStart_ = 0;
+    lineCount_ = 0;
+    pendingScanline_ = 0;
+    scanlineHires_ = false;
+    for (auto& events : rasterEvents_)
+        events.clear();
+    mosaicCounterLine_ = 0xffff;
 }
 
 void Ppu::LatchProgressiveDisplay() {
-  if (ScanlineModel())
-    return;
-  if (feedbackOverscan_ && !io_.overscan) {
-    std::fill_n(displayFeedback_->begin(), 1024, 0);
-    for (unsigned row = 1; row < 240; ++row)
-      if (row < 8 || row > 231)
-        std::fill_n(progressiveOutput_.get() + row * 1024, 1024, 0);
-  }
-  feedbackOverscan_ = io_.overscan;
+    if (ScanlineModel())
+        return;
+    if (feedbackOverscan_ && !io_.overscan) {
+        std::fill_n(displayFeedback_->begin(), 1024, 0);
+        for (unsigned row = 1; row < 240; ++row)
+            if (row < 8 || row > 231)
+                std::fill_n(progressiveOutput_.get() + row * 1024, 1024, 0);
+    }
+    feedbackOverscan_ = io_.overscan;
 }
 
 void Ppu::AdvanceMosaicCounter(uint16_t line) noexcept {
-  if (mosaicCounterLine_ == line)
-    return;
-  mosaicCounterLine_ = line;
+    if (mosaicCounterLine_ == line)
+        return;
+    mosaicCounterLine_ = line;
 
-  bool mosaicEnable =
-      io_.bg1.mosaicEnable || io_.bg2.mosaicEnable || io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
-  if (line == 1) {
-    io_.mosaic.counter = mosaicEnable ? static_cast<uint8_t>(io_.mosaic.size + 1) : 0;
-  }
-  if (io_.mosaic.counter && !--io_.mosaic.counter) {
-    io_.mosaic.counter = mosaicEnable ? io_.mosaic.size : 0;
-  }
+    bool mosaicEnable = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable || io_.bg3.mosaicEnable ||
+                        io_.bg4.mosaicEnable;
+    if (line == 1) {
+        io_.mosaic.counter = mosaicEnable ? static_cast<uint8_t>(io_.mosaic.size + 1) : 0;
+    }
+    if (io_.mosaic.counter && !--io_.mosaic.counter) {
+        io_.mosaic.counter = mosaicEnable ? io_.mosaic.size : 0;
+    }
 }
 
 void Ppu::SetCurrentLine(uint16_t vcounter) noexcept {
-  if (currentLine_ != vcounter) {
-    SynchronizePipeline(1368);
-    currentLine_ = vcounter;
-    currentHClock_ = 0;
-    pipelineClock_ = 0;
-    pipelineMath_ = {};
-    if (!ScanlineModel())
-      AdvanceMosaicCounter(vcounter);
-    background_->BeginLine(vcounter, fieldId_, io_);
-    object_->BeginLine(vcounter, io_.obj);
-    latch_.cgramAddress = 0;
-    if (vcounter == VDisp() && !io_.displayDisable)
-      OamAddressReset();
-    if (vcounter > 0 && vcounter < MaxVisibleLines) {
-      lines_[vcounter].sampledHires = false;
+    if (currentLine_ != vcounter) {
+        SynchronizePipeline(1368);
+        currentLine_ = vcounter;
+        currentHClock_ = 0;
+        pipelineClock_ = 0;
+        pipelineMath_ = {};
+        if (!ScanlineModel())
+            AdvanceMosaicCounter(vcounter);
+        background_->BeginLine(vcounter, fieldId_, io_);
+        object_->BeginLine(vcounter, io_.obj);
+        latch_.cgramAddress = 0;
+        if (vcounter == VDisp() && !io_.displayDisable)
+            OamAddressReset();
+        if (vcounter > 0 && vcounter < MaxVisibleLines) {
+            lines_[vcounter].sampledHires = false;
+        }
     }
-  }
-  if (ScanlineModel()) {
-    if (vcounter > 0 && vcounter < VDisp())
-      scanlineHires_ |= io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
-  } else {
-    AdvanceMosaicCounter(vcounter);
-  }
-}
-
-void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO &before) {
-  if (ScanlineModel())
-    return;
-  if (currentLine_ == 0 || currentLine_ >= VDisp())
-    return;
-  if (currentHClock_ < 58 || currentHClock_ >= 1082)
-    return;
-  const int x = (currentHClock_ - 58 + 3) / 4;
-  if (x <= 0 || x >= 256)
-    return;
-
-  RasterEvent event;
-  event.hclock = currentHClock_;
-  event.x = static_cast<uint16_t>(x);
-  event.type = type;
-  event.index = index;
-  event.before = before;
-  event.after = io_;
-  auto &events = rasterEvents_[currentLine_];
-  const auto next =
-      std::upper_bound(events.begin(), events.end(), event.x,
-                       [](uint16_t x, const RasterEvent &queued) { return x < queued.x; });
-  events.insert(next, std::move(event));
-}
-
-void Ppu::ApplyRasterEvent(IO &state, const RasterEvent &event, bool after) {
-  const IO &value = after ? event.after : event.before;
-  auto copyLayerSelection = [](WindowLayer &dst, const WindowLayer &src) {
-    dst.oneEnable = src.oneEnable;
-    dst.oneInvert = src.oneInvert;
-    dst.twoEnable = src.twoEnable;
-    dst.twoInvert = src.twoInvert;
-  };
-  auto copyColorSelection = [](WindowColor &dst, const WindowColor &src) {
-    dst.oneEnable = src.oneEnable;
-    dst.oneInvert = src.oneInvert;
-    dst.twoEnable = src.twoEnable;
-    dst.twoInvert = src.twoInvert;
-  };
-
-  switch (event.type) {
-  case RasterEventType::Display:
-    state.displayDisable = value.displayDisable;
-    state.displayBrightness = value.displayBrightness;
-    break;
-  case RasterEventType::OutputMode:
-    state.bgMode = value.bgMode;
-    state.pseudoHires = value.pseudoHires;
-    state.extbg = value.extbg;
-    std::copy_n(value.obj.priority, 4, state.obj.priority);
-    break;
-  case RasterEventType::WindowSelect:
-    if (event.index == 0) {
-      copyLayerSelection(state.bg1.window, value.bg1.window);
-      copyLayerSelection(state.bg2.window, value.bg2.window);
-    } else if (event.index == 1) {
-      copyLayerSelection(state.bg3.window, value.bg3.window);
-      copyLayerSelection(state.bg4.window, value.bg4.window);
+    if (ScanlineModel()) {
+        if (vcounter > 0 && vcounter < VDisp())
+            scanlineHires_ |= io_.pseudoHires || io_.bgMode == 5 || io_.bgMode == 6;
     } else {
-      copyLayerSelection(state.obj.window, value.obj.window);
-      copyColorSelection(state.col.window, value.col.window);
+        AdvanceMosaicCounter(vcounter);
     }
-    break;
-  case RasterEventType::Composition:
-    switch (event.index) {
-    case 0x26:
-      state.window.oneLeft = value.window.oneLeft;
-      break;
-    case 0x27:
-      state.window.oneRight = value.window.oneRight;
-      break;
-    case 0x28:
-      state.window.twoLeft = value.window.twoLeft;
-      break;
-    case 0x29:
-      state.window.twoRight = value.window.twoRight;
-      break;
-    case 0x2a:
-      state.bg1.window.mask = value.bg1.window.mask;
-      state.bg2.window.mask = value.bg2.window.mask;
-      state.bg3.window.mask = value.bg3.window.mask;
-      state.bg4.window.mask = value.bg4.window.mask;
-      break;
-    case 0x2b:
-      state.obj.window.mask = value.obj.window.mask;
-      state.col.window.mask = value.col.window.mask;
-      break;
-    case 0x2c:
-      state.bg1.aboveEnable = value.bg1.aboveEnable;
-      state.bg2.aboveEnable = value.bg2.aboveEnable;
-      state.bg3.aboveEnable = value.bg3.aboveEnable;
-      state.bg4.aboveEnable = value.bg4.aboveEnable;
-      state.obj.aboveEnable = value.obj.aboveEnable;
-      break;
-    case 0x2d:
-      state.bg1.belowEnable = value.bg1.belowEnable;
-      state.bg2.belowEnable = value.bg2.belowEnable;
-      state.bg3.belowEnable = value.bg3.belowEnable;
-      state.bg4.belowEnable = value.bg4.belowEnable;
-      state.obj.belowEnable = value.obj.belowEnable;
-      break;
-    case 0x2e:
-      state.bg1.window.aboveEnable = value.bg1.window.aboveEnable;
-      state.bg2.window.aboveEnable = value.bg2.window.aboveEnable;
-      state.bg3.window.aboveEnable = value.bg3.window.aboveEnable;
-      state.bg4.window.aboveEnable = value.bg4.window.aboveEnable;
-      state.obj.window.aboveEnable = value.obj.window.aboveEnable;
-      break;
-    case 0x2f:
-      state.bg1.window.belowEnable = value.bg1.window.belowEnable;
-      state.bg2.window.belowEnable = value.bg2.window.belowEnable;
-      state.bg3.window.belowEnable = value.bg3.window.belowEnable;
-      state.bg4.window.belowEnable = value.bg4.window.belowEnable;
-      state.obj.window.belowEnable = value.obj.window.belowEnable;
-      break;
-    case 0x30:
-      state.col.directColor = value.col.directColor;
-      state.col.blendMode = value.col.blendMode;
-      state.col.window.belowMask = value.col.window.belowMask;
-      state.col.window.aboveMask = value.col.window.aboveMask;
-      break;
-    case 0x31:
-      std::copy_n(value.col.enable, SourceCount, state.col.enable);
-      state.col.halve = value.col.halve;
-      state.col.mathMode = value.col.mathMode;
-      break;
-    case 0x32:
-      state.col.fixedColor = value.col.fixedColor;
-      break;
-    default:
-      break;
+}
+
+void Ppu::RecordRasterEvent(RasterEventType type, uint8_t index, const IO& before) {
+    if (ScanlineModel())
+        return;
+    if (currentLine_ == 0 || currentLine_ >= VDisp())
+        return;
+    if (currentHClock_ < 58 || currentHClock_ >= 1082)
+        return;
+    const int x = (currentHClock_ - 58 + 3) / 4;
+    if (x <= 0 || x >= 256)
+        return;
+
+    RasterEvent event;
+    event.hclock = currentHClock_;
+    event.x = static_cast<uint16_t>(x);
+    event.type = type;
+    event.index = index;
+    event.before = before;
+    event.after = io_;
+    auto& events = rasterEvents_[currentLine_];
+    const auto next =
+        std::upper_bound(events.begin(), events.end(), event.x,
+                         [](uint16_t x, const RasterEvent& queued) { return x < queued.x; });
+    events.insert(next, std::move(event));
+}
+
+void Ppu::ApplyRasterEvent(IO& state, const RasterEvent& event, bool after) {
+    const IO& value = after ? event.after : event.before;
+    auto copyLayerSelection = [](WindowLayer& dst, const WindowLayer& src) {
+        dst.oneEnable = src.oneEnable;
+        dst.oneInvert = src.oneInvert;
+        dst.twoEnable = src.twoEnable;
+        dst.twoInvert = src.twoInvert;
+    };
+    auto copyColorSelection = [](WindowColor& dst, const WindowColor& src) {
+        dst.oneEnable = src.oneEnable;
+        dst.oneInvert = src.oneInvert;
+        dst.twoEnable = src.twoEnable;
+        dst.twoInvert = src.twoInvert;
+    };
+
+    switch (event.type) {
+    case RasterEventType::Display:
+        state.displayDisable = value.displayDisable;
+        state.displayBrightness = value.displayBrightness;
+        break;
+    case RasterEventType::OutputMode:
+        state.bgMode = value.bgMode;
+        state.pseudoHires = value.pseudoHires;
+        state.extbg = value.extbg;
+        std::copy_n(value.obj.priority, 4, state.obj.priority);
+        break;
+    case RasterEventType::WindowSelect:
+        if (event.index == 0) {
+            copyLayerSelection(state.bg1.window, value.bg1.window);
+            copyLayerSelection(state.bg2.window, value.bg2.window);
+        } else if (event.index == 1) {
+            copyLayerSelection(state.bg3.window, value.bg3.window);
+            copyLayerSelection(state.bg4.window, value.bg4.window);
+        } else {
+            copyLayerSelection(state.obj.window, value.obj.window);
+            copyColorSelection(state.col.window, value.col.window);
+        }
+        break;
+    case RasterEventType::Composition:
+        switch (event.index) {
+        case 0x26:
+            state.window.oneLeft = value.window.oneLeft;
+            break;
+        case 0x27:
+            state.window.oneRight = value.window.oneRight;
+            break;
+        case 0x28:
+            state.window.twoLeft = value.window.twoLeft;
+            break;
+        case 0x29:
+            state.window.twoRight = value.window.twoRight;
+            break;
+        case 0x2a:
+            state.bg1.window.mask = value.bg1.window.mask;
+            state.bg2.window.mask = value.bg2.window.mask;
+            state.bg3.window.mask = value.bg3.window.mask;
+            state.bg4.window.mask = value.bg4.window.mask;
+            break;
+        case 0x2b:
+            state.obj.window.mask = value.obj.window.mask;
+            state.col.window.mask = value.col.window.mask;
+            break;
+        case 0x2c:
+            state.bg1.aboveEnable = value.bg1.aboveEnable;
+            state.bg2.aboveEnable = value.bg2.aboveEnable;
+            state.bg3.aboveEnable = value.bg3.aboveEnable;
+            state.bg4.aboveEnable = value.bg4.aboveEnable;
+            state.obj.aboveEnable = value.obj.aboveEnable;
+            break;
+        case 0x2d:
+            state.bg1.belowEnable = value.bg1.belowEnable;
+            state.bg2.belowEnable = value.bg2.belowEnable;
+            state.bg3.belowEnable = value.bg3.belowEnable;
+            state.bg4.belowEnable = value.bg4.belowEnable;
+            state.obj.belowEnable = value.obj.belowEnable;
+            break;
+        case 0x2e:
+            state.bg1.window.aboveEnable = value.bg1.window.aboveEnable;
+            state.bg2.window.aboveEnable = value.bg2.window.aboveEnable;
+            state.bg3.window.aboveEnable = value.bg3.window.aboveEnable;
+            state.bg4.window.aboveEnable = value.bg4.window.aboveEnable;
+            state.obj.window.aboveEnable = value.obj.window.aboveEnable;
+            break;
+        case 0x2f:
+            state.bg1.window.belowEnable = value.bg1.window.belowEnable;
+            state.bg2.window.belowEnable = value.bg2.window.belowEnable;
+            state.bg3.window.belowEnable = value.bg3.window.belowEnable;
+            state.bg4.window.belowEnable = value.bg4.window.belowEnable;
+            state.obj.window.belowEnable = value.obj.window.belowEnable;
+            break;
+        case 0x30:
+            state.col.directColor = value.col.directColor;
+            state.col.blendMode = value.col.blendMode;
+            state.col.window.belowMask = value.col.window.belowMask;
+            state.col.window.aboveMask = value.col.window.aboveMask;
+            break;
+        case 0x31:
+            std::copy_n(value.col.enable, SourceCount, state.col.enable);
+            state.col.halve = value.col.halve;
+            state.col.mathMode = value.col.mathMode;
+            break;
+        case 0x32:
+            state.col.fixedColor = value.col.fixedColor;
+            break;
+        default:
+            break;
+        }
+        break;
     }
-    break;
-  }
 }
 
 void Ppu::ScanlineBegin(uint16_t line) {
-  if (currentLine_ != line)
-    SetCurrentLine(line);
-  if (ScanlineModel()) {
-    // Writes at the sampling clock complete before the paused video work resumes.
-    pendingScanline_ = line;
-    return;
-  }
-  SynchronizePipeline(512);
-  CacheScanline(line);
+    if (currentLine_ != line)
+        SetCurrentLine(line);
+    if (ScanlineModel()) {
+        // Writes at the sampling clock complete before the paused video work resumes.
+        pendingScanline_ = line;
+        return;
+    }
+    SynchronizePipeline(512);
+    CacheScanline(line);
 }
 
 void Ppu::CacheScanline(uint16_t line) {
-  AdvanceMosaicCounter(line);
+    AdvanceMosaicCounter(line);
 
-  // Retain screen registers for final composition.
-  if (line > 0 && line < 240) {
-    auto &cache = lines_[line];
-    cache.y = line;
-    cache.fieldID = fieldId_;
-    cache.io = io_;
-    if (ScanlineModel())
-      cache.palette = cgram_;
+    // Retain screen registers for final composition.
+    if (line > 0 && line < 240) {
+        auto& cache = lines_[line];
+        cache.y = line;
+        cache.fieldID = fieldId_;
+        cache.io = io_;
+        if (ScanlineModel())
+            cache.palette = cgram_;
 
-    if (line >= VDisp()) {
-      cache.io.displayDisable = true;
+        if (line >= VDisp()) {
+            cache.io.displayDisable = true;
+        }
+
+        if (lineCount_ == 0)
+            lineStart_ = line;
+        lineCount_++;
     }
-
-    if (lineCount_ == 0)
-      lineStart_ = line;
-    lineCount_++;
-  }
 }
 
 void Ppu::VBlankBegin() {
-  if (currentLine_ > 0 && currentLine_ < VDisp())
-    SynchronizePipeline(1368);
+    if (currentLine_ > 0 && currentLine_ < VDisp())
+        SynchronizePipeline(1368);
 
-  // Render all cached scanlines
-  RenderFrame();
+    // Render all cached scanlines
+    RenderFrame();
 }
 
 // VRAM helpers
 
 uint16_t Ppu::TranslatedVramAddress() const {
-  uint16_t address = io_.vramAddress;
-  switch (io_.vramMapping) {
-  case 0:
-    break;
-  case 1:
-    address = (address & 0xFF00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
-    break;
-  case 2:
-    address = (address & 0xFE00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
-    break;
-  case 3:
-    address = (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
-    break;
-  }
-  return address & (ScanlineModel() ? 0x7fff : config_.vramBytes / 2 - 1);
+    uint16_t address = io_.vramAddress;
+    switch (io_.vramMapping) {
+    case 0:
+        break;
+    case 1:
+        address = (address & 0xFF00) | ((address << 3) & 0x00F8) | ((address >> 5) & 7);
+        break;
+    case 2:
+        address = (address & 0xFE00) | ((address << 3) & 0x01F8) | ((address >> 6) & 7);
+        break;
+    case 3:
+        address = (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 7);
+        break;
+    }
+    return address & (ScanlineModel() ? 0x7fff : config_.vramBytes / 2 - 1);
 }
 
 uint16_t Ppu::ReadVram() {
-  // Display owns VRAM from scanline zero through the last visible line.
-  if (!io_.displayDisable && currentLine_ < VDisp()) {
-    return 0x0000;
-  }
-  return vram_[TranslatedVramAddress()];
+    // Display owns VRAM from scanline zero through the last visible line.
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+        return 0x0000;
+    }
+    return vram_[TranslatedVramAddress()];
 }
 
 void Ppu::WriteVram(bool highByte, uint8_t data) {
-  // Block the write without changing the port's address-increment behavior.
-  if (!io_.displayDisable && currentLine_ < VDisp()) {
-    return;
-  }
-  if (ScanlineModel())
-    FlushCachedLines();
-  uint16_t addr = TranslatedVramAddress();
-  if (!highByte) {
-    vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
-  } else {
-    vram_[addr] = (vram_[addr] & 0x00FF) | (static_cast<uint16_t>(data) << 8);
-  }
+    // Block the write without changing the port's address-increment behavior.
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+        return;
+    }
+    if (ScanlineModel())
+        FlushCachedLines();
+    uint16_t addr = TranslatedVramAddress();
+    if (!highByte) {
+        vram_[addr] = (vram_[addr] & 0xFF00) | static_cast<uint16_t>(data);
+    } else {
+        vram_[addr] = (vram_[addr] & 0x00FF) | (static_cast<uint16_t>(data) << 8);
+    }
 }
 
 // OAM helpers
 
 uint8_t Ppu::ReadOam(uint16_t address) {
-  address &= 0x03FF;
-  // During active display, use latched address
-  if (!io_.displayDisable && currentLine_ < VDisp()) {
-    address = latch_.oamAddress & 0x03FF;
-  }
-  if (address & 0x200)
-    address &= 0x21F;
-  return oam_[address];
+    address &= 0x03FF;
+    // During active display, use latched address
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+        address = latch_.oamAddress & 0x03FF;
+    }
+    if (address & 0x200)
+        address &= 0x21F;
+    return oam_[address];
 }
 
 void Ppu::WriteOam(uint16_t address, uint8_t data) {
-  if (ScanlineModel())
-    FlushCachedLines();
-  address &= 0x03FF;
-  // The object pipeline owns the OAM address during active display.
-  if (!io_.displayDisable && currentLine_ < VDisp()) {
-    address = ScanlineModel() ? 0x0218 : latch_.oamAddress & 0x03FF;
-  }
-  if (address & 0x200)
-    address &= 0x21F;
-  oam_[address] = data;
+    if (ScanlineModel())
+        FlushCachedLines();
+    address &= 0x03FF;
+    // The object pipeline owns the OAM address during active display.
+    if (!io_.displayDisable && currentLine_ < VDisp()) {
+        address = ScanlineModel() ? 0x0218 : latch_.oamAddress & 0x03FF;
+    }
+    if (address & 0x200)
+        address &= 0x21F;
+    oam_[address] = data;
 }
 
 void Ppu::OamAddressReset() {
-  io_.oamAddress = io_.oamBaseAddress;
-  OamSetFirstObject();
+    io_.oamAddress = io_.oamBaseAddress;
+    OamSetFirstObject();
 }
 
 void Ppu::OamSetFirstObject() {
-  io_.obj.first = 0;
-  if (io_.oamPriority) {
-    io_.obj.first = (io_.oamAddress >> 2) & 127;
-  }
+    io_.obj.first = 0;
+    if (io_.oamPriority) {
+        io_.obj.first = (io_.oamAddress >> 2) & 127;
+    }
 }
 
 // CGRAM helpers
 
 uint8_t Ppu::ReadCgram(bool highByte, uint8_t address) {
-  // During active rendering (display enabled, visible scanline, in active dots),
-  // reads are redirected to the latched address.  Outside active dots (HBlank)
-  // the CPU can access CGRAM normally even on visible scanlines.
-  // Active display spans master clocks 88 through 1095.
-  if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp() && currentHClock_ >= 88 &&
-      currentHClock_ < 1096) {
-    address = latch_.cgramAddress;
-  }
-  if (!highByte) {
-    return static_cast<uint8_t>(cgram_[address] & 0xFF);
-  } else {
-    return static_cast<uint8_t>((cgram_[address] >> 8) & 0xFF);
-  }
+    // During active rendering (display enabled, visible scanline, in active dots),
+    // reads are redirected to the latched address.  Outside active dots (HBlank)
+    // the CPU can access CGRAM normally even on visible scanlines.
+    // Active display spans master clocks 88 through 1095.
+    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp() && currentHClock_ >= 88 &&
+        currentHClock_ < 1096) {
+        address = latch_.cgramAddress;
+    }
+    if (!highByte) {
+        return static_cast<uint8_t>(cgram_[address] & 0xFF);
+    } else {
+        return static_cast<uint8_t>((cgram_[address] >> 8) & 0xFF);
+    }
 }
 
 void Ppu::WriteCgram(uint8_t address, uint16_t data) {
-  if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp() && currentHClock_ >= 88 &&
-      currentHClock_ < 1096) {
-    address = latch_.cgramAddress;
-  }
-  cgram_[address] = data & 0x7FFF; // 15-bit color
+    if (!io_.displayDisable && currentLine_ > 0 && currentLine_ < VDisp() && currentHClock_ >= 88 &&
+        currentHClock_ < 1096) {
+        address = latch_.cgramAddress;
+    }
+    cgram_[address] = data & 0x7FFF; // 15-bit color
 }
 
 // Counter latching
 
 void Ppu::LatchCounters(uint16_t hcounter, uint16_t vcounter) {
-  io_.hcounter = hcounter;
-  io_.vcounter = vcounter;
-  latch_.counters = true;
+    io_.hcounter = hcounter;
+    io_.vcounter = vcounter;
+    latch_.counters = true;
 }
 
 // ReadIO - read PPU register ($2134-$213F, plus open-bus for write-only)
 //
 // Read the selected register and apply its read-side effects.
 uint8_t Ppu::ReadIO(uint32_t addr, uint8_t openBus) {
-  SynchronizePipeline(currentHClock_);
-  switch (addr & 0xFFFF) {
+    SynchronizePipeline(currentHClock_);
+    switch (addr & 0xFFFF) {
 
-  // Write-only registers - return PPU1 MDR
-  case 0x2104:
-  case 0x2105:
-  case 0x2106:
-  case 0x2108:
-  case 0x2109:
-  case 0x210A:
-  case 0x2114:
-  case 0x2115:
-  case 0x2116:
-  case 0x2118:
-  case 0x2119:
-  case 0x211A:
-  case 0x2124:
-  case 0x2125:
-  case 0x2126:
-  case 0x2128:
-  case 0x2129:
-  case 0x212A: {
-    return latch_.ppu1.mdr;
-  }
-
-  // $2134 - MPYL (mode 7 multiply result low)
-  case 0x2134: {
-    int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
-    return latch_.ppu1.mdr = static_cast<uint8_t>(result);
-  }
-
-  // $2135 - MPYM (mode 7 multiply result mid)
-  case 0x2135: {
-    int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
-    return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 8);
-  }
-
-  // $2136 - MPYH (mode 7 multiply result high)
-  case 0x2136: {
-    int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
-    return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 16);
-  }
-
-  // $2137 - SLHV (software latch H/V counters)
-  // When PIO bit 7 is high, reading this register latches the current
-  // H/V counters.  The actual counter values come from the timing layer
-  // via the onCounterLatch_ callback.
-  case 0x2137: {
-    if ((cpuPio_ & 0x80) && onCounterLatch_) {
-      onCounterLatch_();
+    // Write-only registers - return PPU1 MDR
+    case 0x2104:
+    case 0x2105:
+    case 0x2106:
+    case 0x2108:
+    case 0x2109:
+    case 0x210A:
+    case 0x2114:
+    case 0x2115:
+    case 0x2116:
+    case 0x2118:
+    case 0x2119:
+    case 0x211A:
+    case 0x2124:
+    case 0x2125:
+    case 0x2126:
+    case 0x2128:
+    case 0x2129:
+    case 0x212A: {
+        return latch_.ppu1.mdr;
     }
+
+    // $2134 - MPYL (mode 7 multiply result low)
+    case 0x2134: {
+        int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
+        return latch_.ppu1.mdr = static_cast<uint8_t>(result);
+    }
+
+    // $2135 - MPYM (mode 7 multiply result mid)
+    case 0x2135: {
+        int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
+        return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 8);
+    }
+
+    // $2136 - MPYH (mode 7 multiply result high)
+    case 0x2136: {
+        int32_t result = static_cast<int16_t>(io_.mode7.a) * static_cast<int8_t>(io_.mode7.b >> 8);
+        return latch_.ppu1.mdr = static_cast<uint8_t>(result >> 16);
+    }
+
+    // $2137 - SLHV (software latch H/V counters)
+    // When PIO bit 7 is high, reading this register latches the current
+    // H/V counters.  The actual counter values come from the timing layer
+    // via the onCounterLatch_ callback.
+    case 0x2137: {
+        if ((cpuPio_ & 0x80) && onCounterLatch_) {
+            onCounterLatch_();
+        }
+        return openBus;
+    }
+
+    // $2138 - OAMDATAREAD
+    case 0x2138: {
+        uint8_t data = ReadOam(io_.oamAddress);
+        io_.oamAddress = (io_.oamAddress + 1) & 0x03FF;
+        OamSetFirstObject();
+        return latch_.ppu1.mdr = data;
+    }
+
+    // $2139 - VMDATALREAD (VRAM data read low)
+    case 0x2139: {
+        uint8_t data = static_cast<uint8_t>(latch_.vram);
+        if (io_.vramIncrementMode == 0) {
+            latch_.vram = ReadVram();
+            io_.vramAddress += io_.vramIncrementSize;
+        }
+        return latch_.ppu1.mdr = data;
+    }
+
+    // $213A - VMDATAHREAD (VRAM data read high)
+    case 0x213A: {
+        uint8_t data = static_cast<uint8_t>(latch_.vram >> 8);
+        if (io_.vramIncrementMode == 1) {
+            latch_.vram = ReadVram();
+            io_.vramAddress += io_.vramIncrementSize;
+        }
+        return latch_.ppu1.mdr = data;
+    }
+
+    // $213B - CGDATAREAD
+    case 0x213B: {
+        if (!io_.cgramAddressLatch) {
+            io_.cgramAddressLatch = true;
+            latch_.ppu2.mdr = ReadCgram(false, io_.cgramAddress);
+        } else {
+            io_.cgramAddressLatch = false;
+            latch_.ppu2.mdr = (ReadCgram(true, io_.cgramAddress) & 0x7F) | (latch_.ppu2.mdr & 0x80);
+            io_.cgramAddress++;
+        }
+        return latch_.ppu2.mdr;
+    }
+
+    // $213C - OPHCT (horizontal counter read, toggle high/low)
+    case 0x213C: {
+        if (!latch_.hcounter) {
+            latch_.hcounter = true;
+            latch_.ppu2.mdr = static_cast<uint8_t>(io_.hcounter);
+        } else {
+            latch_.hcounter = false;
+            latch_.ppu2.mdr =
+                (latch_.ppu2.mdr & 0xFE) | static_cast<uint8_t>((io_.hcounter >> 8) & 1);
+        }
+        return latch_.ppu2.mdr;
+    }
+
+    // $213D - OPVCT (vertical counter read, toggle high/low)
+    case 0x213D: {
+        if (!latch_.vcounter) {
+            latch_.vcounter = true;
+            latch_.ppu2.mdr = static_cast<uint8_t>(io_.vcounter);
+        } else {
+            latch_.vcounter = false;
+            latch_.ppu2.mdr =
+                (latch_.ppu2.mdr & 0xFE) | static_cast<uint8_t>((io_.vcounter >> 8) & 1);
+        }
+        return latch_.ppu2.mdr;
+    }
+
+    // $213E - STAT77 (PPU1 status: version + OBJ overflow flags)
+    case 0x213E: {
+        // Progressive status retains open-bus bit 4; scanline status clears it.
+        latch_.ppu1.mdr = (ScanlineModel() ? 0 : latch_.ppu1.mdr & 0x10) | 0x01;
+        latch_.ppu1.mdr |= (io_.obj.rangeOver ? 1 : 0) << 6;
+        latch_.ppu1.mdr |= (io_.obj.timeOver ? 1 : 0) << 7;
+        return latch_.ppu1.mdr;
+    }
+
+    // $213F - STAT78 (PPU2 status: version + region + field + counter latch)
+    case 0x213F: {
+        // Reset H/V counter toggles
+        latch_.hcounter = false;
+        latch_.vcounter = false;
+
+        // Preserve bit 5 (open bus)
+        latch_.ppu2.mdr &= (1 << 5);
+        latch_.ppu2.mdr |= ScanlineModel() ? 3 : config_.revision2;
+        latch_.ppu2.mdr |= (isPal_ ? 1 : 0) << 4;
+        // Bit 6: counter latch flag
+        // When PIO bit 7 is clear, bit 6 always reads high.
+        // When PIO bit 7 is set, bit 6 reflects the latch flag (cleared on read).
+        if (!(cpuPio_ & 0x80)) {
+            latch_.ppu2.mdr |= (1 << 6);
+        } else {
+            latch_.ppu2.mdr |= (latch_.counters ? 1 : 0) << 6;
+            latch_.counters = false;
+        }
+        // Bit 7: interlace field ID
+        latch_.ppu2.mdr |= (fieldId_ ? 1 : 0) << 7;
+
+        return latch_.ppu2.mdr;
+    }
+
+    } // switch
+
     return openBus;
-  }
-
-  // $2138 - OAMDATAREAD
-  case 0x2138: {
-    uint8_t data = ReadOam(io_.oamAddress);
-    io_.oamAddress = (io_.oamAddress + 1) & 0x03FF;
-    OamSetFirstObject();
-    return latch_.ppu1.mdr = data;
-  }
-
-  // $2139 - VMDATALREAD (VRAM data read low)
-  case 0x2139: {
-    uint8_t data = static_cast<uint8_t>(latch_.vram);
-    if (io_.vramIncrementMode == 0) {
-      latch_.vram = ReadVram();
-      io_.vramAddress += io_.vramIncrementSize;
-    }
-    return latch_.ppu1.mdr = data;
-  }
-
-  // $213A - VMDATAHREAD (VRAM data read high)
-  case 0x213A: {
-    uint8_t data = static_cast<uint8_t>(latch_.vram >> 8);
-    if (io_.vramIncrementMode == 1) {
-      latch_.vram = ReadVram();
-      io_.vramAddress += io_.vramIncrementSize;
-    }
-    return latch_.ppu1.mdr = data;
-  }
-
-  // $213B - CGDATAREAD
-  case 0x213B: {
-    if (!io_.cgramAddressLatch) {
-      io_.cgramAddressLatch = true;
-      latch_.ppu2.mdr = ReadCgram(false, io_.cgramAddress);
-    } else {
-      io_.cgramAddressLatch = false;
-      latch_.ppu2.mdr = (ReadCgram(true, io_.cgramAddress) & 0x7F) | (latch_.ppu2.mdr & 0x80);
-      io_.cgramAddress++;
-    }
-    return latch_.ppu2.mdr;
-  }
-
-  // $213C - OPHCT (horizontal counter read, toggle high/low)
-  case 0x213C: {
-    if (!latch_.hcounter) {
-      latch_.hcounter = true;
-      latch_.ppu2.mdr = static_cast<uint8_t>(io_.hcounter);
-    } else {
-      latch_.hcounter = false;
-      latch_.ppu2.mdr = (latch_.ppu2.mdr & 0xFE) | static_cast<uint8_t>((io_.hcounter >> 8) & 1);
-    }
-    return latch_.ppu2.mdr;
-  }
-
-  // $213D - OPVCT (vertical counter read, toggle high/low)
-  case 0x213D: {
-    if (!latch_.vcounter) {
-      latch_.vcounter = true;
-      latch_.ppu2.mdr = static_cast<uint8_t>(io_.vcounter);
-    } else {
-      latch_.vcounter = false;
-      latch_.ppu2.mdr = (latch_.ppu2.mdr & 0xFE) | static_cast<uint8_t>((io_.vcounter >> 8) & 1);
-    }
-    return latch_.ppu2.mdr;
-  }
-
-  // $213E - STAT77 (PPU1 status: version + OBJ overflow flags)
-  case 0x213E: {
-    // Progressive status retains open-bus bit 4; scanline status clears it.
-    latch_.ppu1.mdr = (ScanlineModel() ? 0 : latch_.ppu1.mdr & 0x10) | 0x01;
-    latch_.ppu1.mdr |= (io_.obj.rangeOver ? 1 : 0) << 6;
-    latch_.ppu1.mdr |= (io_.obj.timeOver ? 1 : 0) << 7;
-    return latch_.ppu1.mdr;
-  }
-
-  // $213F - STAT78 (PPU2 status: version + region + field + counter latch)
-  case 0x213F: {
-    // Reset H/V counter toggles
-    latch_.hcounter = false;
-    latch_.vcounter = false;
-
-    // Preserve bit 5 (open bus)
-    latch_.ppu2.mdr &= (1 << 5);
-    latch_.ppu2.mdr |= ScanlineModel() ? 3 : config_.revision2;
-    latch_.ppu2.mdr |= (isPal_ ? 1 : 0) << 4;
-    // Bit 6: counter latch flag
-    // When PIO bit 7 is clear, bit 6 always reads high.
-    // When PIO bit 7 is set, bit 6 reflects the latch flag (cleared on read).
-    if (!(cpuPio_ & 0x80)) {
-      latch_.ppu2.mdr |= (1 << 6);
-    } else {
-      latch_.ppu2.mdr |= (latch_.counters ? 1 : 0) << 6;
-      latch_.counters = false;
-    }
-    // Bit 7: interlace field ID
-    latch_.ppu2.mdr |= (fieldId_ ? 1 : 0) << 7;
-
-    return latch_.ppu2.mdr;
-  }
-
-  } // switch
-
-  return openBus;
 }
 
 // WriteIO - write PPU register ($2100-$2133)
 //
 // Update the selected register and apply its write-side effects.
 void Ppu::WriteIO(uint32_t addr, uint8_t data) {
-  SynchronizePipeline(currentHClock_);
-  switch (addr & 0xFFFF) {
+    SynchronizePipeline(currentHClock_);
+    switch (addr & 0xFFFF) {
 
-  // $2100 - INIDISP (display control)
-  case 0x2100: {
-    const IO before = io_;
-    if (io_.displayDisable && currentLine_ == VDisp()) {
-      OamAddressReset();
+    // $2100 - INIDISP (display control)
+    case 0x2100: {
+        const IO before = io_;
+        if (io_.displayDisable && currentLine_ == VDisp()) {
+            OamAddressReset();
+        }
+        io_.displayBrightness = data & 0x0F;
+        io_.displayDisable = (data >> 7) & 1;
+        RecordRasterEvent(RasterEventType::Display, 0, before);
+        return;
     }
-    io_.displayBrightness = data & 0x0F;
-    io_.displayDisable = (data >> 7) & 1;
-    RecordRasterEvent(RasterEventType::Display, 0, before);
-    return;
-  }
 
-  // $2101 - OBSEL (object size + base address)
-  case 0x2101: {
-    uint8_t oldBaseSize = io_.obj.baseSize;
-    io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0xE000);
-    io_.obj.nameselect = (data >> 3) & 3;
-    io_.obj.baseSize = (data >> 5) & 7;
-    if (PpuDebugEnabled() && oldBaseSize != io_.obj.baseSize) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] OBSEL baseSize=%u nameselect=%u objTileBase=$%04X\n",
-                   currentLine_, io_.obj.baseSize, io_.obj.nameselect, io_.obj.tiledataAddress);
+    // $2101 - OBSEL (object size + base address)
+    case 0x2101: {
+        uint8_t oldBaseSize = io_.obj.baseSize;
+        io_.obj.tiledataAddress = static_cast<uint16_t>((data << 13) & 0xE000);
+        io_.obj.nameselect = (data >> 3) & 3;
+        io_.obj.baseSize = (data >> 5) & 7;
+        if (PpuDebugEnabled() && oldBaseSize != io_.obj.baseSize) {
+            std::fprintf(
+                stderr, "[PPU-DBG l=%u] OBSEL baseSize=%u nameselect=%u objTileBase=$%04X\n",
+                currentLine_, io_.obj.baseSize, io_.obj.nameselect, io_.obj.tiledataAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2102 - OAMADDL (OAM address low)
-  case 0x2102: {
-    io_.oamBaseAddress = (io_.oamBaseAddress & 0x0200) | (static_cast<uint16_t>(data) << 1);
-    OamAddressReset();
-    return;
-  }
-
-  // $2103 - OAMADDH (OAM address high + priority rotation)
-  case 0x2103: {
-    io_.oamBaseAddress = ((data & 1) << 9) | (io_.oamBaseAddress & 0x01FE);
-    io_.oamPriority = (data >> 7) & 1;
-    OamAddressReset();
-    return;
-  }
-
-  // $2104 - OAMDATA (OAM data write)
-  case 0x2104: {
-    bool latchBit = io_.oamAddress & 1;
-    uint16_t address = io_.oamAddress;
-    io_.oamAddress = (io_.oamAddress + 1) & 0x03FF;
-    if (!latchBit)
-      latch_.oam = data;
-    if (address & 0x200) {
-      WriteOam(address, data);
-    } else if (latchBit) {
-      WriteOam((address & ~1) + 0, latch_.oam);
-      WriteOam((address & ~1) + 1, data);
+    // $2102 - OAMADDL (OAM address low)
+    case 0x2102: {
+        io_.oamBaseAddress = (io_.oamBaseAddress & 0x0200) | (static_cast<uint16_t>(data) << 1);
+        OamAddressReset();
+        return;
     }
-    OamSetFirstObject();
-    return;
-  }
 
-  // $2105 - BGMODE (BG mode, tile sizes)
-  case 0x2105: {
-    const IO before = io_;
-    uint8_t oldMode = io_.bgMode;
-    bool oldPri = io_.bgPriority;
-    io_.bgMode = data & 7;
-    io_.bgPriority = (data >> 3) & 1;
-    io_.bg1.tileSize = (data >> 4) & 1;
-    io_.bg2.tileSize = (data >> 5) & 1;
-    io_.bg3.tileSize = (data >> 6) & 1;
-    io_.bg4.tileSize = (data >> 7) & 1;
-    UpdateVideoMode();
-    if (PpuDebugEnabled() && (oldMode != io_.bgMode || oldPri != io_.bgPriority)) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BGMODE mode=%u bgPri=%u tileSize=%u/%u/%u/%u\n",
-                   currentLine_, io_.bgMode, io_.bgPriority, io_.bg1.tileSize ? 1 : 0,
-                   io_.bg2.tileSize ? 1 : 0, io_.bg3.tileSize ? 1 : 0, io_.bg4.tileSize ? 1 : 0);
+    // $2103 - OAMADDH (OAM address high + priority rotation)
+    case 0x2103: {
+        io_.oamBaseAddress = ((data & 1) << 9) | (io_.oamBaseAddress & 0x01FE);
+        io_.oamPriority = (data >> 7) & 1;
+        OamAddressReset();
+        return;
     }
-    RecordRasterEvent(RasterEventType::OutputMode, 0, before);
-    return;
-  }
 
-  // $2106 - MOSAIC
-  case 0x2106: {
-    bool wasMosaicEnabled = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable || io_.bg3.mosaicEnable ||
-                            io_.bg4.mosaicEnable;
-    io_.bg1.mosaicEnable = (data >> 0) & 1;
-    io_.bg2.mosaicEnable = (data >> 1) & 1;
-    io_.bg3.mosaicEnable = (data >> 2) & 1;
-    io_.bg4.mosaicEnable = (data >> 3) & 1;
-    io_.mosaic.size = ((data >> 4) & 15) + 1;
-    if (!wasMosaicEnabled && (data & 15))
-      io_.mosaic.counter = io_.mosaic.size + 1;
-    return;
-  }
-
-  // $2107 - BG1SC (BG1 tilemap address + size)
-  case 0x2107: {
-    io_.bg1.screenSize = data & 3;
-    io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG1SC size=%u addr=$%04X\n", currentLine_,
-                   io_.bg1.screenSize, io_.bg1.screenAddress);
+    // $2104 - OAMDATA (OAM data write)
+    case 0x2104: {
+        bool latchBit = io_.oamAddress & 1;
+        uint16_t address = io_.oamAddress;
+        io_.oamAddress = (io_.oamAddress + 1) & 0x03FF;
+        if (!latchBit)
+            latch_.oam = data;
+        if (address & 0x200) {
+            WriteOam(address, data);
+        } else if (latchBit) {
+            WriteOam((address & ~1) + 0, latch_.oam);
+            WriteOam((address & ~1) + 1, data);
+        }
+        OamSetFirstObject();
+        return;
     }
-    return;
-  }
 
-  // $2108 - BG2SC
-  case 0x2108: {
-    io_.bg2.screenSize = data & 3;
-    io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG2SC size=%u addr=$%04X\n", currentLine_,
-                   io_.bg2.screenSize, io_.bg2.screenAddress);
+    // $2105 - BGMODE (BG mode, tile sizes)
+    case 0x2105: {
+        const IO before = io_;
+        uint8_t oldMode = io_.bgMode;
+        bool oldPri = io_.bgPriority;
+        io_.bgMode = data & 7;
+        io_.bgPriority = (data >> 3) & 1;
+        io_.bg1.tileSize = (data >> 4) & 1;
+        io_.bg2.tileSize = (data >> 5) & 1;
+        io_.bg3.tileSize = (data >> 6) & 1;
+        io_.bg4.tileSize = (data >> 7) & 1;
+        UpdateVideoMode();
+        if (PpuDebugEnabled() && (oldMode != io_.bgMode || oldPri != io_.bgPriority)) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BGMODE mode=%u bgPri=%u tileSize=%u/%u/%u/%u\n",
+                         currentLine_, io_.bgMode, io_.bgPriority, io_.bg1.tileSize ? 1 : 0,
+                         io_.bg2.tileSize ? 1 : 0, io_.bg3.tileSize ? 1 : 0,
+                         io_.bg4.tileSize ? 1 : 0);
+        }
+        RecordRasterEvent(RasterEventType::OutputMode, 0, before);
+        return;
     }
-    return;
-  }
 
-  // $2109 - BG3SC
-  case 0x2109: {
-    io_.bg3.screenSize = data & 3;
-    io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG3SC size=%u addr=$%04X\n", currentLine_,
-                   io_.bg3.screenSize, io_.bg3.screenAddress);
+    // $2106 - MOSAIC
+    case 0x2106: {
+        bool wasMosaicEnabled = io_.bg1.mosaicEnable || io_.bg2.mosaicEnable ||
+                                io_.bg3.mosaicEnable || io_.bg4.mosaicEnable;
+        io_.bg1.mosaicEnable = (data >> 0) & 1;
+        io_.bg2.mosaicEnable = (data >> 1) & 1;
+        io_.bg3.mosaicEnable = (data >> 2) & 1;
+        io_.bg4.mosaicEnable = (data >> 3) & 1;
+        io_.mosaic.size = ((data >> 4) & 15) + 1;
+        if (!wasMosaicEnabled && (data & 15))
+            io_.mosaic.counter = io_.mosaic.size + 1;
+        return;
     }
-    return;
-  }
 
-  // $210A - BG4SC
-  case 0x210A: {
-    io_.bg4.screenSize = data & 3;
-    io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG4SC size=%u addr=$%04X\n", currentLine_,
-                   io_.bg4.screenSize, io_.bg4.screenAddress);
+    // $2107 - BG1SC (BG1 tilemap address + size)
+    case 0x2107: {
+        io_.bg1.screenSize = data & 3;
+        io_.bg1.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG1SC size=%u addr=$%04X\n", currentLine_,
+                         io_.bg1.screenSize, io_.bg1.screenAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $210B - BG12NBA (BG1/BG2 character data address)
-  case 0x210B: {
-    io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
-    io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG12NBA bg1=$%04X bg2=$%04X\n", currentLine_,
-                   io_.bg1.tiledataAddress, io_.bg2.tiledataAddress);
+    // $2108 - BG2SC
+    case 0x2108: {
+        io_.bg2.screenSize = data & 3;
+        io_.bg2.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG2SC size=%u addr=$%04X\n", currentLine_,
+                         io_.bg2.screenSize, io_.bg2.screenAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $210C - BG34NBA (BG3/BG4 character data address)
-  case 0x210C: {
-    io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
-    io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG34NBA bg3=$%04X bg4=$%04X\n", currentLine_,
-                   io_.bg3.tiledataAddress, io_.bg4.tiledataAddress);
+    // $2109 - BG3SC
+    case 0x2109: {
+        io_.bg3.screenSize = data & 3;
+        io_.bg3.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG3SC size=%u addr=$%04X\n", currentLine_,
+                         io_.bg3.screenSize, io_.bg3.screenAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $210D - BG1HOFS (BG1 horizontal scroll)
-  // Also writes Mode 7 horizontal offset
-  case 0x210D: {
-    io_.mode7.hoffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    io_.bg1.hoffset = static_cast<uint16_t>(
-        ((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
-        0x03FF);
-    latch_.ppu1.bgofs = data;
-    latch_.ppu2.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG1HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
-                   io_.bg1.hoffset);
+    // $210A - BG4SC
+    case 0x210A: {
+        io_.bg4.screenSize = data & 3;
+        io_.bg4.screenAddress = static_cast<uint16_t>((data << 8) & 0xFC00);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG4SC size=%u addr=$%04X\n", currentLine_,
+                         io_.bg4.screenSize, io_.bg4.screenAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $210E - BG1VOFS (BG1 vertical scroll)
-  // Also writes Mode 7 vertical offset
-  case 0x210E: {
-    io_.mode7.voffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    io_.bg1.voffset =
-        static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
-    latch_.ppu1.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG1VOFS data=%02X voffset=$%04X\n", currentLine_, data,
-                   io_.bg1.voffset);
+    // $210B - BG12NBA (BG1/BG2 character data address)
+    case 0x210B: {
+        io_.bg1.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+        io_.bg2.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG12NBA bg1=$%04X bg2=$%04X\n", currentLine_,
+                         io_.bg1.tiledataAddress, io_.bg2.tiledataAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $210F - BG2HOFS
-  case 0x210F: {
-    io_.bg2.hoffset = static_cast<uint16_t>(
-        ((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
-        0x03FF);
-    latch_.ppu1.bgofs = data;
-    latch_.ppu2.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG2HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
-                   io_.bg2.hoffset);
+    // $210C - BG34NBA (BG3/BG4 character data address)
+    case 0x210C: {
+        io_.bg3.tiledataAddress = static_cast<uint16_t>((data << 12) & 0xF000);
+        io_.bg4.tiledataAddress = static_cast<uint16_t>((data << 8) & 0xF000);
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG34NBA bg3=$%04X bg4=$%04X\n", currentLine_,
+                         io_.bg3.tiledataAddress, io_.bg4.tiledataAddress);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2110 - BG2VOFS
-  case 0x2110: {
-    io_.bg2.voffset =
-        static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
-    latch_.ppu1.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG2VOFS data=%02X voffset=$%04X\n", currentLine_, data,
-                   io_.bg2.voffset);
+    // $210D - BG1HOFS (BG1 horizontal scroll)
+    // Also writes Mode 7 horizontal offset
+    case 0x210D: {
+        io_.mode7.hoffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        io_.bg1.hoffset =
+            static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) |
+                                   (latch_.ppu2.bgofs & 7)) &
+                                  0x03FF);
+        latch_.ppu1.bgofs = data;
+        latch_.ppu2.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG1HOFS data=%02X hoffset=$%04X\n", currentLine_,
+                         data, io_.bg1.hoffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2111 - BG3HOFS
-  case 0x2111: {
-    io_.bg3.hoffset = static_cast<uint16_t>(
-        ((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
-        0x03FF);
-    latch_.ppu1.bgofs = data;
-    latch_.ppu2.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG3HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
-                   io_.bg3.hoffset);
+    // $210E - BG1VOFS (BG1 vertical scroll)
+    // Also writes Mode 7 vertical offset
+    case 0x210E: {
+        io_.mode7.voffset = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        io_.bg1.voffset = static_cast<uint16_t>(
+            ((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+        latch_.ppu1.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG1VOFS data=%02X voffset=$%04X\n", currentLine_,
+                         data, io_.bg1.voffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2112 - BG3VOFS
-  case 0x2112: {
-    io_.bg3.voffset =
-        static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
-    latch_.ppu1.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG3VOFS data=%02X voffset=$%04X\n", currentLine_, data,
-                   io_.bg3.voffset);
+    // $210F - BG2HOFS
+    case 0x210F: {
+        io_.bg2.hoffset =
+            static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) |
+                                   (latch_.ppu2.bgofs & 7)) &
+                                  0x03FF);
+        latch_.ppu1.bgofs = data;
+        latch_.ppu2.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG2HOFS data=%02X hoffset=$%04X\n", currentLine_,
+                         data, io_.bg2.hoffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2113 - BG4HOFS
-  case 0x2113: {
-    io_.bg4.hoffset = static_cast<uint16_t>(
-        ((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) | (latch_.ppu2.bgofs & 7)) &
-        0x03FF);
-    latch_.ppu1.bgofs = data;
-    latch_.ppu2.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG4HOFS data=%02X hoffset=$%04X\n", currentLine_, data,
-                   io_.bg4.hoffset);
+    // $2110 - BG2VOFS
+    case 0x2110: {
+        io_.bg2.voffset = static_cast<uint16_t>(
+            ((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+        latch_.ppu1.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG2VOFS data=%02X voffset=$%04X\n", currentLine_,
+                         data, io_.bg2.voffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2114 - BG4VOFS
-  case 0x2114: {
-    io_.bg4.voffset =
-        static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
-    latch_.ppu1.bgofs = data;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] BG4VOFS data=%02X voffset=$%04X\n", currentLine_, data,
-                   io_.bg4.voffset);
+    // $2111 - BG3HOFS
+    case 0x2111: {
+        io_.bg3.hoffset =
+            static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) |
+                                   (latch_.ppu2.bgofs & 7)) &
+                                  0x03FF);
+        latch_.ppu1.bgofs = data;
+        latch_.ppu2.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG3HOFS data=%02X hoffset=$%04X\n", currentLine_,
+                         data, io_.bg3.hoffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2115 - VMAIN (VRAM address increment mode)
-  case 0x2115: {
-    static constexpr uint16_t kIncrementSizes[4] = {1, 32, 128, 128};
-    io_.vramIncrementSize = kIncrementSizes[data & 3];
-    io_.vramMapping = (data >> 2) & 3;
-    io_.vramIncrementMode = (data >> 7) & 1;
-    return;
-  }
-
-  // $2116 - VMADDL (VRAM address low)
-  case 0x2116: {
-    io_.vramAddress = (io_.vramAddress & 0xFF00) | data;
-    latch_.vram = ReadVram();
-    return;
-  }
-
-  // $2117 - VMADDH (VRAM address high)
-  case 0x2117: {
-    io_.vramAddress = (io_.vramAddress & 0x00FF) | (static_cast<uint16_t>(data) << 8);
-    latch_.vram = ReadVram();
-    return;
-  }
-
-  // $2118 - VMDATAL (VRAM data write low)
-  case 0x2118: {
-    WriteVram(false, data);
-    if (!io_.vramIncrementMode)
-      io_.vramAddress += io_.vramIncrementSize;
-    return;
-  }
-
-  // $2119 - VMDATAH (VRAM data write high)
-  case 0x2119: {
-    WriteVram(true, data);
-    if (io_.vramIncrementMode)
-      io_.vramAddress += io_.vramIncrementSize;
-    return;
-  }
-
-  // $211A - M7SEL (Mode 7 settings)
-  case 0x211A: {
-    io_.mode7.hflip = (data >> 0) & 1;
-    io_.mode7.vflip = (data >> 1) & 1;
-    io_.mode7.repeat = (data >> 6) & 3;
-    return;
-  }
-
-  // $211B - M7A
-  case 0x211B: {
-    io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $211C - M7B
-  case 0x211C: {
-    io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $211D - M7C
-  case 0x211D: {
-    io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $211E - M7D
-  case 0x211E: {
-    io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $211F - M7X
-  case 0x211F: {
-    io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $2120 - M7Y
-  case 0x2120: {
-    io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
-    latch_.mode7 = data;
-    return;
-  }
-
-  // $2121 - CGADD (CGRAM address)
-  case 0x2121: {
-    io_.cgramAddress = data;
-    io_.cgramAddressLatch = false;
-    return;
-  }
-
-  // $2122 - CGDATA (CGRAM data write)
-  case 0x2122: {
-    if (!io_.cgramAddressLatch) {
-      io_.cgramAddressLatch = true;
-      latch_.cgram = data;
-    } else {
-      io_.cgramAddressLatch = false;
-      WriteCgram(io_.cgramAddress, static_cast<uint16_t>(data & 0x7F) << 8 | latch_.cgram);
-      io_.cgramAddress++;
+    // $2112 - BG3VOFS
+    case 0x2112: {
+        io_.bg3.voffset = static_cast<uint16_t>(
+            ((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+        latch_.ppu1.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG3VOFS data=%02X voffset=$%04X\n", currentLine_,
+                         data, io_.bg3.voffset);
+        }
+        return;
     }
-    return;
-  }
 
-  // $2123 - W12SEL (window mask settings for BG1/BG2)
-  case 0x2123: {
-    const IO before = io_;
-    io_.bg1.window.oneInvert = (data >> 0) & 1;
-    io_.bg1.window.oneEnable = (data >> 1) & 1;
-    io_.bg1.window.twoInvert = (data >> 2) & 1;
-    io_.bg1.window.twoEnable = (data >> 3) & 1;
-    io_.bg2.window.oneInvert = (data >> 4) & 1;
-    io_.bg2.window.oneEnable = (data >> 5) & 1;
-    io_.bg2.window.twoInvert = (data >> 6) & 1;
-    io_.bg2.window.twoEnable = (data >> 7) & 1;
-    RecordRasterEvent(RasterEventType::WindowSelect, 0, before);
-    return;
-  }
-
-  // $2124 - W34SEL (window mask settings for BG3/BG4)
-  case 0x2124: {
-    const IO before = io_;
-    io_.bg3.window.oneInvert = (data >> 0) & 1;
-    io_.bg3.window.oneEnable = (data >> 1) & 1;
-    io_.bg3.window.twoInvert = (data >> 2) & 1;
-    io_.bg3.window.twoEnable = (data >> 3) & 1;
-    io_.bg4.window.oneInvert = (data >> 4) & 1;
-    io_.bg4.window.oneEnable = (data >> 5) & 1;
-    io_.bg4.window.twoInvert = (data >> 6) & 1;
-    io_.bg4.window.twoEnable = (data >> 7) & 1;
-    RecordRasterEvent(RasterEventType::WindowSelect, 1, before);
-    return;
-  }
-
-  // $2125 - WOBJSEL (window mask settings for OBJ/color)
-  case 0x2125: {
-    const IO before = io_;
-    io_.obj.window.oneInvert = (data >> 0) & 1;
-    io_.obj.window.oneEnable = (data >> 1) & 1;
-    io_.obj.window.twoInvert = (data >> 2) & 1;
-    io_.obj.window.twoEnable = (data >> 3) & 1;
-    io_.col.window.oneInvert = (data >> 4) & 1;
-    io_.col.window.oneEnable = (data >> 5) & 1;
-    io_.col.window.twoInvert = (data >> 6) & 1;
-    io_.col.window.twoEnable = (data >> 7) & 1;
-    RecordRasterEvent(RasterEventType::WindowSelect, 2, before);
-    return;
-  }
-
-  // $2126 - WH0 (window 1 left position)
-  case 0x2126: {
-    const IO before = io_;
-    io_.window.oneLeft = data;
-    RecordRasterEvent(RasterEventType::Composition, 0x26, before);
-    return;
-  }
-
-  // $2127 - WH1 (window 1 right position)
-  case 0x2127: {
-    const IO before = io_;
-    io_.window.oneRight = data;
-    RecordRasterEvent(RasterEventType::Composition, 0x27, before);
-    return;
-  }
-
-  // $2128 - WH2 (window 2 left position)
-  case 0x2128: {
-    const IO before = io_;
-    io_.window.twoLeft = data;
-    RecordRasterEvent(RasterEventType::Composition, 0x28, before);
-    return;
-  }
-
-  // $2129 - WH3 (window 2 right position)
-  case 0x2129: {
-    const IO before = io_;
-    io_.window.twoRight = data;
-    RecordRasterEvent(RasterEventType::Composition, 0x29, before);
-    return;
-  }
-
-  // $212A - WBGLOG (window mask logic for BG layers)
-  case 0x212A: {
-    const IO before = io_;
-    io_.bg1.window.mask = (data >> 0) & 3;
-    io_.bg2.window.mask = (data >> 2) & 3;
-    io_.bg3.window.mask = (data >> 4) & 3;
-    io_.bg4.window.mask = (data >> 6) & 3;
-    RecordRasterEvent(RasterEventType::Composition, 0x2a, before);
-    return;
-  }
-
-  // $212B - WOBJLOG (window mask logic for OBJ/color)
-  case 0x212B: {
-    const IO before = io_;
-    io_.obj.window.mask = (data >> 0) & 3;
-    io_.col.window.mask = (data >> 2) & 3;
-    RecordRasterEvent(RasterEventType::Composition, 0x2b, before);
-    return;
-  }
-
-  // $212C - TM (main screen designation)
-  case 0x212C: {
-    const IO before = io_;
-    io_.bg1.aboveEnable = (data >> 0) & 1;
-    io_.bg2.aboveEnable = (data >> 1) & 1;
-    io_.bg3.aboveEnable = (data >> 2) & 1;
-    io_.bg4.aboveEnable = (data >> 3) & 1;
-    io_.obj.aboveEnable = (data >> 4) & 1;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] TM above bg=%u%u%u%u obj=%u\n", currentLine_,
-                   io_.bg4.aboveEnable ? 1 : 0, io_.bg3.aboveEnable ? 1 : 0,
-                   io_.bg2.aboveEnable ? 1 : 0, io_.bg1.aboveEnable ? 1 : 0,
-                   io_.obj.aboveEnable ? 1 : 0);
+    // $2113 - BG4HOFS
+    case 0x2113: {
+        io_.bg4.hoffset =
+            static_cast<uint16_t>(((static_cast<uint16_t>(data) << 8) | (latch_.ppu1.bgofs & ~7) |
+                                   (latch_.ppu2.bgofs & 7)) &
+                                  0x03FF);
+        latch_.ppu1.bgofs = data;
+        latch_.ppu2.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG4HOFS data=%02X hoffset=$%04X\n", currentLine_,
+                         data, io_.bg4.hoffset);
+        }
+        return;
     }
-    RecordRasterEvent(RasterEventType::Composition, 0x2c, before);
-    return;
-  }
 
-  // $212D - TS (sub screen designation)
-  case 0x212D: {
-    const IO before = io_;
-    io_.bg1.belowEnable = (data >> 0) & 1;
-    io_.bg2.belowEnable = (data >> 1) & 1;
-    io_.bg3.belowEnable = (data >> 2) & 1;
-    io_.bg4.belowEnable = (data >> 3) & 1;
-    io_.obj.belowEnable = (data >> 4) & 1;
-    if (PpuDebugEnabled()) {
-      std::fprintf(stderr, "[PPU-DBG l=%u] TS below bg=%u%u%u%u obj=%u\n", currentLine_,
-                   io_.bg4.belowEnable ? 1 : 0, io_.bg3.belowEnable ? 1 : 0,
-                   io_.bg2.belowEnable ? 1 : 0, io_.bg1.belowEnable ? 1 : 0,
-                   io_.obj.belowEnable ? 1 : 0);
+    // $2114 - BG4VOFS
+    case 0x2114: {
+        io_.bg4.voffset = static_cast<uint16_t>(
+            ((static_cast<uint16_t>(data) << 8) | latch_.ppu1.bgofs) & 0x03FF);
+        latch_.ppu1.bgofs = data;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] BG4VOFS data=%02X voffset=$%04X\n", currentLine_,
+                         data, io_.bg4.voffset);
+        }
+        return;
     }
-    RecordRasterEvent(RasterEventType::Composition, 0x2d, before);
-    return;
-  }
 
-  // $212E - TMW (window mask for main screen)
-  case 0x212E: {
-    const IO before = io_;
-    io_.bg1.window.aboveEnable = (data >> 0) & 1;
-    io_.bg2.window.aboveEnable = (data >> 1) & 1;
-    io_.bg3.window.aboveEnable = (data >> 2) & 1;
-    io_.bg4.window.aboveEnable = (data >> 3) & 1;
-    io_.obj.window.aboveEnable = (data >> 4) & 1;
-    RecordRasterEvent(RasterEventType::Composition, 0x2e, before);
-    return;
-  }
-
-  // $212F - TSW (window mask for sub screen)
-  case 0x212F: {
-    const IO before = io_;
-    io_.bg1.window.belowEnable = (data >> 0) & 1;
-    io_.bg2.window.belowEnable = (data >> 1) & 1;
-    io_.bg3.window.belowEnable = (data >> 2) & 1;
-    io_.bg4.window.belowEnable = (data >> 3) & 1;
-    io_.obj.window.belowEnable = (data >> 4) & 1;
-    RecordRasterEvent(RasterEventType::Composition, 0x2f, before);
-    return;
-  }
-
-  // $2130 - CGWSEL (color addition select)
-  case 0x2130: {
-    const IO before = io_;
-    io_.col.directColor = (data >> 0) & 1;
-    io_.col.blendMode = (data >> 1) & 1;
-    io_.col.window.belowMask = (data >> 4) & 3;
-    io_.col.window.aboveMask = (data >> 6) & 3;
-    RecordRasterEvent(RasterEventType::Composition, 0x30, before);
-    return;
-  }
-
-  // $2131 - CGADDSUB (color math designation)
-  case 0x2131: {
-    const IO before = io_;
-    io_.col.enable[Source::BG1] = (data >> 0) & 1;
-    io_.col.enable[Source::BG2] = (data >> 1) & 1;
-    io_.col.enable[Source::BG3] = (data >> 2) & 1;
-    io_.col.enable[Source::BG4] = (data >> 3) & 1;
-    io_.col.enable[Source::OBJ1] = false;
-    io_.col.enable[Source::OBJ2] = (data >> 4) & 1;
-    io_.col.enable[Source::COL] = (data >> 5) & 1;
-    io_.col.halve = (data >> 6) & 1;
-    io_.col.mathMode = (data >> 7) & 1;
-    RecordRasterEvent(RasterEventType::Composition, 0x31, before);
-    return;
-  }
-
-  // $2132 - COLDATA (fixed color data)
-  case 0x2132: {
-    const IO before = io_;
-    uint16_t intensity = data & 0x1F;
-    if (data & 0x20)
-      io_.col.fixedColor = (io_.col.fixedColor & 0b11111'11111'00000) | (intensity << 0);
-    if (data & 0x40)
-      io_.col.fixedColor = (io_.col.fixedColor & 0b11111'00000'11111) | (intensity << 5);
-    if (data & 0x80)
-      io_.col.fixedColor = (io_.col.fixedColor & 0b00000'11111'11111) | (intensity << 10);
-    RecordRasterEvent(RasterEventType::Composition, 0x32, before);
-    return;
-  }
-
-  // $2133 - SETINI (screen mode / scroll settings)
-  case 0x2133: {
-    const IO before = io_;
-    bool oldInterlace = io_.interlace;
-    bool oldObjInterlace = io_.obj.interlace;
-    bool oldOverscan = io_.overscan;
-    bool oldPseudoHires = io_.pseudoHires;
-    io_.interlace = (data >> 0) & 1;
-    io_.obj.interlace = (data >> 1) & 1;
-    io_.overscan = (data >> 2) & 1;
-    io_.pseudoHires = (data >> 3) & 1;
-    io_.extbg = (data >> 6) & 1;
-    UpdateVideoMode();
-    if (onVDisp_)
-      onVDisp_(VDisp());
-    if (PpuDebugEnabled() &&
-        (oldInterlace != io_.interlace || oldObjInterlace != io_.obj.interlace ||
-         oldOverscan != io_.overscan || oldPseudoHires != io_.pseudoHires)) {
-      std::fprintf(stderr,
-                   "[PPU-DBG l=%u] SETINI interlace=%u objInterlace=%u overscan=%u "
-                   "pseudoHires=%u extbg=%u\n",
-                   currentLine_, io_.interlace ? 1 : 0, io_.obj.interlace ? 1 : 0,
-                   io_.overscan ? 1 : 0, io_.pseudoHires ? 1 : 0, io_.extbg ? 1 : 0);
+    // $2115 - VMAIN (VRAM address increment mode)
+    case 0x2115: {
+        static constexpr uint16_t kIncrementSizes[4] = {1, 32, 128, 128};
+        io_.vramIncrementSize = kIncrementSizes[data & 3];
+        io_.vramMapping = (data >> 2) & 3;
+        io_.vramIncrementMode = (data >> 7) & 1;
+        return;
     }
-    RecordRasterEvent(RasterEventType::OutputMode, 0, before);
-    return;
-  }
 
-  } // switch
+    // $2116 - VMADDL (VRAM address low)
+    case 0x2116: {
+        io_.vramAddress = (io_.vramAddress & 0xFF00) | data;
+        latch_.vram = ReadVram();
+        return;
+    }
+
+    // $2117 - VMADDH (VRAM address high)
+    case 0x2117: {
+        io_.vramAddress = (io_.vramAddress & 0x00FF) | (static_cast<uint16_t>(data) << 8);
+        latch_.vram = ReadVram();
+        return;
+    }
+
+    // $2118 - VMDATAL (VRAM data write low)
+    case 0x2118: {
+        WriteVram(false, data);
+        if (!io_.vramIncrementMode)
+            io_.vramAddress += io_.vramIncrementSize;
+        return;
+    }
+
+    // $2119 - VMDATAH (VRAM data write high)
+    case 0x2119: {
+        WriteVram(true, data);
+        if (io_.vramIncrementMode)
+            io_.vramAddress += io_.vramIncrementSize;
+        return;
+    }
+
+    // $211A - M7SEL (Mode 7 settings)
+    case 0x211A: {
+        io_.mode7.hflip = (data >> 0) & 1;
+        io_.mode7.vflip = (data >> 1) & 1;
+        io_.mode7.repeat = (data >> 6) & 3;
+        return;
+    }
+
+    // $211B - M7A
+    case 0x211B: {
+        io_.mode7.a = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $211C - M7B
+    case 0x211C: {
+        io_.mode7.b = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $211D - M7C
+    case 0x211D: {
+        io_.mode7.c = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $211E - M7D
+    case 0x211E: {
+        io_.mode7.d = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $211F - M7X
+    case 0x211F: {
+        io_.mode7.x = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $2120 - M7Y
+    case 0x2120: {
+        io_.mode7.y = static_cast<uint16_t>(data) << 8 | latch_.mode7;
+        latch_.mode7 = data;
+        return;
+    }
+
+    // $2121 - CGADD (CGRAM address)
+    case 0x2121: {
+        io_.cgramAddress = data;
+        io_.cgramAddressLatch = false;
+        return;
+    }
+
+    // $2122 - CGDATA (CGRAM data write)
+    case 0x2122: {
+        if (!io_.cgramAddressLatch) {
+            io_.cgramAddressLatch = true;
+            latch_.cgram = data;
+        } else {
+            io_.cgramAddressLatch = false;
+            WriteCgram(io_.cgramAddress, static_cast<uint16_t>(data & 0x7F) << 8 | latch_.cgram);
+            io_.cgramAddress++;
+        }
+        return;
+    }
+
+    // $2123 - W12SEL (window mask settings for BG1/BG2)
+    case 0x2123: {
+        const IO before = io_;
+        io_.bg1.window.oneInvert = (data >> 0) & 1;
+        io_.bg1.window.oneEnable = (data >> 1) & 1;
+        io_.bg1.window.twoInvert = (data >> 2) & 1;
+        io_.bg1.window.twoEnable = (data >> 3) & 1;
+        io_.bg2.window.oneInvert = (data >> 4) & 1;
+        io_.bg2.window.oneEnable = (data >> 5) & 1;
+        io_.bg2.window.twoInvert = (data >> 6) & 1;
+        io_.bg2.window.twoEnable = (data >> 7) & 1;
+        RecordRasterEvent(RasterEventType::WindowSelect, 0, before);
+        return;
+    }
+
+    // $2124 - W34SEL (window mask settings for BG3/BG4)
+    case 0x2124: {
+        const IO before = io_;
+        io_.bg3.window.oneInvert = (data >> 0) & 1;
+        io_.bg3.window.oneEnable = (data >> 1) & 1;
+        io_.bg3.window.twoInvert = (data >> 2) & 1;
+        io_.bg3.window.twoEnable = (data >> 3) & 1;
+        io_.bg4.window.oneInvert = (data >> 4) & 1;
+        io_.bg4.window.oneEnable = (data >> 5) & 1;
+        io_.bg4.window.twoInvert = (data >> 6) & 1;
+        io_.bg4.window.twoEnable = (data >> 7) & 1;
+        RecordRasterEvent(RasterEventType::WindowSelect, 1, before);
+        return;
+    }
+
+    // $2125 - WOBJSEL (window mask settings for OBJ/color)
+    case 0x2125: {
+        const IO before = io_;
+        io_.obj.window.oneInvert = (data >> 0) & 1;
+        io_.obj.window.oneEnable = (data >> 1) & 1;
+        io_.obj.window.twoInvert = (data >> 2) & 1;
+        io_.obj.window.twoEnable = (data >> 3) & 1;
+        io_.col.window.oneInvert = (data >> 4) & 1;
+        io_.col.window.oneEnable = (data >> 5) & 1;
+        io_.col.window.twoInvert = (data >> 6) & 1;
+        io_.col.window.twoEnable = (data >> 7) & 1;
+        RecordRasterEvent(RasterEventType::WindowSelect, 2, before);
+        return;
+    }
+
+    // $2126 - WH0 (window 1 left position)
+    case 0x2126: {
+        const IO before = io_;
+        io_.window.oneLeft = data;
+        RecordRasterEvent(RasterEventType::Composition, 0x26, before);
+        return;
+    }
+
+    // $2127 - WH1 (window 1 right position)
+    case 0x2127: {
+        const IO before = io_;
+        io_.window.oneRight = data;
+        RecordRasterEvent(RasterEventType::Composition, 0x27, before);
+        return;
+    }
+
+    // $2128 - WH2 (window 2 left position)
+    case 0x2128: {
+        const IO before = io_;
+        io_.window.twoLeft = data;
+        RecordRasterEvent(RasterEventType::Composition, 0x28, before);
+        return;
+    }
+
+    // $2129 - WH3 (window 2 right position)
+    case 0x2129: {
+        const IO before = io_;
+        io_.window.twoRight = data;
+        RecordRasterEvent(RasterEventType::Composition, 0x29, before);
+        return;
+    }
+
+    // $212A - WBGLOG (window mask logic for BG layers)
+    case 0x212A: {
+        const IO before = io_;
+        io_.bg1.window.mask = (data >> 0) & 3;
+        io_.bg2.window.mask = (data >> 2) & 3;
+        io_.bg3.window.mask = (data >> 4) & 3;
+        io_.bg4.window.mask = (data >> 6) & 3;
+        RecordRasterEvent(RasterEventType::Composition, 0x2a, before);
+        return;
+    }
+
+    // $212B - WOBJLOG (window mask logic for OBJ/color)
+    case 0x212B: {
+        const IO before = io_;
+        io_.obj.window.mask = (data >> 0) & 3;
+        io_.col.window.mask = (data >> 2) & 3;
+        RecordRasterEvent(RasterEventType::Composition, 0x2b, before);
+        return;
+    }
+
+    // $212C - TM (main screen designation)
+    case 0x212C: {
+        const IO before = io_;
+        io_.bg1.aboveEnable = (data >> 0) & 1;
+        io_.bg2.aboveEnable = (data >> 1) & 1;
+        io_.bg3.aboveEnable = (data >> 2) & 1;
+        io_.bg4.aboveEnable = (data >> 3) & 1;
+        io_.obj.aboveEnable = (data >> 4) & 1;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] TM above bg=%u%u%u%u obj=%u\n", currentLine_,
+                         io_.bg4.aboveEnable ? 1 : 0, io_.bg3.aboveEnable ? 1 : 0,
+                         io_.bg2.aboveEnable ? 1 : 0, io_.bg1.aboveEnable ? 1 : 0,
+                         io_.obj.aboveEnable ? 1 : 0);
+        }
+        RecordRasterEvent(RasterEventType::Composition, 0x2c, before);
+        return;
+    }
+
+    // $212D - TS (sub screen designation)
+    case 0x212D: {
+        const IO before = io_;
+        io_.bg1.belowEnable = (data >> 0) & 1;
+        io_.bg2.belowEnable = (data >> 1) & 1;
+        io_.bg3.belowEnable = (data >> 2) & 1;
+        io_.bg4.belowEnable = (data >> 3) & 1;
+        io_.obj.belowEnable = (data >> 4) & 1;
+        if (PpuDebugEnabled()) {
+            std::fprintf(stderr, "[PPU-DBG l=%u] TS below bg=%u%u%u%u obj=%u\n", currentLine_,
+                         io_.bg4.belowEnable ? 1 : 0, io_.bg3.belowEnable ? 1 : 0,
+                         io_.bg2.belowEnable ? 1 : 0, io_.bg1.belowEnable ? 1 : 0,
+                         io_.obj.belowEnable ? 1 : 0);
+        }
+        RecordRasterEvent(RasterEventType::Composition, 0x2d, before);
+        return;
+    }
+
+    // $212E - TMW (window mask for main screen)
+    case 0x212E: {
+        const IO before = io_;
+        io_.bg1.window.aboveEnable = (data >> 0) & 1;
+        io_.bg2.window.aboveEnable = (data >> 1) & 1;
+        io_.bg3.window.aboveEnable = (data >> 2) & 1;
+        io_.bg4.window.aboveEnable = (data >> 3) & 1;
+        io_.obj.window.aboveEnable = (data >> 4) & 1;
+        RecordRasterEvent(RasterEventType::Composition, 0x2e, before);
+        return;
+    }
+
+    // $212F - TSW (window mask for sub screen)
+    case 0x212F: {
+        const IO before = io_;
+        io_.bg1.window.belowEnable = (data >> 0) & 1;
+        io_.bg2.window.belowEnable = (data >> 1) & 1;
+        io_.bg3.window.belowEnable = (data >> 2) & 1;
+        io_.bg4.window.belowEnable = (data >> 3) & 1;
+        io_.obj.window.belowEnable = (data >> 4) & 1;
+        RecordRasterEvent(RasterEventType::Composition, 0x2f, before);
+        return;
+    }
+
+    // $2130 - CGWSEL (color addition select)
+    case 0x2130: {
+        const IO before = io_;
+        io_.col.directColor = (data >> 0) & 1;
+        io_.col.blendMode = (data >> 1) & 1;
+        io_.col.window.belowMask = (data >> 4) & 3;
+        io_.col.window.aboveMask = (data >> 6) & 3;
+        RecordRasterEvent(RasterEventType::Composition, 0x30, before);
+        return;
+    }
+
+    // $2131 - CGADDSUB (color math designation)
+    case 0x2131: {
+        const IO before = io_;
+        io_.col.enable[Source::BG1] = (data >> 0) & 1;
+        io_.col.enable[Source::BG2] = (data >> 1) & 1;
+        io_.col.enable[Source::BG3] = (data >> 2) & 1;
+        io_.col.enable[Source::BG4] = (data >> 3) & 1;
+        io_.col.enable[Source::OBJ1] = false;
+        io_.col.enable[Source::OBJ2] = (data >> 4) & 1;
+        io_.col.enable[Source::COL] = (data >> 5) & 1;
+        io_.col.halve = (data >> 6) & 1;
+        io_.col.mathMode = (data >> 7) & 1;
+        RecordRasterEvent(RasterEventType::Composition, 0x31, before);
+        return;
+    }
+
+    // $2132 - COLDATA (fixed color data)
+    case 0x2132: {
+        const IO before = io_;
+        uint16_t intensity = data & 0x1F;
+        if (data & 0x20)
+            io_.col.fixedColor = (io_.col.fixedColor & 0b11111'11111'00000) | (intensity << 0);
+        if (data & 0x40)
+            io_.col.fixedColor = (io_.col.fixedColor & 0b11111'00000'11111) | (intensity << 5);
+        if (data & 0x80)
+            io_.col.fixedColor = (io_.col.fixedColor & 0b00000'11111'11111) | (intensity << 10);
+        RecordRasterEvent(RasterEventType::Composition, 0x32, before);
+        return;
+    }
+
+    // $2133 - SETINI (screen mode / scroll settings)
+    case 0x2133: {
+        const IO before = io_;
+        bool oldInterlace = io_.interlace;
+        bool oldObjInterlace = io_.obj.interlace;
+        bool oldOverscan = io_.overscan;
+        bool oldPseudoHires = io_.pseudoHires;
+        io_.interlace = (data >> 0) & 1;
+        io_.obj.interlace = (data >> 1) & 1;
+        io_.overscan = (data >> 2) & 1;
+        io_.pseudoHires = (data >> 3) & 1;
+        io_.extbg = (data >> 6) & 1;
+        UpdateVideoMode();
+        if (onVDisp_)
+            onVDisp_(VDisp());
+        if (PpuDebugEnabled() &&
+            (oldInterlace != io_.interlace || oldObjInterlace != io_.obj.interlace ||
+             oldOverscan != io_.overscan || oldPseudoHires != io_.pseudoHires)) {
+            std::fprintf(stderr,
+                         "[PPU-DBG l=%u] SETINI interlace=%u objInterlace=%u overscan=%u "
+                         "pseudoHires=%u extbg=%u\n",
+                         currentLine_, io_.interlace ? 1 : 0, io_.obj.interlace ? 1 : 0,
+                         io_.overscan ? 1 : 0, io_.pseudoHires ? 1 : 0, io_.extbg ? 1 : 0);
+        }
+        RecordRasterEvent(RasterEventType::OutputMode, 0, before);
+        return;
+    }
+
+    } // switch
 }
 
 // UpdateVideoMode - set tile modes + priority per BG mode
 //
 // Recompute background modes after display configuration changes.
 void Ppu::UpdateVideoMode() {
-  auto assign2 = [](uint8_t (&arr)[2], uint8_t a, uint8_t b) {
-    arr[0] = a;
-    arr[1] = b;
-  };
-  auto assign4 = [](uint8_t (&arr)[4], uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
-    arr[0] = a;
-    arr[1] = b;
-    arr[2] = c;
-    arr[3] = d;
-  };
+    auto assign2 = [](uint8_t (&arr)[2], uint8_t a, uint8_t b) {
+        arr[0] = a;
+        arr[1] = b;
+    };
+    auto assign4 = [](uint8_t (&arr)[4], uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+        arr[0] = a;
+        arr[1] = b;
+        arr[2] = c;
+        arr[3] = d;
+    };
 
-  switch (io_.bgMode) {
-  case 0:
-    io_.bg1.tileMode = TileMode::BPP2;
-    io_.bg2.tileMode = TileMode::BPP2;
-    io_.bg3.tileMode = TileMode::BPP2;
-    io_.bg4.tileMode = TileMode::BPP2;
-    assign2(io_.bg1.priority, 8, 11);
-    assign2(io_.bg2.priority, 7, 10);
-    assign2(io_.bg3.priority, 2, 5);
-    assign2(io_.bg4.priority, 1, 4);
-    assign4(io_.obj.priority, 3, 6, 9, 12);
-    break;
-  case 1:
-    io_.bg1.tileMode = TileMode::BPP4;
-    io_.bg2.tileMode = TileMode::BPP4;
-    io_.bg3.tileMode = TileMode::BPP2;
-    io_.bg4.tileMode = TileMode::Inactive;
-    if (io_.bgPriority) {
-      assign2(io_.bg1.priority, 5, 8);
-      assign2(io_.bg2.priority, 4, 7);
-      assign2(io_.bg3.priority, 1, 10);
-      assign4(io_.obj.priority, 2, 3, 6, 9);
-    } else {
-      assign2(io_.bg1.priority, 6, 9);
-      assign2(io_.bg2.priority, 5, 8);
-      assign2(io_.bg3.priority, 1, 3);
-      assign4(io_.obj.priority, 2, 4, 7, 10);
+    switch (io_.bgMode) {
+    case 0:
+        io_.bg1.tileMode = TileMode::BPP2;
+        io_.bg2.tileMode = TileMode::BPP2;
+        io_.bg3.tileMode = TileMode::BPP2;
+        io_.bg4.tileMode = TileMode::BPP2;
+        assign2(io_.bg1.priority, 8, 11);
+        assign2(io_.bg2.priority, 7, 10);
+        assign2(io_.bg3.priority, 2, 5);
+        assign2(io_.bg4.priority, 1, 4);
+        assign4(io_.obj.priority, 3, 6, 9, 12);
+        break;
+    case 1:
+        io_.bg1.tileMode = TileMode::BPP4;
+        io_.bg2.tileMode = TileMode::BPP4;
+        io_.bg3.tileMode = TileMode::BPP2;
+        io_.bg4.tileMode = TileMode::Inactive;
+        if (io_.bgPriority) {
+            assign2(io_.bg1.priority, 5, 8);
+            assign2(io_.bg2.priority, 4, 7);
+            assign2(io_.bg3.priority, 1, 10);
+            assign4(io_.obj.priority, 2, 3, 6, 9);
+        } else {
+            assign2(io_.bg1.priority, 6, 9);
+            assign2(io_.bg2.priority, 5, 8);
+            assign2(io_.bg3.priority, 1, 3);
+            assign4(io_.obj.priority, 2, 4, 7, 10);
+        }
+        break;
+    case 2:
+        io_.bg1.tileMode = TileMode::BPP4;
+        io_.bg2.tileMode = TileMode::BPP4;
+        io_.bg3.tileMode = TileMode::Inactive;
+        io_.bg4.tileMode = TileMode::Inactive;
+        assign2(io_.bg1.priority, 3, 7);
+        assign2(io_.bg2.priority, 1, 5);
+        assign4(io_.obj.priority, 2, 4, 6, 8);
+        break;
+    case 3:
+        io_.bg1.tileMode = TileMode::BPP8;
+        io_.bg2.tileMode = TileMode::BPP4;
+        io_.bg3.tileMode = TileMode::Inactive;
+        io_.bg4.tileMode = TileMode::Inactive;
+        assign2(io_.bg1.priority, 3, 7);
+        assign2(io_.bg2.priority, 1, 5);
+        assign4(io_.obj.priority, 2, 4, 6, 8);
+        break;
+    case 4:
+        io_.bg1.tileMode = TileMode::BPP8;
+        io_.bg2.tileMode = TileMode::BPP2;
+        io_.bg3.tileMode = TileMode::Inactive;
+        io_.bg4.tileMode = TileMode::Inactive;
+        assign2(io_.bg1.priority, 3, 7);
+        assign2(io_.bg2.priority, 1, 5);
+        assign4(io_.obj.priority, 2, 4, 6, 8);
+        break;
+    case 5:
+        io_.bg1.tileMode = TileMode::BPP4;
+        io_.bg2.tileMode = TileMode::BPP2;
+        io_.bg3.tileMode = TileMode::Inactive;
+        io_.bg4.tileMode = TileMode::Inactive;
+        assign2(io_.bg1.priority, 3, 7);
+        assign2(io_.bg2.priority, 1, 5);
+        assign4(io_.obj.priority, 2, 4, 6, 8);
+        break;
+    case 6:
+        io_.bg1.tileMode = TileMode::BPP4;
+        io_.bg2.tileMode = TileMode::Inactive;
+        io_.bg3.tileMode = TileMode::Inactive;
+        io_.bg4.tileMode = TileMode::Inactive;
+        assign2(io_.bg1.priority, 2, 5);
+        assign4(io_.obj.priority, 1, 3, 4, 6);
+        break;
+    case 7:
+        if (!io_.extbg) {
+            io_.bg1.tileMode = TileMode::Mode7;
+            io_.bg2.tileMode = TileMode::Inactive;
+            io_.bg3.tileMode = TileMode::Inactive;
+            io_.bg4.tileMode = TileMode::Inactive;
+            assign2(io_.bg1.priority, 2, 2); // Mode 7 has only 1 priority; set both same
+            assign4(io_.obj.priority, 1, 3, 4, 5);
+        } else {
+            io_.bg1.tileMode = TileMode::Mode7;
+            io_.bg2.tileMode = TileMode::Mode7;
+            io_.bg3.tileMode = TileMode::Inactive;
+            io_.bg4.tileMode = TileMode::Inactive;
+            assign2(io_.bg1.priority, 3, 3);
+            assign2(io_.bg2.priority, 1, 5);
+            assign4(io_.obj.priority, 2, 4, 6, 7);
+        }
+        break;
+    default:
+        break;
     }
-    break;
-  case 2:
-    io_.bg1.tileMode = TileMode::BPP4;
-    io_.bg2.tileMode = TileMode::BPP4;
-    io_.bg3.tileMode = TileMode::Inactive;
-    io_.bg4.tileMode = TileMode::Inactive;
-    assign2(io_.bg1.priority, 3, 7);
-    assign2(io_.bg2.priority, 1, 5);
-    assign4(io_.obj.priority, 2, 4, 6, 8);
-    break;
-  case 3:
-    io_.bg1.tileMode = TileMode::BPP8;
-    io_.bg2.tileMode = TileMode::BPP4;
-    io_.bg3.tileMode = TileMode::Inactive;
-    io_.bg4.tileMode = TileMode::Inactive;
-    assign2(io_.bg1.priority, 3, 7);
-    assign2(io_.bg2.priority, 1, 5);
-    assign4(io_.obj.priority, 2, 4, 6, 8);
-    break;
-  case 4:
-    io_.bg1.tileMode = TileMode::BPP8;
-    io_.bg2.tileMode = TileMode::BPP2;
-    io_.bg3.tileMode = TileMode::Inactive;
-    io_.bg4.tileMode = TileMode::Inactive;
-    assign2(io_.bg1.priority, 3, 7);
-    assign2(io_.bg2.priority, 1, 5);
-    assign4(io_.obj.priority, 2, 4, 6, 8);
-    break;
-  case 5:
-    io_.bg1.tileMode = TileMode::BPP4;
-    io_.bg2.tileMode = TileMode::BPP2;
-    io_.bg3.tileMode = TileMode::Inactive;
-    io_.bg4.tileMode = TileMode::Inactive;
-    assign2(io_.bg1.priority, 3, 7);
-    assign2(io_.bg2.priority, 1, 5);
-    assign4(io_.obj.priority, 2, 4, 6, 8);
-    break;
-  case 6:
-    io_.bg1.tileMode = TileMode::BPP4;
-    io_.bg2.tileMode = TileMode::Inactive;
-    io_.bg3.tileMode = TileMode::Inactive;
-    io_.bg4.tileMode = TileMode::Inactive;
-    assign2(io_.bg1.priority, 2, 5);
-    assign4(io_.obj.priority, 1, 3, 4, 6);
-    break;
-  case 7:
-    if (!io_.extbg) {
-      io_.bg1.tileMode = TileMode::Mode7;
-      io_.bg2.tileMode = TileMode::Inactive;
-      io_.bg3.tileMode = TileMode::Inactive;
-      io_.bg4.tileMode = TileMode::Inactive;
-      assign2(io_.bg1.priority, 2, 2); // Mode 7 has only 1 priority; set both same
-      assign4(io_.obj.priority, 1, 3, 4, 5);
-    } else {
-      io_.bg1.tileMode = TileMode::Mode7;
-      io_.bg2.tileMode = TileMode::Mode7;
-      io_.bg3.tileMode = TileMode::Inactive;
-      io_.bg4.tileMode = TileMode::Inactive;
-      assign2(io_.bg1.priority, 3, 3);
-      assign2(io_.bg2.priority, 1, 5);
-      assign4(io_.obj.priority, 2, 4, 6, 7);
-    }
-    break;
-  default:
-    break;
-  }
 }
 
 } // namespace snes::core

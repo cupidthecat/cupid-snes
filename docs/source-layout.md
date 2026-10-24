@@ -15,3 +15,17 @@ The core implementation is grouped by the hardware area it models:
 | `core/src/timing` | Master clock and video-region timing |
 
 Public headers remain under `core/include/snes/core`, so callers keep the same include paths. CMake lists the implementation files by subsystem. The frontend and command-line tools keep their own `src` folders because they are separate targets.
+
+Frontend services live under `frontend/src`:
+
+| Folder | Contents |
+| --- | --- |
+| `cheats` | Code decoding, application and per-game cheat documents |
+| `debug` | Physical/mapped memory inspection, RAM search, CPU stepping, breakpoints, disassembly and hardware snapshots |
+| `desktop` | Shared menus, modal tools, preferences/state editors and the application loop |
+| `input` | Keyboard/gamepad shortcuts and remapping |
+| `session` | Loaded media, machine ownership and replacement |
+| `settings` | Versioned preferences |
+| `storage` | Atomic files, battery/state storage and inspection exports |
+
+The SDL video, audio and input adapters sit directly under `frontend/src`. Tests use generated media and shared fixtures under `tests`. `tests/cmake/OptimizedChecks.cmake` and `tests/runner` support the bundled optimized configuration without changing individual check entry points.

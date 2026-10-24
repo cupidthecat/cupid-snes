@@ -28,7 +28,7 @@ A long DMA can advance several video fields before `StepFrame` returns. The core
 
 `snes_frame_pacing_tests` checks actual region and field lengths, fractional deadlines, delayed computation and presentation, and batched audio consumption with device-clock drift. `snes_sdl_video_tests` checks immediate and deferred rendering and resolution changes with SDL's dummy/software backend. These tests use synthetic samples and pictures; they do not measure physical display latency or GPU backbuffer behavior.
 
-A local SDL dummy-audio probe compared queue-only production with scheduled presentation markers. Each run measured 300 intervals after 20 warm-up frames, using a requested 48 kHz device, 32 kHz input and simulated computation taking 3–5 ms per frame. Queue-only intervals ranged from 3.002 to 25.839 ms, with 85 below 10 ms and 16 above 25 ms. Scheduled intervals ranged from 15.736 to 17.510 ms, with none outside those thresholds. Neither run needed an underrun refill. These are scheduler measurements from one run of each mode, not physical display measurements.
+A local SDL dummy-audio probe compared queue-only production with scheduled presentation markers. Each run measured 300 intervals after 20 warm-up frames, using a requested 48 kHz device, 32 kHz input and simulated computation taking 3 to 5 ms per frame. Queue-only intervals ranged from 3.002 to 25.839 ms, with 85 below 10 ms and 16 above 25 ms. Scheduled intervals ranged from 15.736 to 17.510 ms, with none outside those thresholds. Neither run needed an underrun refill. These are scheduler measurements from one run of each mode, not physical display measurements.
 
 ```powershell
 cmake --build --preset build-release

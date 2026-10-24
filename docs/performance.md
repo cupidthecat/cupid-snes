@@ -63,10 +63,10 @@ The 95th-percentile frame-time ranges below show both individual runs; they are 
 
 | Game | Baseline p95, ms | Changed p95, ms |
 | --- | ---: | ---: |
-| Super Mario World | 8.633–8.669 | 7.385–7.735 |
-| Kirby Super Star | 11.697–12.823 | 10.518–11.018 |
-| Super Mario RPG | 12.044–12.536 | 10.401–10.437 |
-| Super Mario All-Stars + Super Mario World | 8.079–10.020 | 7.147–8.585 |
+| Super Mario World | 8.633 to 8.669 | 7.385 to 7.735 |
+| Kirby Super Star | 11.697 to 12.823 | 10.518 to 11.018 |
+| Super Mario RPG | 12.044 to 12.536 | 10.401 to 10.437 |
+| Super Mario All-Stars + Super Mario World | 8.079 to 10.020 | 7.147 to 8.585 |
 
 Timing varied between runs. A preliminary unpaired Mario World run reached 49.001 ms for its slowest frame; the paired changed runs peaked at 9.433 and 11.562 ms. Mario RPG still reached 22.078 ms in one changed run. The reduced typical cost does not eliminate occasional spikes or establish the same performance on another machine.
 
