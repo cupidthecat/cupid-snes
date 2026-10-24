@@ -419,8 +419,8 @@ void HardwareDialog::Draw() {
         if (ImGui::SliderInt("Zoom", &displayZoom, 1, self.currentTab == 2 ? 32 : 4, "%dx"))
             (self.currentTab == 2 ? self.objectZoom : self.zoom) = displayZoom;
         ImGui::EndDisabled();
-        ImGui::TextWrapped("Playback is paused. Next frame advances one display field; game input "
-                           "stays captured by the tools.");
+        ImGui::TextWrapped("Playback is paused. Next frame advances one display field. Keyboard "
+                           "and pointer controls operate this window.");
         const auto footer = ImGui::GetFrameHeightWithSpacing() + (self.message.empty() ? 0 : 56);
         if (ImGui::BeginChild("Hardware content", {0, -footer}, ImGuiChildFlags_NavFlattened)) {
             if (ImGui::BeginTabBar("Hardware views")) {

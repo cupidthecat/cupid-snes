@@ -4,6 +4,8 @@ Open **Tools > Graphics Inspector** (Ctrl+Shift+V) or **Tools > Audio Inspector*
 
 The window pauses playback and takes a copy of the current hardware state. Opening views, changing previews, refreshing and exporting do not run the machine or read device ports. **Next frame** explicitly advances one display field and captures a new snapshot. Audio stays silent while the tools are open. Closing the window restores the previous pause state.
 
+Keyboard and pointer controls used by this window do not reach the game. Gamepad mappings remain available during explicit field advance, subject to the selected focus policy.
+
 ## Graphics
 
 The Palette tab shows all 256 CGRAM colors. Select an index with the slider or click a color. Copy color places its index and raw value on the clipboard. Colors use the stored five-bit channels; display brightness and color math are not applied.
