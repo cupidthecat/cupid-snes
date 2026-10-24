@@ -1,5 +1,12 @@
 #pragma once
 
+// archive_entry.h includes windows.h; keep its macros out of later C++ headers.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "snes/core/FilePath.hpp"
 #include "storage/ArchiveLocale.hpp"
 #include <archive.h>
