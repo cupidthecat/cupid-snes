@@ -45,9 +45,11 @@ struct Session::State {
     std::string cheatError;
     std::unique_ptr<MemoryTools> memory;
     std::unique_ptr<CpuDebugger> debugger;
+    std::unique_ptr<Playback> playback;
 };
 
 CpuDebugger& Session::DebugCpu() {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("The CPU debugger requires a loaded game");
     if (!state_->debugger)
@@ -67,6 +69,74 @@ core::Emulator* Session::Machine() const noexcept {
     return state_ ? state_->machine.get() : nullptr;
 }
 
+Playback& Session::EnsureTransport(State& state) {
+    if (!state.playback) {
+        auto playback = std::make_unique<Playback>(
+            *state.machine, outputs_.input,
+            [this](core::Emulator::PreparedStateRestore prepared,
+                   const core::StateOperation& operation) {
+                RestorePrepared(std::move(prepared), RestoreAction::Load, operation);
+            });
+        playback->ConfigureRewind(rewind_);
+        state.playback = std::move(playback);
+    }
+    return *state.playback;
+}
+
+Playback& Session::Transport() {
+    if (!state_)
+        throw std::runtime_error("Movie controls require a loaded game");
+    return EnsureTransport(*state_);
+}
+
+const Playback* Session::TransportIfCreated() const noexcept {
+    return state_ ? state_->playback.get() : nullptr;
+}
+
+core::FrameStepResult Session::StepFrame(const core::FrameStepOptions& options,
+                                         bool collectHistory) {
+    if (!state_)
+        throw std::runtime_error("Frame advance requires a loaded game");
+    return state_->playback ? state_->playback->StepFrame(options, collectHistory)
+                            : state_->machine->StepFrame(options);
+}
+
+std::array<uint8_t, 32> Session::MovieCheats() const {
+    if (!state_)
+        throw std::runtime_error("Movie controls require a loaded game");
+    const auto system = state_->machine->CheatsSystem();
+    return Playback::CheatIdentity(system, state_->cheats.Compile(system));
+}
+
+void Session::SetRewind(const Playback::RewindSettings& settings) {
+    // Validate before creating a live input wrapper or changing retained history.
+    Playback::ValidateRewind(settings);
+    if (state_ && (settings.interval || state_->playback))
+        EnsureTransport(*state_).ConfigureRewind(settings);
+    rewind_ = settings;
+}
+
+bool Session::Rewind(const core::StateOperation& operation) {
+    if (!state_ || !state_->playback || !state_->playback->Rewind(operation))
+        return false;
+    if (state_->debugger)
+        state_->debugger->Repositioned();
+    devices_ = state_->machine->GetAutoJoypad().Ports().Devices();
+    return true;
+}
+
+void Session::RequireEditable() const {
+    const auto* playback = TransportIfCreated();
+    if (playback && (playback->Recording() || playback->Replaying()))
+        throw std::runtime_error("Stop the movie before changing the machine or its settings");
+}
+
+void Session::RequireReplaceable() const {
+    RequireEditable();
+    if (const auto* playback = TransportIfCreated(); playback && playback->PendingMovie())
+        throw std::runtime_error("Save or discard the recorded movie before closing the game");
+}
+
 const LaunchRequest* Session::Loaded() const noexcept {
     return state_ ? &state_->request : nullptr;
 }
@@ -77,10 +147,15 @@ ConsoleDevices Session::Devices() const noexcept {
 
 void Session::SetDevices(const ConsoleDevices& devices) {
     devices.Validate();
+    if (devices == Devices())
+        return;
+    RequireEditable();
     if (auto* machine = Machine()) {
         ConfigurePorts(*machine, devices.ports, &devices_);
         if (devices.expansion != config_.expansionDevice)
             machine->SetExpansionDevice(devices.expansion);
+        if (state_->playback)
+            state_->playback->TimelineChanged();
     }
     devices_ = devices.ports;
     config_.expansionDevice = devices.expansion;
@@ -137,6 +212,7 @@ const StateStorage* Session::States() const noexcept {
 }
 
 void Session::SaveState(const std::filesystem::path& path, const core::StateOperation& operation) {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("Saving a state requires a loaded game");
     auto bytes = state_->machine->CaptureState(operation);
@@ -170,10 +246,18 @@ void Session::RedoState(const core::StateOperation& operation) {
 
 void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
                            const core::StateOperation& operation) {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("Loading a state requires a loaded game");
+    auto prepared = state_->machine->PrepareStateRestore(bytes, operation);
+    RestorePrepared(std::move(prepared), action, operation);
+    if (state_->playback)
+        state_->playback->TimelineChanged();
+}
+
+void Session::RestorePrepared(core::Emulator::PreparedStateRestore prepared, RestoreAction action,
+                              const core::StateOperation& operation) {
     auto& machine = *state_->machine;
-    auto prepared = machine.PrepareStateRestore(bytes, operation);
     auto previous = machine.CaptureState(operation);
     prepared.Commit();
     if (state_->debugger)
@@ -190,6 +274,7 @@ void Session::RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
 }
 
 void Session::Open(const LaunchRequest& request) {
+    RequireReplaceable();
     Flush();
     auto next = std::make_unique<State>();
     next->request = request;
@@ -238,6 +323,8 @@ void Session::Open(const LaunchRequest& request) {
     machine.AttachVideoOutput(outputs_.video);
     machine.AttachAudioOutput(outputs_.audio);
     machine.AttachInputProvider(outputs_.input);
+    if (rewind_.interval)
+        EnsureTransport(*next);
     state_ = std::move(next);
 }
 
@@ -261,6 +348,7 @@ std::filesystem::path Session::CheatPath() const {
 }
 
 void Session::SaveCheats(CheatBook book, bool replaceUnreadable) {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("Cheats require a loaded game");
     if (!state_->cheatError.empty() && !replaceUnreadable)
@@ -271,18 +359,24 @@ void Session::SaveCheats(CheatBook book, bool replaceUnreadable) {
     state_->machine->SetCheats(codes);
     state_->cheats = std::move(book);
     state_->cheatError.clear();
+    if (state_->playback)
+        state_->playback->TimelineChanged();
 }
 
 void Session::ReloadCheats() {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("Cheats require a loaded game");
     auto book = CheatStorage::Read(state_->cheatPath, state_->machine->CheatsSystem());
     state_->machine->SetCheats(book.Compile(state_->machine->CheatsSystem()));
     state_->cheats = std::move(book);
     state_->cheatError.clear();
+    if (state_->playback)
+        state_->playback->TimelineChanged();
 }
 
 MemoryTools& Session::InspectMemory() {
+    RequireEditable();
     if (!state_)
         throw std::runtime_error("Memory tools require a loaded game");
     if (!state_->memory)
@@ -291,6 +385,7 @@ MemoryTools& Session::InspectMemory() {
 }
 
 void Session::Close() {
+    RequireReplaceable();
     Flush();
     state_.reset();
 }
@@ -298,6 +393,7 @@ void Session::Close() {
 void Session::Reset(bool powerCycle) {
     if (!state_)
         return;
+    RequireEditable();
     if (powerCycle) {
         Flush();
     }
@@ -306,6 +402,8 @@ void Session::Reset(bool powerCycle) {
     }
     if (state_->debugger)
         state_->debugger->Repositioned();
+    if (state_->playback)
+        state_->playback->TimelineChanged();
 }
 
 } // namespace snes::frontend

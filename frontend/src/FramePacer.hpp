@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 
@@ -21,9 +22,11 @@ class FramePacer {
     }
 
     uint64_t Schedule(uint64_t now, uint64_t masterClocks, uint32_t clockHz,
-                      double queuedMilliseconds) {
+                      double queuedMilliseconds, double speed = 1.0) {
         if (clockHz == 0)
             throw std::invalid_argument("Frame clock frequency must be positive");
+        if (!std::isfinite(speed) || speed < 0.01 || speed > 100)
+            throw std::invalid_argument("Frame speed must be between 0.01 and 100");
         if (!active_) {
             active_ = true;
             deadline_ = now;
@@ -35,7 +38,8 @@ class FramePacer {
         queueError_ += (queuedMilliseconds - kTargetAudioQueueMilliseconds - queueError_) / 64.0;
         const double adjustment = 1.0 + std::clamp(queueError_ / 2000.0, -0.005, 0.005);
         const double period =
-            double(masterClocks) * 1'000'000'000.0 / clockHz * adjustment + fractionalNanoseconds_;
+            double(masterClocks) * 1'000'000'000.0 / clockHz / speed * adjustment +
+            fractionalNanoseconds_;
         const auto whole = static_cast<uint64_t>(period);
         fractionalNanoseconds_ = period - double(whole);
         periodNanoseconds_ = whole;

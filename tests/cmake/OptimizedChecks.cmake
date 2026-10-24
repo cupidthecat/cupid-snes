@@ -1,6 +1,9 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_playback_tests
+  snes_playback_application_tests
+  snes_deferred_state_capture_tests
   snes_hardware_inspection_tests
   snes_hardware_application_tests
   snes_disassembly_tests
@@ -81,6 +84,8 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_session_tests
   snes_state_storage_tests
   snes_input_frame_progress_tests
+  snes_input_journal_tests
+  snes_input_movie_tests
   snes_state_application_tests
   snes_battery_directory_tests
   snes_desktop_tests

@@ -127,6 +127,16 @@ Hotkeys::Hotkeys() {
     set(DesktopCommand::CpuDebugger, SDL_SCANCODE_D, KeyChord::Control | KeyChord::Shift);
     set(DesktopCommand::GraphicsInspector, SDL_SCANCODE_V, KeyChord::Control | KeyChord::Shift);
     set(DesktopCommand::AudioInspector, SDL_SCANCODE_A, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::MovieManager, SDL_SCANCODE_I, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::RecordMovie, SDL_SCANCODE_R, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::StopMovie, SDL_SCANCODE_S, KeyChord::Control | KeyChord::Shift);
+    set(DesktopCommand::Rewind, SDL_SCANCODE_BACKSPACE, KeyChord::Shift);
+    set(DesktopCommand::HoldRewind, SDL_SCANCODE_BACKSPACE);
+    set(DesktopCommand::HoldFastForward, SDL_SCANCODE_TAB);
+    set(DesktopCommand::HoldSlowMotion, SDL_SCANCODE_GRAVE);
+    set(DesktopCommand::FastForward, SDL_SCANCODE_TAB, KeyChord::Shift);
+    set(DesktopCommand::SlowMotion, SDL_SCANCODE_GRAVE, KeyChord::Shift);
+    set(DesktopCommand::NormalSpeed, SDL_SCANCODE_0, KeyChord::Control);
 }
 
 std::optional<DesktopCommand> Hotkeys::Match(const SDL_KeyboardEvent& key) const {
@@ -208,6 +218,7 @@ void Hotkeys::Validate() const {
 
 void GamepadHotkeyDispatcher::Synchronize(const Hotkeys& hotkeys) noexcept {
     down_ = Active(hotkeys);
+    held_.fill(false);
 }
 
 std::vector<DesktopCommand> GamepadHotkeyDispatcher::Process(const Hotkeys& hotkeys,
@@ -233,9 +244,14 @@ std::vector<DesktopCommand> GamepadHotkeyDispatcher::Process(const Hotkeys& hotk
         return {};
     std::vector<DesktopCommand> commands;
     const auto active = Active(hotkeys);
-    for (size_t command = 0; command < active.size(); ++command)
-        if (enabled && active[command] && !down_[command])
+    for (size_t command = 0; command < active.size(); ++command) {
+        if (!active[command] || !enabled)
+            held_[command] = false;
+        if (enabled && active[command] && !down_[command]) {
             commands.push_back(DesktopCommand(command));
+            held_[command] = IsHeldCommand(DesktopCommand(command));
+        }
+    }
     down_ = active;
     return commands;
 }
@@ -274,6 +290,11 @@ GamepadHotkeyDispatcher::Active(const Hotkeys& hotkeys) const noexcept {
 
 std::optional<DesktopCommand> HotkeyDispatcher::Process(const Hotkeys& hotkeys,
                                                         const SDL_KeyboardEvent& key) {
+    if (key.type == SDL_EVENT_KEY_UP) {
+        for (auto& held : held_)
+            if (held.scancode == key.scancode || (held.modifiers & OwnModifier(key.scancode)))
+                held = {};
+    }
     if (key.type == SDL_EVENT_KEY_DOWN) {
         if (key.repeat) {
             if (!OwnModifier(key.scancode))
@@ -281,11 +302,16 @@ std::optional<DesktopCommand> HotkeyDispatcher::Process(const Hotkeys& hotkeys,
             return {};
         }
         pendingModifier_.reset();
+        const auto command = hotkeys.Match(key);
+        if (command && IsHeldCommand(*command)) {
+            held_[size_t(*command)] = KeyChord::From(key);
+            return command;
+        }
         if (OwnModifier(key.scancode)) {
             pendingModifier_ = key;
             return {};
         }
-        return hotkeys.Match(key);
+        return command;
     }
     if (key.type == SDL_EVENT_KEY_UP && pendingModifier_ &&
         pendingModifier_->scancode == key.scancode) {

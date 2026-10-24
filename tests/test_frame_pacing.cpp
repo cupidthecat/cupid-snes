@@ -43,6 +43,24 @@ void ConsoleClockDeadlines() {
     }
 }
 
+void AlteredSpeedDeadlines() {
+    for (auto hz : {Timing::kMasterClockHz, Timing::kMasterClockHzPal})
+        for (double speed : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0}) {
+            FramePacer pacer;
+            uint64_t deadline = 1'000'000'000, clocks = 0;
+            pacer.Schedule(deadline, 0, hz, 60, speed);
+            for (unsigned frame = 0; frame < 600; ++frame) {
+                const auto elapsed = frame % 7 == 6 ? Timing::kMasterClocksPerFramePAL * 3ull
+                                                    : Timing::kMasterClocksPerFrameNTSC;
+                clocks += elapsed;
+                deadline = pacer.Schedule(deadline + 1000, elapsed, hz, 60, speed);
+                const double expected = double(clocks) * 1'000'000'000 / hz / speed;
+                Check(std::abs(double(deadline - 1'000'000'000) - expected) < 1.1,
+                      "Altered speed preserves every console clock and fractional deadline");
+            }
+        }
+}
+
 void StallsAndMultipleFields() {
     FramePacer pacer;
     const uint64_t epoch = 1'000'000'000;
@@ -268,6 +286,7 @@ void PreparationSpikesKeepAudioFed() {
 int main() {
     try {
         ConsoleClockDeadlines();
+        AlteredSpeedDeadlines();
         StallsAndMultipleFields();
         DelayedPresentation();
         DelayedComputation();

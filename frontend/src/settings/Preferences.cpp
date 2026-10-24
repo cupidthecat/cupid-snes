@@ -41,6 +41,14 @@ std::map<std::string, std::string> Fields(const Preferences& p) {
         {"path.saves", p.saveDirectory},
         {"path.states", p.stateDirectory},
         {"state.slot", std::to_string(p.stateSlot)},
+        {"playback.speed", std::to_string(p.speedPercent)},
+        {"playback.fast-forward", std::to_string(p.fastForwardPercent)},
+        {"playback.slow-motion", std::to_string(p.slowMotionPercent)},
+        {"playback.skip", std::to_string(p.fastForwardSkip)},
+        {"playback.mute", std::to_string(p.muteAlteredSpeed)},
+        {"rewind.interval", std::to_string(p.rewind.interval)},
+        {"rewind.states", std::to_string(p.rewind.states)},
+        {"rewind.mib", std::to_string(p.rewind.bytes / (1024 * 1024))},
         {"recent.count", std::to_string(p.recent.size())}};
     const auto keyboard = p.input.Keyboard();
     for (const auto& button : controllerButtons)
@@ -132,6 +140,12 @@ void Preferences::Validate() const {
     console.Validate();
     hotkeys.Validate();
     input.Validate();
+    Playback::ValidateRewind(rewind);
+    if (speedPercent < 25 || speedPercent > 200 ||
+        (fastForwardPercent && (fastForwardPercent < 200 || fastForwardPercent > 800)) ||
+        slowMotionPercent < 25 || slowMotionPercent > 75 || fastForwardSkip > 9 ||
+        rewind.bytes % (1024 * 1024))
+        throw std::invalid_argument("Playback preferences contain an unsupported setting");
     if (scale < 1 || scale > 6 || volume < 0 || volume > 200 || int(focus) < 0 || int(focus) > 2 ||
         recent.size() > recentLimit || stateSlot >= 10)
         throw std::invalid_argument("Preferences contain an unsupported setting");
@@ -235,6 +249,15 @@ Preferences PreferencesFile::Load() {
     p.saveDirectory = text("path.saves", "");
     p.stateDirectory = text("path.states", "");
     p.stateSlot = unsigned(number("state.slot", 0, 0, 9));
+    p.speedPercent = unsigned(number("playback.speed", p.speedPercent, 25, 200));
+    p.fastForwardPercent = unsigned(number("playback.fast-forward", p.fastForwardPercent, 0, 800));
+    p.slowMotionPercent = unsigned(number("playback.slow-motion", p.slowMotionPercent, 25, 75));
+    p.fastForwardSkip = unsigned(number("playback.skip", p.fastForwardSkip, 0, 9));
+    p.muteAlteredSpeed = number("playback.mute", p.muteAlteredSpeed, 0, 1);
+    p.rewind.interval = unsigned(number("rewind.interval", p.rewind.interval, 0, 600));
+    p.rewind.states = unsigned(number("rewind.states", p.rewind.states, 1, 320));
+    p.rewind.bytes =
+        size_t(number("rewind.mib", int(p.rewind.bytes / (1024 * 1024)), 1, 1024)) * 1024 * 1024;
     p.focus = FocusBehavior(number("input.focus", int(p.focus), 0, 2));
     p.input.turboFrequency = number("input.turbo-frequency", p.input.turboFrequency, 1, 8);
     for (size_t port = 0; port < p.console.ports.size(); ++port)

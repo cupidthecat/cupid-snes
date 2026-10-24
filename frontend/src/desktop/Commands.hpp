@@ -56,6 +56,16 @@ enum class DesktopCommand {
     CpuDebugger,
     GraphicsInspector,
     AudioInspector,
+    MovieManager,
+    RecordMovie,
+    StopMovie,
+    Rewind,
+    HoldRewind,
+    HoldFastForward,
+    HoldSlowMotion,
+    FastForward,
+    SlowMotion,
+    NormalSpeed,
     Count
 };
 
@@ -114,5 +124,20 @@ inline constexpr std::array<CommandDescription, size_t(DesktopCommand::Count)> d
      {"ram-search", "RAM search"},
      {"cpu-debugger", "CPU debugger"},
      {"graphics-inspector", "Graphics inspector"},
-     {"audio-inspector", "Audio inspector"}}};
+     {"audio-inspector", "Audio inspector"},
+     {"movie-manager", "Input movies"},
+     {"record-movie", "Record input movie"},
+     {"stop-movie", "Stop movie"},
+     {"rewind", "Rewind one checkpoint"},
+     {"hold-rewind", "Rewind while held"},
+     {"hold-fast-forward", "Fast forward while held"},
+     {"hold-slow-motion", "Slow motion while held"},
+     {"fast-forward", "Toggle fast forward"},
+     {"slow-motion", "Toggle slow motion"},
+     {"normal-speed", "Normal speed"}}};
+
+constexpr bool IsHeldCommand(DesktopCommand command) {
+    return command == DesktopCommand::HoldRewind || command == DesktopCommand::HoldFastForward ||
+           command == DesktopCommand::HoldSlowMotion;
+}
 } // namespace snes::frontend

@@ -3,7 +3,7 @@
 #include "snes/core/detail/StateArchive.hpp"
 
 namespace snes::core {
-void Timing::SerializeState(detail::StateArchive& archive) {
+uint64_t Timing::SerializeState(detail::StateArchive& archive) {
     archive.Expect(static_cast<uint8_t>(region_));
     archive.Expect(cpuRevision_);
     archive.Expect(renderCycle_);
@@ -41,6 +41,7 @@ void Timing::SerializeState(detail::StateArchive& archive) {
     archive.Number(hdmaFired_);
     archive.Number(renderCycleFired_);
     archive.Number(nmiFired_);
+    return elapsed;
 }
 
 void IrqController::SerializeState(detail::StateArchive& archive) {

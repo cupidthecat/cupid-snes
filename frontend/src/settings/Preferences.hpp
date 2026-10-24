@@ -4,6 +4,7 @@
 #include "input/Hotkeys.hpp"
 #include "input/InputBindings.hpp"
 #include "session/LaunchRequest.hpp"
+#include "session/Playback.hpp"
 #include <filesystem>
 #include <map>
 #include <string>
@@ -21,6 +22,10 @@ struct Preferences {
     FocusBehavior focus = FocusBehavior::Pause;
     std::string audioDevice, firmwareDirectory, screenshotDirectory, saveDirectory, stateDirectory;
     unsigned stateSlot = 0;
+    Playback::RewindSettings rewind;
+    unsigned speedPercent = 100, fastForwardPercent = 400, slowMotionPercent = 50;
+    unsigned fastForwardSkip = 0;
+    bool muteAlteredSpeed = true;
     InputBindings input;
     ConsoleDevices console;
     Hotkeys hotkeys;

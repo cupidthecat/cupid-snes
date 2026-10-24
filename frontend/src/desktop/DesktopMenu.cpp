@@ -18,6 +18,7 @@ struct DesktopMenu::Impl {
     std::map<SDL_JoystickID, std::string> gamepadKeys;
     bool loaded = false, paused = false;
     bool undo = false, redo = false;
+    bool recording = false, replaying = false, pending = false, fast = false, slow = false;
     unsigned stateSlot = 0;
 
     void Item(const char* label, DesktopCommand command, bool enabled = true,
@@ -79,11 +80,21 @@ void DesktopMenu::UpdateStates(unsigned slot, bool undo, bool redo) {
     impl_->redo = redo;
 }
 
+void DesktopMenu::UpdateTransport(bool recording, bool replaying, bool pending, bool fast,
+                                  bool slow) {
+    impl_->recording = recording;
+    impl_->replaying = replaying;
+    impl_->pending = pending;
+    impl_->fast = fast;
+    impl_->slow = slow;
+}
+
 void DesktopMenu::Draw(bool enabled) {
     auto& self = *impl_;
     if (!ImGui::BeginMainMenuBar())
         return;
     using C = DesktopCommand;
+    const bool editable = self.loaded && !self.recording && !self.replaying;
     if (ImGui::BeginMenu("File", enabled)) {
         self.Item("Open Game...", C::Open);
         self.Item("Open Super Game Boy...", C::OpenHandheld);
@@ -129,13 +140,17 @@ void DesktopMenu::Draw(bool enabled) {
     if (ImGui::BeginMenu("Game", enabled)) {
         self.Item("Pause", C::Pause, self.loaded, self.paused);
         self.Item("Frame Advance", C::FrameAdvance, self.loaded);
-        self.Item("Reset", C::Reset, self.loaded);
-        self.Item("Power Cycle", C::PowerCycle, self.loaded);
+        self.Item("Reset", C::Reset, editable);
+        self.Item("Power Cycle", C::PowerCycle, editable);
+        self.Item("Rewind One Checkpoint", C::Rewind, self.loaded);
+        self.Item("Fast Forward", C::FastForward, self.loaded, self.fast);
+        self.Item("Slow Motion", C::SlowMotion, self.loaded, self.slow);
+        self.Item("Normal Speed", C::NormalSpeed, self.loaded);
         ImGui::Separator();
         const auto save = "Save Quick State (" + std::to_string(self.stateSlot + 1) + ")";
         const auto load = "Load Quick State (" + std::to_string(self.stateSlot + 1) + ")";
-        self.Item(save.c_str(), C::QuickSave, self.loaded);
-        self.Item(load.c_str(), C::QuickLoad, self.loaded);
+        self.Item(save.c_str(), C::QuickSave, editable);
+        self.Item(load.c_str(), C::QuickLoad, editable);
         if (ImGui::BeginMenu("Quick Slot", self.loaded)) {
             for (unsigned slot = 0; slot < 10; ++slot) {
                 const auto label = std::to_string(slot + 1);
@@ -147,9 +162,9 @@ void DesktopMenu::Draw(bool enabled) {
             self.Item("Next Slot", C::NextSlot);
             ImGui::EndMenu();
         }
-        self.Item("State Manager...", C::StateManager, self.loaded);
-        self.Item("Undo State Load", C::UndoState, self.loaded && self.undo);
-        self.Item("Redo State Load", C::RedoState, self.loaded && self.redo);
+        self.Item("State Manager...", C::StateManager, editable);
+        self.Item("Undo State Load", C::UndoState, editable && self.undo);
+        self.Item("Redo State Load", C::RedoState, editable && self.redo);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View", enabled)) {
@@ -158,13 +173,18 @@ void DesktopMenu::Draw(bool enabled) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Tools", enabled)) {
-        self.Item("Cheats...", C::CheatEditor, self.loaded);
-        self.Item("Toggle Cheats", C::ToggleCheats, self.loaded);
-        self.Item("Memory...", C::MemoryViewer, self.loaded);
-        self.Item("RAM Search...", C::RamSearch, self.loaded);
-        self.Item("CPU Debugger...", C::CpuDebugger, self.loaded);
-        self.Item("Graphics Inspector...", C::GraphicsInspector, self.loaded);
-        self.Item("Audio Inspector...", C::AudioInspector, self.loaded);
+        self.Item("Input Movies...", C::MovieManager, self.loaded);
+        self.Item("Record Input Movie", C::RecordMovie, editable && !self.pending);
+        self.Item("Stop Movie", C::StopMovie,
+                  self.loaded && (self.recording || self.replaying || self.pending));
+        ImGui::Separator();
+        self.Item("Cheats...", C::CheatEditor, editable);
+        self.Item("Toggle Cheats", C::ToggleCheats, editable);
+        self.Item("Memory...", C::MemoryViewer, editable);
+        self.Item("RAM Search...", C::RamSearch, editable);
+        self.Item("CPU Debugger...", C::CpuDebugger, editable);
+        self.Item("Graphics Inspector...", C::GraphicsInspector, editable);
+        self.Item("Audio Inspector...", C::AudioInspector, editable);
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -190,6 +210,10 @@ std::optional<DesktopCommand> DesktopMenu::KeyCommand(const SDL_KeyboardEvent& k
 void DesktopMenu::ResetHotkeys() noexcept {
     impl_->dispatcher.Reset();
     impl_->gamepadDispatcher.Synchronize(impl_->hotkeys);
+}
+
+bool DesktopMenu::Held(DesktopCommand command) const noexcept {
+    return impl_->dispatcher.Held(command) || impl_->gamepadDispatcher.Held(command);
 }
 
 std::vector<DesktopCommand> DesktopMenu::GamepadCommands(const SDL_Event& event, bool enabled) {

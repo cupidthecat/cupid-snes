@@ -5,6 +5,7 @@
 #include "DesktopMenu.hpp"
 #include "HardwareDialog.hpp"
 #include "MemoryDialog.hpp"
+#include "MovieDialog.hpp"
 #include "PreferencesDialog.hpp"
 #include "StateManagerDialog.hpp"
 #include "snes/core/StateOperation.hpp"
@@ -31,6 +32,7 @@ class DesktopUi {
     MemoryDialog& MemoryEditor();
     CpuDebuggerDialog& CpuEditor();
     HardwareDialog& HardwareEditor();
+    MovieDialog& Movies();
     void SetStatus(std::string text);
     void ShowError(std::string text);
     bool ErrorOpen() const;

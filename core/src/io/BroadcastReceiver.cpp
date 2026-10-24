@@ -345,4 +345,14 @@ void BroadcastReceiver::SetTimeSource(std::function<BroadcastTime()> source) {
     impl_->timeSource = std::move(source);
 }
 
+std::function<BroadcastTime()> BroadcastReceiver::GetTimeSource() const {
+    return impl_->timeSource;
+}
+
+std::function<BroadcastTime()>
+BroadcastReceiver::ExchangeTimeSource(std::function<BroadcastTime()> source) noexcept {
+    impl_->timeSource.swap(source);
+    return source;
+}
+
 } // namespace snes::core

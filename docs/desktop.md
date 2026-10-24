@@ -4,6 +4,7 @@ See [cheats](cheats.md) for code formats, per-game files and the cheat editor.
 See [memory tools](memory-tools.md) for physical memory inspection, exports and RAM search.
 See [CPU debugging](cpu-debugger.md) for instruction stepping, breakpoints, watchpoints and traces.
 See [hardware inspection](hardware-inspection.md) for palette, tile, object and console DSP views.
+See [playback](playback.md) for input movies, rewind, speed settings and their shortcuts.
 
 Run `snes_frontend` without arguments to open an idle window. Ctrl+O opens a console cartridge. Dropping a cartridge file into the window opens it immediately. You can also pass a game path and controller or firmware options on the command line.
 

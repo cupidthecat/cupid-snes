@@ -37,7 +37,7 @@ Default player-one keys are arrows for the D-pad, Z/X for B/A, A/S for Y/X, Q/W 
 
 | Area | Details |
 | --- | --- |
-| Desktop and tools | [Controls, preferences and save states](docs/desktop.md), [cheats](docs/cheats.md), [memory and RAM search](docs/memory-tools.md), [CPU debugger](docs/cpu-debugger.md), [graphics/audio inspection](docs/hardware-inspection.md) |
+| Desktop and tools | [Controls, preferences and save states](docs/desktop.md), [movies, rewind and speed](docs/playback.md), [cheats](docs/cheats.md), [memory and RAM search](docs/memory-tools.md), [CPU debugger](docs/cpu-debugger.md), [graphics/audio inspection](docs/hardware-inspection.md) |
 | Games and cartridges | [Compatibility and saves](docs/compatibility.md), [hardware support](docs/original-hardware.md), [controllers and slots](docs/controllers-and-slots.md), [cartridge devices and regions](docs/cartridge-devices.md), [competition cartridges](docs/competition-cartridges.md) |
 | Graphics and timing | [Rendering and LoROM](docs/accuracy-notes.md), [background fetches](docs/background-fetch.md), [object fetches](docs/object-fetch.md), [PPU ports](docs/ppu-memory-ports.md), [light guns](docs/light-guns-and-raster.md), [DMA and S-DD1](docs/dma-video-and-sdd1.md) |
 | Cartridge processors | [Clocked processors](docs/clocked-cartridge-processors.md), [Cx4](docs/cx4.md), [SPC7110](docs/spc7110.md), [ST010](docs/st010.md), [ST018](docs/st018.md), [S-RTC](docs/srtc.md) |

@@ -76,6 +76,12 @@ void RoundTrip(const fs::path& directory) {
     preferences.firmwareDirectory = "spaces, \\slashes and\nnewlines";
     preferences.stateDirectory = "../states with spaces";
     preferences.stateSlot = 9;
+    preferences.rewind = {10, 37, size_t(64) * 1024 * 1024};
+    preferences.speedPercent = 75;
+    preferences.fastForwardPercent = 0;
+    preferences.slowMotionPercent = 25;
+    preferences.fastForwardSkip = 7;
+    preferences.muteAlteredSpeed = false;
     LaunchRequest request;
     request.kind = LaunchRequest::Kind::Campus92;
     request.paths = {"boot.sfc", "game1.sfc", "game2.sfc", "game3.sfc"};
@@ -85,6 +91,10 @@ void RoundTrip(const fs::path& directory) {
     file.Save(preferences);
     PreferencesFile fresh(path);
     const auto loaded = fresh.Load();
+    Check(loaded.rewind == preferences.rewind && loaded.speedPercent == 75 &&
+              loaded.fastForwardPercent == 0 && loaded.slowMotionPercent == 25 &&
+              loaded.fastForwardSkip == 7 && !loaded.muteAlteredSpeed,
+          "Movie, speed and bounded rewind preferences survive a new profile reader");
     Check(loaded.volume == 73 && loaded.scale == 5 && loaded.mute && loaded.aspectCorrection &&
               loaded.input == preferences.input && loaded.audioDevice == preferences.audioDevice &&
               loaded.firmwareDirectory == preferences.firmwareDirectory &&
@@ -162,6 +172,11 @@ void BadInput(const fs::path& directory) {
           "Cupid-SNES preferences 1\nrecent.count \"1\"\nrecent.0.kind \"1\"\nrecent.0.path0 "
           "\"bios.sfc\"\n",
           "Cupid-SNES preferences 1\naudio.volume \"10\"\naudio.volume \"20\"\n",
+          "Cupid-SNES preferences 1\nplayback.speed \"0\"\n",
+          "Cupid-SNES preferences 1\nplayback.fast-forward \"1\"\n",
+          "Cupid-SNES preferences 1\nplayback.slow-motion \"100\"\n",
+          "Cupid-SNES preferences 1\nrewind.mib \"0\"\n",
+          "Cupid-SNES preferences 1\nrewind.states \"321\"\n",
           "Cupid-SNES preferences 1\naudio.device \"unfinished"}) {
         Write(path, text);
         PreferencesFile file(path);

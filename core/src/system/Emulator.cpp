@@ -105,9 +105,9 @@ void Emulator::AttachInputProvider(IInputProvider* input) {
 }
 
 void Emulator::SetGameBoyTimeSource(std::function<uint64_t()> source) {
-    handheldTimeSource_ = std::move(source);
     if (cartridge_)
-        cartridge_->SetGameBoyTimeSource(handheldTimeSource_);
+        cartridge_->SetGameBoyTimeSource(source);
+    handheldTimeSource_ = std::move(source);
 }
 
 void Emulator::AddTraceSink(ITraceSink* sink) {

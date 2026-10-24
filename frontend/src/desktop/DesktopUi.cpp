@@ -77,6 +77,7 @@ struct DesktopUi::Impl {
     CheatDialog cheats;
     MemoryDialog memory;
     CpuDebuggerDialog cpu;
+    MovieDialog movies;
     std::unique_ptr<StateManagerDialog> states;
     std::unique_ptr<HardwareDialog> hardware;
     std::string status = "Ready", error;
@@ -147,7 +148,7 @@ void DesktopUi::Frame() {
     ImGui::NewFrame();
     self.menu.Draw(!self.stateActive && !self.preferences.Active() && !self.states->Active() &&
                    !self.cheats.Active() && !self.memory.Active() && !self.cpu.Active() &&
-                   !self.hardware->Active() && !self.errorOpen);
+                   !self.hardware->Active() && !self.movies.Active() && !self.errorOpen);
     const auto* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos({viewport->Pos.x, viewport->Pos.y + viewport->Size.y - BottomInset()});
     ImGui::SetNextWindowSize({viewport->Size.x, float(BottomInset())});
@@ -164,6 +165,7 @@ void DesktopUi::Frame() {
         self.memory.Draw();
         self.cpu.Draw();
         self.hardware->Draw();
+        self.movies.Draw();
     }
     if (self.errorOpening) {
         ImGui::OpenPopup("Cupid-SNES error");
@@ -229,7 +231,8 @@ bool DesktopUi::WantsKeyboard() const {
     impl_->Activate();
     return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
            impl_->cheats.Active() || impl_->memory.Active() || impl_->cpu.Active() ||
-           impl_->hardware->Active() || impl_->errorOpen || ImGui::GetIO().WantCaptureKeyboard ||
+           impl_->hardware->Active() || impl_->movies.Active() || impl_->errorOpen ||
+           ImGui::GetIO().WantCaptureKeyboard ||
            ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 }
 
@@ -237,11 +240,16 @@ bool DesktopUi::WantsPointer() const {
     impl_->Activate();
     return impl_->stateActive || impl_->preferences.Active() || impl_->states->Active() ||
            impl_->cheats.Active() || impl_->memory.Active() || impl_->cpu.Active() ||
-           impl_->hardware->Active() || impl_->errorOpen || ImGui::GetIO().WantCaptureMouse;
+           impl_->hardware->Active() || impl_->movies.Active() || impl_->errorOpen ||
+           ImGui::GetIO().WantCaptureMouse;
 }
 
 DesktopMenu& DesktopUi::Menu() {
     return impl_->menu;
+}
+
+MovieDialog& DesktopUi::Movies() {
+    return impl_->movies;
 }
 
 PreferencesDialog& DesktopUi::PreferencesEditor() {

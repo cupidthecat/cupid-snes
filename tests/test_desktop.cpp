@@ -54,6 +54,56 @@ void Shortcuts() {
     Check(!menu.KeyCommand(key), "Releasing a key does not execute a command");
 }
 
+void HeldShortcuts() {
+    using namespace snes::frontend;
+    DesktopMenu menu;
+    SDL_KeyboardEvent key{};
+    key.type = SDL_EVENT_KEY_DOWN;
+    key.scancode = SDL_SCANCODE_TAB;
+    Check(menu.KeyCommand(key) == DesktopCommand::HoldFastForward &&
+              menu.Held(DesktopCommand::HoldFastForward),
+          "Pressing a held shortcut activates it");
+    menu.ResetHotkeys();
+    key.repeat = true;
+    menu.KeyCommand(key);
+    Check(!menu.Held(DesktopCommand::HoldFastForward),
+          "Focus and UI capture clear held shortcuts until a fresh press");
+    key.type = SDL_EVENT_KEY_UP;
+    key.repeat = false;
+    menu.KeyCommand(key);
+    key.type = SDL_EVENT_KEY_DOWN;
+    menu.KeyCommand(key);
+    key.type = SDL_EVENT_KEY_UP;
+    menu.KeyCommand(key);
+    Check(!menu.Held(DesktopCommand::HoldFastForward), "Release ends a held shortcut");
+    Hotkeys hotkeys;
+    auto& chord = hotkeys.gamepads[size_t(DesktopCommand::HoldRewind)][0];
+    chord.controls[0] = {InputBinding::Kind::AxisPositive, SDL_GAMEPAD_AXIS_LEFT_TRIGGER};
+    GamepadHotkeyDispatcher dispatcher;
+    SDL_Event axis{};
+    axis.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    axis.gaxis.which = 1;
+    axis.gaxis.axis = SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
+    axis.gaxis.value = 20000;
+    dispatcher.Process(hotkeys, axis, "one");
+    Check(dispatcher.Held(DesktopCommand::HoldRewind), "A gamepad axis can hold rewind");
+    dispatcher.Process(hotkeys, axis, "one", false);
+    dispatcher.Process(hotkeys, axis, "one", true);
+    Check(!dispatcher.Held(DesktopCommand::HoldRewind),
+          "Captured gamepad holds require release to rearm");
+    axis.gaxis.value = 0;
+    dispatcher.Process(hotkeys, axis, "one");
+    axis.gaxis.value = 20000;
+    dispatcher.Process(hotkeys, axis, "one");
+    Check(dispatcher.Held(DesktopCommand::HoldRewind), "A fresh gamepad press rearms the hold");
+    axis = {};
+    axis.type = SDL_EVENT_GAMEPAD_REMOVED;
+    axis.gdevice.which = 1;
+    dispatcher.Process(hotkeys, axis, "one");
+    Check(!dispatcher.Held(DesktopCommand::HoldRewind),
+          "Disconnected gamepads release active holds");
+}
+
 void CustomShortcuts() {
     using snes::frontend::Hotkeys;
     using snes::frontend::KeyChord;
@@ -891,6 +941,7 @@ int main(int argc, char** argv) {
     int result = 0;
     try {
         Shortcuts();
+        HeldShortcuts();
         CustomShortcuts();
         ModifierShortcuts();
         GamepadShortcuts();
