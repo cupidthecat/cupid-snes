@@ -11,7 +11,7 @@ This is a work in progress. Passing focused hardware tests or displaying a game 
 
 ## Build
 
-Use CMake 3.25 or newer, Ninja and a C++20 compiler for the provided presets. CMake fetches missing SDL3 and Dear ImGui dependencies during the first configure.
+Use CMake 3.25 or newer, Ninja and a compiler toolchain supporting C and C++20 for the provided presets. CMake fetches missing SDL3, Dear ImGui and archive dependencies during the first configure.
 
 ```powershell
 cmake --preset release
@@ -29,7 +29,7 @@ Launch without arguments for the desktop, or pass a cartridge path:
 .\out\build\release\frontend\snes_frontend.exe "C:\path\to\game.sfc"
 ```
 
-Ctrl+O or a dropped file opens a game. P pauses, N advances one field, F2/F4 save/load the selected quick slot, F3 opens the state manager and F11 toggles fullscreen. Preferences remaps keyboard/gamepad controls and selects controllers, display/audio options, firmware and save paths. See [desktop controls](docs/desktop.md) for the complete shortcuts and save behavior.
+Ctrl+O or a dropped file opens a game, including ROMs inside ZIP, 7z, TAR and RAR archives. See [archive loading](docs/archive-loading.md) for selection and save behavior. P pauses, N advances one field, F2/F4 save/load the selected quick slot, F3 opens the state manager and F11 toggles fullscreen. Preferences remaps keyboard/gamepad controls and selects controllers, display/audio options, firmware and save paths. See [desktop controls](docs/desktop.md) for the complete shortcuts and save behavior.
 
 Default player-one keys are arrows for the D-pad, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start and Right Shift for Select. Both console ports default to gamepads; connected host gamepads fill player slots in connection order. Escape saves and quits.
 

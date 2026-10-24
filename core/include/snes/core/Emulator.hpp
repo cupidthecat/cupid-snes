@@ -113,14 +113,16 @@ class Emulator {
     void AddTraceSink(ITraceSink* sink);
     void RemoveTraceSink(ITraceSink* sink) noexcept;
 
-    bool LoadCartridge(std::span<const uint8_t> romData, std::string* error = nullptr);
+    bool LoadCartridge(std::span<const uint8_t> romData, std::string* error = nullptr,
+                       const std::string& sourcePath = {});
     bool LoadCartridgeFromFile(const std::string& path, std::string* error = nullptr);
     bool LoadSufamiTurbo(std::span<const uint8_t> bios, std::span<const uint8_t> slotA,
                          std::span<const uint8_t> slotB, std::string* error = nullptr);
     bool LoadSufamiTurboFromFiles(const std::string& bios, const std::string& slotA,
                                   const std::string& slotB, std::string* error = nullptr);
     bool LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
-                          std::span<const uint8_t> boot, std::string* error = nullptr);
+                          std::span<const uint8_t> boot, std::string* error = nullptr,
+                          const std::string& sourcePath = {});
     bool LoadSuperGameBoyFromFiles(const std::string& bios, const std::string& game,
                                    const std::string& boot, std::string* error = nullptr);
     bool LoadBroadcastCartridge(std::span<const uint8_t> base, std::span<const uint8_t> pack,
@@ -129,7 +131,7 @@ class Emulator {
                                          std::string* error = nullptr);
     bool LoadCompetitionCartridge(CompetitionBoard::Settings settings,
                                   const std::array<std::span<const uint8_t>, 4>& images,
-                                  std::string* error = nullptr);
+                                  std::string* error = nullptr, const std::string& sourcePath = {});
     bool LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings settings,
                                            const std::array<std::string, 4>& paths,
                                            std::string* error = nullptr);

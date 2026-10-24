@@ -1,4 +1,5 @@
 include(${PROJECT_SOURCE_DIR}/cmake/ImGui.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/Archive.cmake)
 find_package(Threads REQUIRED)
 
 add_library(snes_frontend_support STATIC
@@ -17,6 +18,7 @@ add_library(snes_frontend_support STATIC
   src/storage/BatteryStorage.cpp
   src/storage/StateStorage.cpp
   src/storage/InputMovie.cpp
+  src/storage/RomArchive.cpp
   src/settings/Preferences.cpp
   src/settings/ConsoleDevices.cpp
   src/input/Hotkeys.cpp
@@ -24,6 +26,7 @@ add_library(snes_frontend_support STATIC
   src/input/InputJournal.cpp
   src/session/Session.cpp
   src/session/Playback.cpp
+  src/session/GameAssets.cpp
   src/desktop/DesktopMenu.cpp
   src/desktop/CheatDialog.cpp
   src/desktop/MemoryDialog.cpp
@@ -34,10 +37,11 @@ add_library(snes_frontend_support STATIC
   src/desktop/PreferencesDialog.cpp
   src/desktop/StateManagerDialog.cpp
   src/desktop/MovieDialog.cpp
+  src/desktop/ArchiveDialog.cpp
   src/desktop/DesktopUi.cpp
 )
 target_include_directories(snes_frontend_support PUBLIC src)
-target_link_libraries(snes_frontend_support PUBLIC snes_core SDL3::SDL3 Threads::Threads)
+target_link_libraries(snes_frontend_support PUBLIC snes_core SDL3::SDL3 Threads::Threads snes_archive_library)
 target_link_libraries(snes_frontend_support PRIVATE snes_desktop_ui_library)
 if(WIN32)
   target_link_libraries(snes_frontend_support PRIVATE user32)
@@ -48,4 +52,6 @@ add_custom_command(TARGET snes_frontend POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:snes_frontend>/licenses
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${imgui_SOURCE_DIR}/LICENSE.txt
     $<TARGET_FILE_DIR:snes_frontend>/licenses/DearImGui.txt
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/archive-licenses
+    $<TARGET_FILE_DIR:snes_frontend>/licenses
 )

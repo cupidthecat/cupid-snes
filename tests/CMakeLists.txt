@@ -1,5 +1,14 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_archive_application_tests test_archive_application.cpp)
+target_link_libraries(snes_archive_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
+snes_add_check(snes_archive_application_tests snes_archive_application_tests)
+
+add_executable(snes_rom_archive_tests test_rom_archive.cpp)
+target_compile_definitions(snes_rom_archive_tests PRIVATE SNES_ARCHIVE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/archive")
+target_link_libraries(snes_rom_archive_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_rom_archive_tests snes_rom_archive_tests)
+
 add_executable(snes_playback_application_tests test_playback_application.cpp)
 target_link_libraries(snes_playback_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
 snes_add_check(snes_playback_application_tests snes_playback_application_tests)

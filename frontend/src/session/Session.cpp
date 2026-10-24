@@ -1,4 +1,5 @@
 #include "Session.hpp"
+#include "GameAssets.hpp"
 #include "snes/core/FilePath.hpp"
 #include "storage/BatteryStorage.hpp"
 
@@ -273,30 +274,45 @@ void Session::RestorePrepared(core::Emulator::PreparedStateRestore prepared, Res
     devices_ = machine.GetAutoJoypad().Ports().Devices();
 }
 
-void Session::Open(const LaunchRequest& request) {
+void Session::Open(const LaunchRequest& request, const core::StateOperation& operation) {
     RequireReplaceable();
+    auto plan = GameAssets::Resolve(request, operation);
+    if (!plan.Ready())
+        throw std::runtime_error("Archive contains multiple ROMs; select one before opening it");
+    const auto& launch = plan.request;
     Flush();
     auto next = std::make_unique<State>();
-    next->request = request;
+    next->request = launch;
     next->machine = std::make_unique<core::Emulator>(config_);
     auto& machine = *next->machine;
     ConfigurePorts(machine, devices_);
     using Kind = LaunchRequest::Kind;
-    const auto& paths = request.paths;
+    const auto& paths = launch.paths;
+    const bool archived = GameAssets::Archived(launch);
+    std::array<std::vector<uint8_t>, 4> images;
+    if (archived)
+        for (unsigned index = 0; index < images.size(); ++index)
+            images[index] = GameAssets::Read(launch, index, operation);
+    const auto origin = archived ? core::PathText(GameAssets::Origin(launch, 0)) : std::string{};
     std::string error;
     bool loaded = false;
     switch (request.kind) {
     case Kind::Cartridge:
-        loaded = machine.LoadCartridgeFromFile(paths[0], &error);
+        loaded = archived ? machine.LoadCartridge(images[0], &error, origin)
+                          : machine.LoadCartridgeFromFile(paths[0], &error);
         break;
     case Kind::Handheld:
-        loaded = machine.LoadSuperGameBoyFromFiles(paths[0], paths[1], paths[2], &error);
+        loaded = archived
+                     ? machine.LoadSuperGameBoy(images[0], images[1], images[2], &error, origin)
+                     : machine.LoadSuperGameBoyFromFiles(paths[0], paths[1], paths[2], &error);
         break;
     case Kind::SufamiTurbo:
-        loaded = machine.LoadSufamiTurboFromFiles(paths[0], paths[1], paths[2], &error);
+        loaded = archived ? machine.LoadSufamiTurbo(images[0], images[1], images[2], &error)
+                          : machine.LoadSufamiTurboFromFiles(paths[0], paths[1], paths[2], &error);
         break;
     case Kind::Broadcast:
-        loaded = machine.LoadBroadcastCartridgeFromFiles(paths[0], paths[1], &error);
+        loaded = archived ? machine.LoadBroadcastCartridge(images[0], images[1], &error)
+                          : machine.LoadBroadcastCartridgeFromFiles(paths[0], paths[1], &error);
         break;
     case Kind::Campus92:
     case Kind::PowerFest94: {
@@ -304,16 +320,22 @@ void Session::Open(const LaunchRequest& request) {
             request.kind == Kind::Campus92 ? core::CompetitionBoard::Board::CampusChallenge92
                                            : core::CompetitionBoard::Board::PowerFest94,
             request.competitionDip, 0x2000};
-        loaded = machine.LoadCompetitionCartridgeFromFiles(settings, paths, &error);
+        if (archived) {
+            std::array<std::span<const uint8_t>, 4> views;
+            for (unsigned index = 0; index < views.size(); ++index)
+                views[index] = images[index];
+            loaded = machine.LoadCompetitionCartridge(settings, views, &error, origin);
+        } else
+            loaded = machine.LoadCompetitionCartridgeFromFiles(settings, paths, &error);
         break;
     }
     }
     if (!loaded)
         throw std::runtime_error(error.empty() ? "Cannot load the selected cartridge" : error);
-    next->battery = std::make_unique<BatteryStorage>(request, machine, saveDirectory_);
+    next->battery = std::make_unique<BatteryStorage>(launch, machine, saveDirectory_);
     next->battery->Load(machine);
-    next->states = std::make_unique<StateStorage>(request, stateDirectory_);
-    next->cheatPath = StateStorage(request).Directory() / "cheats.ccht";
+    next->states = std::make_unique<StateStorage>(launch, stateDirectory_);
+    next->cheatPath = StateStorage(launch).Directory() / "cheats.ccht";
     try {
         next->cheats = CheatStorage::Read(next->cheatPath, machine.CheatsSystem());
         machine.SetCheats(next->cheats.Compile(machine.CheatsSystem()));

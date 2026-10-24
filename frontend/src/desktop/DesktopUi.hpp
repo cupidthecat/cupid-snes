@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ArchiveDialog.hpp"
 #include "CheatDialog.hpp"
 #include "CpuDebuggerDialog.hpp"
 #include "DesktopMenu.hpp"
@@ -33,6 +34,7 @@ class DesktopUi {
     CpuDebuggerDialog& CpuEditor();
     HardwareDialog& HardwareEditor();
     MovieDialog& Movies();
+    ArchiveDialog& Archives();
     void SetStatus(std::string text);
     void ShowError(std::string text);
     bool ErrorOpen() const;

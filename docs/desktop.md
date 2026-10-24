@@ -135,3 +135,7 @@ hotkey.pause.0.modifiers "3"
 ```
 
 A gamepad alternative uses `hotkey.<action>.<0..3>.pad.device` (`any` or a saved host identity), `.pad.threshold`, and `.pad.<0..3>.type`/`.control`. The four inner controls form a chord and use input types 0, 2, 3, or 4. Thresholds use the same range as player inputs.
+
+## Archive ROMs
+
+The file picker, dropped files and command-line startup accept ZIP, 7z, TAR, RAR and other supported archives. Single-ROM archives open directly; collections show a searchable ROM chooser. Recent games retain the chosen member. See [archive loading](archive-loading.md) for formats, save locations and sidecars.

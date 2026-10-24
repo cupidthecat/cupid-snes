@@ -49,13 +49,22 @@ void detail::CloseOwnedDialogs(SDL_Window* window) {
 }
 
 namespace {
-constexpr SDL_DialogFileFilter consoleFilters[] = {{"Console cartridges", "sfc;smc;bin"},
-                                                   {"All files", "*"}};
-constexpr SDL_DialogFileFilter handheldFilters[] = {{"Handheld cartridges", "gb;gbc;sgb"},
-                                                    {"All files", "*"}};
-constexpr SDL_DialogFileFilter bootFilters[] = {{"Boot firmware", "bin;rom"}, {"All files", "*"}};
-constexpr SDL_DialogFileFilter slotFilters[] = {{"Slot cartridges", "st;bs;sfc;smc;bin"},
-                                                {"All files", "*"}};
+constexpr SDL_DialogFileFilter consoleFilters[] = {
+    {"Console cartridges", "sfc;smc;bin;rom;fig;swc;7z;zip;tar;rar;tgz;tbz;tbz2;txz;tzst;gz;bz2;xz;"
+                           "lzma;zst;lz4;cab;cpio;pax;iso;xar;lha;lzh;ar"},
+    {"All files", "*"}};
+constexpr SDL_DialogFileFilter handheldFilters[] = {
+    {"Handheld cartridges", "gb;gbc;sgb;7z;zip;tar;rar;tgz;tbz;tbz2;txz;tzst;gz;bz2;xz;lzma;zst;"
+                            "lz4;cab;cpio;pax;iso;xar;lha;lzh;ar"},
+    {"All files", "*"}};
+constexpr SDL_DialogFileFilter bootFilters[] = {
+    {"Boot firmware", "bin;rom;7z;zip;tar;rar;tgz;tbz;tbz2;txz;tzst;gz;bz2;xz;lzma;zst;lz4;cab;"
+                      "cpio;pax;iso;xar;lha;lzh;ar"},
+    {"All files", "*"}};
+constexpr SDL_DialogFileFilter slotFilters[] = {
+    {"Slot cartridges", "st;bs;sfc;smc;bin;rom;7z;zip;tar;rar;tgz;tbz;tbz2;txz;tzst;gz;bz2;xz;lzma;"
+                        "zst;lz4;cab;cpio;pax;iso;xar;lha;lzh;ar"},
+    {"All files", "*"}};
 
 int Choice(SDL_Window* window, const char* message, const char* first, const char* second) {
     const SDL_MessageBoxButtonData buttons[] = {

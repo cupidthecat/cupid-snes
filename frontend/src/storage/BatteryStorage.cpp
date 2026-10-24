@@ -1,4 +1,5 @@
 #include "BatteryStorage.hpp"
+#include "session/GameAssets.hpp"
 #include "snes/core/FilePath.hpp"
 
 #include <stdexcept>
@@ -44,7 +45,10 @@ BatteryStorage::BatteryStorage(const LaunchRequest& request, core::Emulator& mac
     : kind_(request.kind) {
     std::array<std::filesystem::path, Count> paths;
     std::array<size_t, Count> sizes{};
-    const auto& source = request.paths;
+    auto source = request.paths;
+    for (unsigned index = 0; index < source.size(); ++index)
+        if (!request.archiveMembers[index].empty())
+            source[index] = core::PathText(GameAssets::SaveBase(request, index));
     const auto* cart = machine.LoadedCartridge();
     if (kind_ == LaunchRequest::Kind::Handheld) {
         paths[Ram] = Sidecar(source[1], ".sav", directory, true);

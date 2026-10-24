@@ -1,5 +1,6 @@
 #include "StateStorage.hpp"
 #include "AtomicFile.hpp"
+#include "session/GameAssets.hpp"
 #include "snes/core/FilePath.hpp"
 #include "snes/core/detail/Sha256.hpp"
 #include "snes/core/detail/StateDigest.hpp"
@@ -56,6 +57,13 @@ std::string Identity(const LaunchRequest& request) {
                                           std::filesystem::absolute(core::FilePath(path))));
         Put(bytes, normalized.size(), 8);
         bytes.insert(bytes.end(), normalized.begin(), normalized.end());
+    }
+    if (GameAssets::Archived(request)) {
+        bytes.push_back(0xa7);
+        for (const auto& member : request.archiveMembers) {
+            Put(bytes, member.size(), 8);
+            bytes.insert(bytes.end(), member.begin(), member.end());
+        }
     }
     std::string text;
     for (const auto byte : core::detail::Sha256(bytes)) {
@@ -179,7 +187,7 @@ StateStorage::StateStorage(const LaunchRequest& request, const std::filesystem::
         (request.kind == LaunchRequest::Kind::SufamiTurbo && !request.paths[1].empty() &&
          request.paths[1] != "-"))
         primary = 1;
-    const auto game = core::FilePath(request.paths[primary]);
+    const auto game = GameAssets::Origin(request, primary);
     std::string label;
     for (const unsigned char c : core::PathText(game.stem())) {
         if (label.size() == 24)

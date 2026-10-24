@@ -131,6 +131,10 @@ std::map<std::string, std::string> Fields(const Preferences& p) {
         result[prefix + "dip"] = std::to_string(p.recent[index].competitionDip);
         for (unsigned asset = 0; asset < 4; ++asset)
             result[prefix + "path" + std::to_string(asset)] = p.recent[index].paths[asset];
+        for (unsigned asset = 0; asset < 4; ++asset)
+            if (!p.recent[index].archiveMembers[asset].empty())
+                result[prefix + "member" + std::to_string(asset)] =
+                    p.recent[index].archiveMembers[asset];
     }
     return result;
 }
@@ -150,6 +154,12 @@ void Preferences::Validate() const {
         recent.size() > recentLimit || stateSlot >= 10)
         throw std::invalid_argument("Preferences contain an unsupported setting");
     for (const auto& request : recent) {
+        for (unsigned asset = 0; asset < request.paths.size(); ++asset) {
+            const auto& member = request.archiveMembers[asset];
+            if (member.size() > 4096 || member.find('\0') != std::string::npos ||
+                (!member.empty() && (request.paths[asset].empty() || request.paths[asset] == "-")))
+                throw std::invalid_argument("Recent archive contains an invalid ROM selection");
+        }
         if (int(request.kind) < 0 || request.kind > LaunchRequest::Kind::PowerFest94 ||
             request.paths[0].empty())
             throw std::invalid_argument("Recent game contains an invalid launch request");
@@ -382,6 +392,8 @@ Preferences PreferencesFile::Load() {
         request.competitionDip = uint8_t(number(prefix + "dip", 0, 0, 255));
         for (unsigned asset = 0; asset < 4; ++asset)
             request.paths[asset] = text(prefix + "path" + std::to_string(asset), "");
+        for (unsigned asset = 0; asset < 4; ++asset)
+            request.archiveMembers[asset] = text(prefix + "member" + std::to_string(asset), "");
         p.recent.push_back(std::move(request));
     }
     p.Validate();

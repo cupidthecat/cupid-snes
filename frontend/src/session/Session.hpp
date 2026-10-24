@@ -31,7 +31,7 @@ class Session {
     ~Session();
 
     // Failed replacement or save writes leave the current machine available.
-    void Open(const LaunchRequest& request);
+    void Open(const LaunchRequest& request, const core::StateOperation& operation = {});
     void Close();
     void Flush();
     void Reset(bool powerCycle = false);

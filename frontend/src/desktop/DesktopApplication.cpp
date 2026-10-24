@@ -6,6 +6,7 @@
 #include "SdlAudioOutput.hpp"
 #include "SdlInputProvider.hpp"
 #include "SdlVideoOutput.hpp"
+#include "session/GameAssets.hpp"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
 #include "storage/AtomicFile.hpp"
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace snes::frontend {
 namespace {
@@ -123,6 +125,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         bool hardwareActive = false, hardwareWasPaused = false;
         bool moviesActive = false, moviesWasPaused = false;
         std::filesystem::path moviePath;
+        std::optional<ArchivePlan> archivePlan;
+        bool archiveWasPaused = false;
         enum class SpeedMode { Normal, Fast, Slow };
         SpeedMode speedMode = SpeedMode::Normal;
         unsigned playbackRate = preferences.speedPercent, skippedPictures = 0;
@@ -138,7 +142,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             std::string title = "Cupid-SNES";
             if (const auto* request = session.Loaded()) {
                 const auto index = request->kind == LaunchRequest::Kind::Handheld ? 1 : 0;
-                title += " - " + core::PathText(core::FilePath(request->paths[index]).filename());
+                title += " - " + GameAssets::Label(*request, index);
             }
             if ((paused || focusPaused) && session.Machine())
                 title += " (Paused)";
@@ -358,10 +362,16 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             capturedState();
             return started;
         };
-        const auto open = [&](const LaunchRequest& request) {
+        const auto launch = [&](const LaunchRequest& request) {
             if (!saveMovie())
                 return;
-            session.Open(request);
+            if (GameAssets::Archived(request)) {
+                if (!runStateOperation("Loading archived ROM", true, [&](const auto& operation) {
+                        session.Open(request, operation);
+                    }))
+                    return;
+            } else
+                session.Open(request);
             moviePath.clear();
             input.ResetSampling();
             resetPresentation();
@@ -385,6 +395,29 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             } catch (const std::exception& error) {
                 report(error);
             }
+        };
+        const auto open = [&](const LaunchRequest& request) {
+            ArchivePlan plan;
+            const bool archived =
+                std::any_of(request.paths.begin(), request.paths.end(), [](const auto& path) {
+                    return RomArchive::Recognizes(core::FilePath(path));
+                });
+            if (archived) {
+                if (!runStateOperation("Opening archive", false, [&](const auto& operation) {
+                        plan = GameAssets::Resolve(request, operation);
+                    }))
+                    return;
+            } else
+                plan.request = request;
+            if (plan.Ready()) {
+                launch(plan.request);
+                return;
+            }
+            ui.Archives().Open(plan);
+            archivePlan = std::move(plan);
+            archiveWasPaused = paused;
+            steps = 0;
+            setPaused(true);
         };
         if (initial)
             open(*initial);
@@ -465,12 +498,12 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
 
         const auto execute = [&](DesktopCommand command) {
             try {
-                if (!running ||
-                    ((dialogs.Active() || ui.PreferencesEditor().Active() ||
-                      ui.StateManager().Active() || ui.CheatsEditor().Active() ||
-                      ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
-                      ui.HardwareEditor().Active() || ui.Movies().Active() || ui.ErrorOpen()) &&
-                     command != DesktopCommand::Quit))
+                if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() ||
+                                  ui.StateManager().Active() || ui.CheatsEditor().Active() ||
+                                  ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
+                                  ui.HardwareEditor().Active() || ui.Movies().Active() ||
+                                  ui.Archives().Active() || ui.ErrorOpen()) &&
+                                 command != DesktopCommand::Quit))
                     return;
                 using Command = DesktopCommand;
                 if (command >= Command::Recent0 && command <= Command::Recent9) {
@@ -783,7 +816,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                            !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
                            !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() &&
                            !ui.CpuEditor().Active() && !ui.HardwareEditor().Active() &&
-                           !ui.Movies().Active() && !ui.ErrorOpen()) {
+                           !ui.Movies().Active() && !ui.Archives().Active() && !ui.ErrorOpen()) {
                     try {
                         LaunchRequest request;
                         request.paths[0] = event.drop.data;
@@ -831,6 +864,19 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                     ui.PreferencesEditor().Applied();
                 } catch (const std::exception& error) {
                     ui.PreferencesEditor().Rejected(error.what());
+                }
+            }
+            if (const auto result = ui.Archives().TakeResult()) {
+                auto plan = std::exchange(archivePlan, {});
+                setPaused(archiveWasPaused);
+                input.ResetSampling();
+                if (plan && result->member) {
+                    plan->request.archiveMembers[plan->asset] = *result->member;
+                    try {
+                        open(plan->request);
+                    } catch (const std::exception& error) {
+                        report(error);
+                    }
                 }
             }
             if (const auto action = ui.Movies().TakeAction()) {
@@ -1149,7 +1195,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
                 ui.StateManager().Active() || ui.CheatsEditor().Active() ||
                 ui.MemoryEditor().Active() || ui.HardwareEditor().Active() ||
-                ui.Movies().Active() || ui.ErrorOpen()) {
+                ui.Movies().Active() || ui.Archives().Active() || ui.ErrorOpen()) {
                 if (uiFrame)
                     video.Redraw();
                 SDL_Delay(2);
