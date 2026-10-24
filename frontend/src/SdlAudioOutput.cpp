@@ -56,7 +56,8 @@ void SdlAudioOutput::SelectDevice(const std::string& name) {
         throw std::runtime_error(std::string("SDL_OpenAudioDeviceStream failed: ") +
                                  SDL_GetError());
     }
-    if (!SDL_SetAudioStreamGain(next, muted_ ? 0.0f : volume_ / 100.0f)) {
+    if (!SDL_SetAudioStreamGain(next, muted_ ? 0.0f : volume_ / 100.0f) ||
+        !SDL_SetAudioStreamFrequencyRatio(next, rate_ ? float(rate_) / 100 : 1.0f)) {
         const std::string error = SDL_GetError();
         SDL_DestroyAudioStream(next);
         throw std::runtime_error(error);
@@ -88,7 +89,7 @@ SdlAudioOutput::~SdlAudioOutput() {
 // IAudioOutput::Submit
 
 void SdlAudioOutput::Submit(const snes::core::AudioBuffer& buffer) {
-    if (!stream_)
+    if (!stream_ || !rate_)
         return;
     if (buffer.interleavedStereo.empty())
         return;
@@ -148,6 +149,20 @@ void SdlAudioOutput::SetVolume(int percent, bool muted) {
     muted_ = muted;
 }
 
+void SdlAudioOutput::SetRate(unsigned percent) {
+    if (percent && (percent < 25 || percent > 800))
+        throw std::invalid_argument("Audio speed must be 25 to 800 percent or uncapped");
+    if (percent == rate_)
+        return;
+    if (stream_ &&
+        !SDL_SetAudioStreamFrequencyRatio(stream_, percent ? float(percent) / 100 : 1.0f))
+        throw std::runtime_error(std::string("Cannot set audio speed: ") + SDL_GetError());
+    const bool resume = playbackRequested_;
+    Clear();
+    rate_ = percent;
+    playbackRequested_ = resume;
+}
+
 int SdlAudioOutput::QueuedBytes() const {
     const int bytes = stream_ ? SDL_GetAudioStreamQueued(stream_) : 0;
     if (bytes < 0) {
@@ -166,11 +181,14 @@ bool SdlAudioOutput::HasPendingOutput() const {
 }
 
 bool SdlAudioOutput::NeedsSamples() const {
-    return QueuedBytes() < targetQueuedBytes_;
+    return !rate_ || QueuedBytes() < (int64_t(targetQueuedBytes_) * rate_ + 99) / 100;
 }
 
 double SdlAudioOutput::QueuedMilliseconds() const {
-    return 1000.0 * QueuedBytes() / (sampleRate_ * 2 * sizeof(float));
+    if (!rate_)
+        return 0;
+    const double milliseconds = 1000.0 * QueuedBytes() / (sampleRate_ * 2 * sizeof(float));
+    return rate_ == 100 ? milliseconds : milliseconds * 100 / rate_;
 }
 
 void SdlAudioOutput::StartIfReady() {

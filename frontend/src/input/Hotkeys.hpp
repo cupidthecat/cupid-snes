@@ -45,12 +45,18 @@ class HotkeyDispatcher {
   public:
     std::optional<DesktopCommand> Process(const Hotkeys& hotkeys, const SDL_KeyboardEvent& key);
 
+    bool Held(DesktopCommand command) const noexcept {
+        return held_[size_t(command)].scancode != SDL_SCANCODE_UNKNOWN;
+    }
+
     void Reset() noexcept {
         pendingModifier_.reset();
+        held_.fill({});
     }
 
   private:
     std::optional<SDL_KeyboardEvent> pendingModifier_;
+    std::array<KeyChord, desktopCommands.size()> held_{};
 };
 
 class GamepadHotkeyDispatcher {
@@ -58,6 +64,10 @@ class GamepadHotkeyDispatcher {
     std::vector<DesktopCommand> Process(const Hotkeys& hotkeys, const SDL_Event& event,
                                         const std::string& device, bool enabled = true);
     void Synchronize(const Hotkeys& hotkeys) noexcept;
+
+    bool Held(DesktopCommand command) const noexcept {
+        return held_[size_t(command)];
+    }
 
   private:
     struct State {
@@ -68,6 +78,7 @@ class GamepadHotkeyDispatcher {
 
     std::map<SDL_JoystickID, State> states_;
     std::array<bool, desktopCommands.size()> down_{};
+    std::array<bool, desktopCommands.size()> held_{};
     std::array<bool, desktopCommands.size()> Active(const Hotkeys& hotkeys) const noexcept;
 };
 } // namespace snes::frontend

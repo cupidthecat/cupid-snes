@@ -14,6 +14,7 @@ class DesktopMenu {
     ~DesktopMenu();
     void Update(bool loaded, bool paused);
     void UpdateStates(unsigned slot, bool undo, bool redo);
+    void UpdateTransport(bool recording, bool replaying, bool pending, bool fast, bool slow);
     void SetRecent(std::span<const LaunchRequest> requests);
     void Draw(bool enabled = true);
     std::optional<DesktopCommand> TakeCommand();
@@ -21,6 +22,7 @@ class DesktopMenu {
     std::optional<DesktopCommand> KeyCommand(const SDL_KeyboardEvent& key);
     std::vector<DesktopCommand> GamepadCommands(const SDL_Event& event, bool enabled);
     void ResetHotkeys() noexcept;
+    bool Held(DesktopCommand command) const noexcept;
 
   private:
     struct Impl;

@@ -88,6 +88,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         Session session(std::move(config), {&video, &audio, &input}, devices);
         session.SetSaveDirectory(preferencesFile.ResolvePath(preferences.saveDirectory));
         session.SetStateDirectory(preferencesFile.ResolvePath(preferences.stateDirectory));
+        session.SetRewind(preferences.rewind);
+        audio.SetRate(preferences.speedPercent);
 
         struct SaveOnExit {
             Session& session;
@@ -119,6 +121,14 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         bool memoryActive = false, memoryWasPaused = false;
         bool cpuActive = false, cpuWasPaused = false;
         bool hardwareActive = false, hardwareWasPaused = false;
+        bool moviesActive = false, moviesWasPaused = false;
+        std::filesystem::path moviePath;
+        enum class SpeedMode { Normal, Fast, Slow };
+        SpeedMode speedMode = SpeedMode::Normal;
+        unsigned playbackRate = preferences.speedPercent, skippedPictures = 0;
+        bool presentPicture = true, wasRewinding = false;
+        uint64_t nextRewind = 0;
+        std::string historyError;
         bool errorActive = false, errorWasPaused = false;
         unsigned steps = 0;
         uint64_t presentationTime = 0;
@@ -132,8 +142,24 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             }
             if ((paused || focusPaused) && session.Machine())
                 title += " (Paused)";
+            if (session.Machine() && playbackRate != 100)
+                title +=
+                    playbackRate ? " [" + std::to_string(playbackRate) + "% speed]" : " [Uncapped]";
+            if (const auto* playback = session.TransportIfCreated()) {
+                if (playback->Recording())
+                    title += " [Recording]";
+                else if (playback->Replaying())
+                    title += " [Movie]";
+                else if (playback->PendingMovie())
+                    title += " [Recording not saved]";
+            }
             SDL_SetWindowTitle(video.Window(), title.c_str());
             menu.Update(session.Machine() != nullptr, paused);
+            const auto* playback = session.TransportIfCreated();
+            menu.UpdateTransport(playback && playback->Recording(),
+                                 playback && playback->Replaying(),
+                                 playback && playback->PendingMovie(), speedMode == SpeedMode::Fast,
+                                 speedMode == SpeedMode::Slow);
             menu.UpdateStates(preferences.stateSlot, session.CanUndoState(),
                               session.CanRedoState());
             ui.SetStatus(session.Machine() ? title : "Ready - Open a game from File");
@@ -152,6 +178,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             paused = value;
             resetPresentation();
             if (paused)
+                menu.ResetHotkeys();
+            if (paused)
                 SDL_SetWindowRelativeMouseMode(video.Window(), false);
             if (!paused && !focusPaused && session.Machine())
                 audio.Resume();
@@ -164,6 +192,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             errorActive = true;
             setPaused(true);
             ui.ShowError(error.what());
+            refresh();
         };
         const auto capturedState = [&] {
             video.PresentPending();
@@ -197,7 +226,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             input.SetEnabled(focused || preferences.focus == FocusBehavior::AllowInput);
             if (core::IsLightGun(devices[1]))
                 input.SetGunViewport(video.InputViewport(), focused);
-            const bool muted = preferences.mute || (preferences.muteUnfocused && !focused);
+            const bool muted = preferences.mute || (preferences.muteUnfocused && !focused) ||
+                               (preferences.muteAlteredSpeed && playbackRate != 100);
             if (audioMuted != muted) {
                 audio.SetVolume(preferences.volume, muted);
                 audioMuted = muted;
@@ -275,8 +305,64 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             finish(true);
             return true;
         };
+        const auto newMoviePath = [&] {
+            const auto directory = session.States()->Directory() / "movies";
+            auto path = directory / ("movie-" + std::to_string(SDL_GetTicksNS()) + ".cmv");
+            while (std::filesystem::exists(path))
+                path = directory / ("movie-" + std::to_string(SDL_GetTicksNS()) + ".cmv");
+            return path;
+        };
+        const auto saveMovie = [&](std::filesystem::path path = {}) {
+            const auto* current = session.TransportIfCreated();
+            if (!current)
+                return true;
+            auto& playback = session.Transport();
+            if (playback.Replaying()) {
+                playback.StopPlayback();
+                restoredState();
+                return true;
+            }
+            if (!playback.Recording() && !playback.PendingMovie())
+                return true;
+            if (path.empty())
+                path = moviePath.empty() ? newMoviePath() : moviePath;
+            const bool saved =
+                runStateOperation("Saving input movie", false, [&](const auto& operation) {
+                    if (playback.Recording())
+                        playback.FinishRecording(operation);
+                    playback.PendingMovie()->Write(path, operation);
+                    playback.DiscardPending();
+                });
+            capturedState();
+            if (saved) {
+                moviePath = std::move(path);
+                ui.SetStatus("Movie saved: " + core::PathText(moviePath));
+            }
+            return saved;
+        };
+        const auto startMovie = [&](bool reset) {
+            auto& playback = session.Transport();
+            if (playback.Recording() || playback.Replaying() || playback.PendingMovie())
+                throw std::runtime_error("Stop the movie and save or discard its recording first");
+            const auto path = newMoviePath();
+            if (reset) {
+                session.Reset();
+                restoredState();
+            }
+            const bool started =
+                runStateOperation("Starting input recording", false, [&](const auto& operation) {
+                    playback.Record(session.MovieCheats(), operation);
+                });
+            if (started)
+                moviePath = path;
+            capturedState();
+            return started;
+        };
         const auto open = [&](const LaunchRequest& request) {
+            if (!saveMovie())
+                return;
             session.Open(request);
+            moviePath.clear();
             input.ResetSampling();
             resetPresentation();
             video.ClearPicture();
@@ -312,6 +398,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         };
         const auto applyPreferences = [&](const Preferences& candidate) {
             candidate.Validate();
+            if (candidate.console != session.Devices())
+                session.RequireEditable();
             auto next = candidate;
             std::shared_ptr<const core::CartridgeFirmware> firmware;
             const bool changedFirmware = next.firmwareDirectory != preferences.firmwareDirectory;
@@ -364,6 +452,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 session.SetFirmware(std::move(firmware));
             const bool changedPorts = devices != next.console.ports;
             session.SetDevices(next.console);
+            session.SetRewind(next.rewind);
             devices = next.console.ports;
             if (changedPorts)
                 video.SetGunAim({}, 0);
@@ -376,11 +465,12 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
 
         const auto execute = [&](DesktopCommand command) {
             try {
-                if (!running || ((dialogs.Active() || ui.PreferencesEditor().Active() ||
-                                  ui.StateManager().Active() || ui.CheatsEditor().Active() ||
-                                  ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
-                                  ui.HardwareEditor().Active() || ui.ErrorOpen()) &&
-                                 command != DesktopCommand::Quit))
+                if (!running ||
+                    ((dialogs.Active() || ui.PreferencesEditor().Active() ||
+                      ui.StateManager().Active() || ui.CheatsEditor().Active() ||
+                      ui.MemoryEditor().Active() || ui.CpuEditor().Active() ||
+                      ui.HardwareEditor().Active() || ui.Movies().Active() || ui.ErrorOpen()) &&
+                     command != DesktopCommand::Quit))
                     return;
                 using Command = DesktopCommand;
                 if (command >= Command::Recent0 && command <= Command::Recent9) {
@@ -420,6 +510,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         dialogs.Cancel();
                         return;
                     }
+                    if (!saveMovie())
+                        return;
                     preferencesFile.Save(preferences);
                     session.Close();
                     resetPresentation();
@@ -451,8 +543,54 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         return;
                     }
                     switch (command) {
+                    case Command::FastForward:
+                        speedMode =
+                            speedMode == SpeedMode::Fast ? SpeedMode::Normal : SpeedMode::Fast;
+                        break;
+                    case Command::SlowMotion:
+                        speedMode =
+                            speedMode == SpeedMode::Slow ? SpeedMode::Normal : SpeedMode::Slow;
+                        break;
+                    case Command::NormalSpeed:
+                        speedMode = SpeedMode::Normal;
+                        if (preferences.speedPercent != 100) {
+                            auto next = preferences;
+                            next.speedPercent = 100;
+                            preferencesFile.Save(next);
+                            preferences.speedPercent = 100;
+                        }
+                        break;
+                    case Command::MovieManager:
+                        moviesWasPaused = paused;
+                        ui.Movies().Open(
+                            session.States()->Directory() / "movies",
+                            core::PathText(
+                                (moviePath.empty() ? newMoviePath() : moviePath).stem()));
+                        moviesActive = true;
+                        steps = 0;
+                        setPaused(true);
+                        break;
+                    case Command::RecordMovie:
+                        startMovie(false);
+                        break;
+                    case Command::StopMovie:
+                        saveMovie();
+                        break;
+                    case Command::Rewind: {
+                        bool rewound = false;
+                        if (runStateOperation("Rewinding", true,
+                                              [&](const auto& operation) {
+                                                  rewound = session.Rewind(operation);
+                                              }) &&
+                            rewound)
+                            restoredState();
+                        else
+                            ui.SetStatus("No earlier rewind checkpoint is available");
+                        break;
+                    }
                     case Command::GraphicsInspector:
                     case Command::AudioInspector:
+                        session.RequireEditable();
                         hardwareWasPaused = paused;
                         steps = 0;
                         setPaused(true);
@@ -500,6 +638,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         break;
                     }
                     case Command::CheatEditor:
+                        session.RequireEditable();
                         cheatsWasPaused = paused;
                         steps = 0;
                         setPaused(true);
@@ -553,6 +692,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         ui.SetStatus("State load redone");
                         break;
                     case Command::StateManager:
+                        session.RequireEditable();
                         statesWasPaused = paused;
                         steps = 0;
                         setPaused(true);
@@ -566,7 +706,10 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                         }
                         break;
                     case Command::Unload:
+                        if (!saveMovie())
+                            break;
                         session.Close();
+                        moviePath.clear();
                         resetPresentation();
                         paused = false;
                         steps = 0;
@@ -640,7 +783,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                            !ui.PreferencesEditor().Active() && !ui.StateManager().Active() &&
                            !ui.CheatsEditor().Active() && !ui.MemoryEditor().Active() &&
                            !ui.CpuEditor().Active() && !ui.HardwareEditor().Active() &&
-                           !ui.ErrorOpen()) {
+                           !ui.Movies().Active() && !ui.ErrorOpen()) {
                     try {
                         LaunchRequest request;
                         request.paths[0] = event.drop.data;
@@ -661,6 +804,11 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
             const auto uiNow = SDL_GetTicksNS();
             const bool uiFrame = uiNow >= nextUiFrame;
             if (uiFrame) {
+                const auto* playback = session.TransportIfCreated();
+                ui.Movies().Update(
+                    playback && playback->Recording(), playback && playback->Replaying(),
+                    playback && playback->PendingMovie(), playback ? playback->Failure() : nullptr,
+                    playback ? playback->Position() : 0);
                 ui.Frame();
                 nextUiFrame = uiNow + 16'000'000;
             }
@@ -684,6 +832,50 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 } catch (const std::exception& error) {
                     ui.PreferencesEditor().Rejected(error.what());
                 }
+            }
+            if (const auto action = ui.Movies().TakeAction()) {
+                try {
+                    bool completed = true;
+                    auto& playback = session.Transport();
+                    using Kind = MovieDialog::Action::Kind;
+                    switch (action->kind) {
+                    case Kind::Record:
+                    case Kind::RecordReset:
+                        completed = startMovie(action->kind == Kind::RecordReset);
+                        break;
+                    case Kind::Stop:
+                    case Kind::Save:
+                        completed = saveMovie(action->path);
+                        break;
+                    case Kind::Discard:
+                        playback.DiscardRecording();
+                        playback.DiscardPending();
+                        refresh();
+                        break;
+                    case Kind::Play:
+                        completed = runStateOperation(
+                            "Loading input movie", true, [&](const auto& operation) {
+                                auto movie = std::make_shared<const InputMovie>(
+                                    InputMovie::Read(action->path, operation));
+                                playback.Play(std::move(movie), session.MovieCheats(), operation);
+                            });
+                        if (completed)
+                            restoredState();
+                        break;
+                    }
+                    if (completed)
+                        ui.Movies().Completed();
+                    else
+                        ui.Movies().Rejected("Movie operation cancelled. A completed recording "
+                                             "remains available for retry.");
+                } catch (const std::exception& error) {
+                    ui.Movies().Rejected(error.what());
+                }
+            }
+            if (moviesActive && !ui.Movies().Active()) {
+                moviesActive = false;
+                input.ResetSampling();
+                setPaused(moviesWasPaused);
             }
             if (auto changes = ui.CheatsEditor().TakeChanges()) {
                 try {
@@ -743,7 +935,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 try {
                     if (stepHardware) {
                         input.SetUiCapture(true, true);
-                        session.Machine()->StepFrame();
+                        session.StepFrame({}, false);
                         resetPresentation();
                     }
                     ui.HardwareEditor().Updated(HardwareSnapshot::Capture(*session.Machine()));
@@ -902,8 +1094,34 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 continue;
             }
             auto* emulator = session.Machine();
+            const bool fast =
+                menu.Held(DesktopCommand::HoldFastForward) ||
+                (!menu.Held(DesktopCommand::HoldSlowMotion) && speedMode == SpeedMode::Fast);
+            const bool slow = !fast && (menu.Held(DesktopCommand::HoldSlowMotion) ||
+                                        speedMode == SpeedMode::Slow);
+            const unsigned rate = fast   ? preferences.fastForwardPercent
+                                  : slow ? preferences.slowMotionPercent
+                                         : preferences.speedPercent;
+            if (playbackRate != rate) {
+                audio.SetRate(rate);
+                playbackRate = rate;
+                pacer.Reset();
+                picturePending = false;
+                skippedPictures = 0;
+                refresh();
+            }
             const bool focused = updateFocus(false);
             input.SetUiCapture(ui.WantsKeyboard(), ui.WantsPointer());
+            if (!focused || ui.WantsKeyboard() || ui.WantsPointer())
+                menu.ResetHotkeys();
+            if (uiFrame && session.TransportIfCreated()) {
+                const auto history = session.Transport().History();
+                if (history.error != historyError) {
+                    historyError = history.error;
+                    if (!historyError.empty())
+                        ui.SetStatus("Rewind unavailable: " + historyError);
+                }
+            }
             if (ui.CpuEditor().Active()) {
                 auto& debugger = ui.CpuEditor().Model();
                 if (!focusPaused && !ui.ErrorOpen() &&
@@ -930,8 +1148,53 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 SDL_SetWindowRelativeMouseMode(video.Window(), capture);
             if (!emulator || dialogs.Active() || ui.PreferencesEditor().Active() ||
                 ui.StateManager().Active() || ui.CheatsEditor().Active() ||
-                ui.MemoryEditor().Active() || ui.HardwareEditor().Active() || ui.ErrorOpen() ||
-                ((paused || focusPaused) && !steps)) {
+                ui.MemoryEditor().Active() || ui.HardwareEditor().Active() ||
+                ui.Movies().Active() || ui.ErrorOpen()) {
+                if (uiFrame)
+                    video.Redraw();
+                SDL_Delay(2);
+                continue;
+            }
+            if (!focusPaused && menu.Held(DesktopCommand::HoldRewind)) {
+                if (!wasRewinding) {
+                    wasRewinding = true;
+                    nextRewind = 0;
+                    resetPresentation();
+                }
+                const auto now = SDL_GetTicksNS();
+                if (now >= nextRewind) {
+                    try {
+                        const auto before = emulator->CurrentMasterCycles();
+                        if (session.Rewind()) {
+                            const auto clocks = before - emulator->CurrentMasterCycles();
+                            restoredState();
+                            ui.SetStatus("Rewinding - field " +
+                                         std::to_string(emulator->CurrentFrame()));
+                            nextRewind = SDL_GetTicksNS() +
+                                         uint64_t(double(clocks) * 1'000'000'000.0 /
+                                                  emulator->GetTiming().MasterClockHz() / 4);
+                        } else {
+                            ui.SetStatus("No earlier rewind checkpoint is available");
+                            nextRewind = now + 50'000'000;
+                        }
+                    } catch (const std::exception& error) {
+                        report(error);
+                    }
+                }
+                if (uiFrame)
+                    video.Redraw();
+                SDL_Delay(1);
+                continue;
+            }
+            if (wasRewinding) {
+                wasRewinding = false;
+                resetPresentation();
+                input.ResetSampling();
+                if (!paused && !focusPaused)
+                    audio.Resume();
+                refresh();
+            }
+            if ((paused || focusPaused) && !steps) {
                 if (uiFrame)
                     video.Redraw();
                 SDL_Delay(2);
@@ -943,7 +1206,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                     SDL_DelayPrecise(std::min<uint64_t>(presentationTime - now, 2'000'000));
                     continue;
                 }
-                video.PresentPending();
+                if (presentPicture)
+                    video.PresentPending();
                 pacer.Presented(SDL_GetTicksNS());
                 picturePending = false;
                 continue;
@@ -961,18 +1225,35 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 video.SetGunAim(aim, count);
             }
             const auto before = emulator->CurrentMasterCycles();
-            const auto result = emulator->StepFrame();
+            try {
+                session.StepFrame({}, !paused && !focusPaused);
+            } catch (const std::exception& error) {
+                report(error);
+                continue;
+            }
+            presentPicture = !fast || skippedPictures++ % (preferences.fastForwardSkip + 1) == 0;
+            if (const auto* playback = session.TransportIfCreated();
+                playback && playback->Status() == Playback::Mode::Finished) {
+                setPaused(true);
+                steps = 0;
+                video.PresentPending();
+                ui.SetStatus("Movie playback finished. Stop the movie to resume live input.");
+                continue;
+            }
             if (paused || focusPaused) {
                 --steps;
                 video.PresentPending();
                 audio.Clear();
-            } else if (audio.IsPlaying()) {
-                presentationTime = pacer.Schedule(SDL_GetTicksNS(), result.masterCycles - before,
-                                                  emulator->GetTiming().MasterClockHz(),
-                                                  audio.QueuedMilliseconds());
+            } else if (playbackRate && (audio.IsPlaying() || playbackRate != 100)) {
+                presentationTime =
+                    pacer.Schedule(SDL_GetTicksNS(), emulator->CurrentMasterCycles() - before,
+                                   emulator->GetTiming().MasterClockHz(),
+                                   audio.QueuedMilliseconds(), double(playbackRate) / 100);
                 picturePending = true;
             } else {
                 pacer.Reset();
+                if (!playbackRate && presentPicture)
+                    video.PresentPending();
             }
             if (emulator->CurrentFrame() % 300 == 0) {
                 try {

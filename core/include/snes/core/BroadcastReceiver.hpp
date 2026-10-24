@@ -36,6 +36,9 @@ class BroadcastReceiver {
     bool LoadStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> payload);
     void ClearStreams();
     void SetTimeSource(std::function<BroadcastTime()> source);
+    std::function<BroadcastTime()> GetTimeSource() const;
+    std::function<BroadcastTime()>
+    ExchangeTimeSource(std::function<BroadcastTime()> source) noexcept;
 
   private:
     struct Impl;

@@ -2,6 +2,7 @@
 
 #include "SdlAudioOutput.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <exception>
 
@@ -134,6 +135,34 @@ void SwitchPlaybackDevice() {
         Expect(WaitForDrain(audio), "enumerated output devices can be selected at runtime");
     }
 }
+
+void AlteredRates() {
+    SdlAudioOutput audio;
+    auto buffer = Tone(2400);
+    const auto original = buffer.interleavedStereo;
+    for (unsigned rate : {25u, 50u, 100u, 200u, 400u, 800u}) {
+        audio.SetRate(rate);
+        audio.Submit(buffer);
+        Expect(std::abs(audio.QueuedMilliseconds() - 100000.0 * 2400 / 32040 / rate) < 0.001,
+               "Queue duration follows the host consumption rate");
+        audio.SelectDevice("");
+        audio.Resume();
+        audio.Submit(Tone(int((1923u * rate + 99) / 100 + 64)));
+        Expect(WaitForDrain(audio), "Each supported speed primes and drains a fresh audio device");
+        audio.Pause();
+        audio.Clear();
+    }
+    audio.SetRate(0);
+    audio.Resume();
+    for (unsigned count = 0; count < 100; ++count)
+        audio.Submit(buffer);
+    Expect(audio.QueuedBytes() == 0 && !audio.IsPlaying() && !audio.HasPendingOutput(),
+           "Uncapped playback discards audio instead of retaining an unbounded queue");
+    audio.SetRate(100);
+    audio.Submit(buffer);
+    Expect(WaitForDrain(audio), "Leaving uncapped mode restores requested audio playback");
+    Expect(buffer.interleavedStereo == original, "Speed changes preserve the core's PCM samples");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -149,6 +178,7 @@ int main(int argc, char** argv) {
         GameChangesDiscardAudio();
         MutedPlaybackKeepsPacing();
         SwitchPlaybackDevice();
+        AlteredRates();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         ++failures;

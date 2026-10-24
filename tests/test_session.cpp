@@ -426,7 +426,9 @@ void OutputParity(const fs::path& directory) {
         request.paths[0] = snes::core::PathText(rom);
         session.Open(request);
         for (unsigned frame = 0; frame < 6; ++frame) {
-            const auto expected = direct->StepFrame(), actual = session.Machine()->StepFrame();
+            const auto expected = direct->StepFrame(), actual = session.StepFrame();
+            Check(!session.TransportIfCreated(),
+                  "Default play does not create movie or history work");
             Check(expected.masterCycles == actual.masterCycles &&
                       expected.frameIndex == actual.frameIndex &&
                       directOutput.picture.width == sessionOutput.picture.width &&
@@ -442,6 +444,56 @@ void OutputParity(const fs::path& directory) {
         }
         session.Close();
     }
+}
+
+void MovieLifecycle(const fs::path& directory) {
+    const auto rom = directory / "movie-session.sfc";
+    Write(rom, ConsoleImage());
+    auto session = NewSession();
+    LaunchRequest request;
+    request.paths[0] = snes::core::PathText(rom);
+    session.Open(request);
+    session.StepFrame();
+    auto& playback = session.Transport();
+    playback.Record(session.MovieCheats());
+    session.StepFrame();
+    const auto reject = [&](auto perform) {
+        bool rejected = false;
+        try {
+            perform();
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        Check(rejected, "Active movies reject edits and game replacement");
+    };
+    reject([&] { session.Reset(); });
+    reject([&] { session.SaveCheats(*session.Cheats()); });
+    reject([&] { session.SaveState(directory / "during.cstate"); });
+    reject([&] { session.DebugCpu(); });
+    reject([&] { session.Close(); });
+    reject([&] { session.Open(request); });
+    playback.FinishRecording();
+    auto movie = std::make_shared<const snes::frontend::InputMovie>(*playback.PendingMovie());
+    reject([&] { session.Close(); });
+    const auto blocked = directory / "blocked-movie";
+    Write(blocked, std::vector<uint8_t>{1});
+    reject([&] { playback.PendingMovie()->Write(blocked / "recording.cmv"); });
+    Check(playback.PendingMovie() && playback.Status() == snes::frontend::Playback::Mode::Live,
+          "A failed write retains the complete recording for retry");
+    playback.PendingMovie()->Write(directory / "recording.cmv");
+    playback.DiscardPending();
+    session.StepFrame();
+    const auto previous = session.Machine()->CaptureState();
+    playback.Play(movie, session.MovieCheats());
+    Check(session.CanUndoState(), "Movie restoration is undoable");
+    while (playback.Status() != snes::frontend::Playback::Mode::Finished)
+        session.StepFrame();
+    playback.StopPlayback();
+    session.UndoState();
+    Check(session.Machine()->CaptureState() == previous, "Undo recovers the pre-movie machine");
+    playback.Record(session.MovieCheats());
+    playback.DiscardRecording();
+    session.Close();
 }
 } // namespace
 
@@ -468,6 +520,7 @@ int main() {
         SlotSaves(directory);
         FlashSaves(directory);
         OutputParity(directory);
+        MovieLifecycle(directory);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

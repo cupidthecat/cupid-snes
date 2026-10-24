@@ -105,6 +105,11 @@ class Emulator {
     void AttachInputProvider(IInputProvider* input);
     // The host clock binding applies to current and future handheld loads.
     void SetGameBoyTimeSource(std::function<uint64_t()> source);
+
+    std::function<uint64_t()> GetGameBoyTimeSource() const {
+        return handheldTimeSource_;
+    }
+
     void AddTraceSink(ITraceSink* sink);
     void RemoveTraceSink(ITraceSink* sink) noexcept;
 
@@ -158,6 +163,16 @@ class Emulator {
         return true;
     }
 
+    std::function<BroadcastTime()> GetBroadcastTimeSource() const {
+        return broadcastReceiver_.GetTimeSource();
+    }
+
+    // Bind a host clock independently of whether the receiver is connected.
+    std::function<BroadcastTime()>
+    ExchangeBroadcastTimeSource(std::function<BroadcastTime()> source) noexcept {
+        return broadcastReceiver_.ExchangeTimeSource(std::move(source));
+    }
+
     void SetExpansionDevice(ExpansionDevice device);
 
     ExpansionDevice GetExpansionDevice() const noexcept {
@@ -208,11 +223,38 @@ class Emulator {
         return atStateBoundary_;
     }
 
+    struct StatePosition {
+        uint64_t frame = 0, masterCycles = 0;
+        bool operator==(const StatePosition&) const = default;
+    };
+
+    class PreparedStateCapture {
+      public:
+        PreparedStateCapture(PreparedStateCapture&&) noexcept = default;
+        PreparedStateCapture& operator=(PreparedStateCapture&&) noexcept = default;
+        size_t Size() const noexcept;
+
+        StatePosition Position() const noexcept {
+            return position_;
+        }
+
+        // Detached bytes can be checksummed on a worker after the machine resumes.
+        // Finishing retains the payload for retry and never accesses live hardware.
+        std::vector<uint8_t> Finish(const StateOperation& operation = {}) const;
+
+      private:
+        friend class Emulator;
+        PreparedStateCapture(std::vector<uint8_t> payload, StatePosition position);
+        std::vector<uint8_t> payload_;
+        StatePosition position_;
+    };
+
     class PreparedStateRestore {
       public:
         PreparedStateRestore(PreparedStateRestore&&) noexcept;
         PreparedStateRestore& operator=(PreparedStateRestore&&) noexcept;
         ~PreparedStateRestore();
+        StatePosition Position() const;
         void Commit();
 
       private:
@@ -225,6 +267,7 @@ class Emulator {
     // Call between emulation steps. Capture may complete pending hardware work
     // and deliver crossed fields. Restore retains the target's platform bindings.
     std::vector<uint8_t> CaptureState(const StateOperation& operation = {});
+    PreparedStateCapture PrepareStateCapture(const StateOperation& operation = {});
     PreparedStateRestore PrepareStateRestore(std::span<const uint8_t> bytes,
                                              const StateOperation& operation = {});
     void RestoreState(std::span<const uint8_t> bytes, const StateOperation& operation = {});
@@ -309,7 +352,7 @@ class Emulator {
     void SynchronizeDevices(bool communication = false);
     void RouteDspSamples(int firstSample);
     void SynchronizeState(const StateOperation& operation);
-    void SerializeState(detail::StateArchive& archive);
+    void SerializeState(detail::StateArchive& archive, StatePosition* position = nullptr);
     void BeginFrame();
     FrameStepResult FinishFrame();
     void ResumeFrameExecution(bool instructionBoundary);

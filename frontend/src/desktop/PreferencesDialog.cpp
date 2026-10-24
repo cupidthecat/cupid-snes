@@ -7,9 +7,34 @@
 #include "snes/core/FilePath.hpp"
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <utility>
 
 namespace snes::frontend {
+namespace {
+// These short choice lists need every row available during keyboard navigation.
+bool Choice(const char* label, int* value, const char* items) {
+    const char* preview = items;
+    for (int index = 0; *preview && index < *value; ++index)
+        preview += std::strlen(preview) + 1;
+    bool changed = false;
+    if (ImGui::BeginCombo(label, preview)) {
+        int index = 0;
+        for (const char* item = items; *item; item += std::strlen(item) + 1, ++index) {
+            const bool selected = index == *value;
+            if (ImGui::Selectable(item, selected)) {
+                *value = index;
+                changed = true;
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+} // namespace
+
 struct PreferencesDialog::Impl {
     Preferences draft;
     std::string file, error;
@@ -70,10 +95,55 @@ struct PreferencesDialog::Impl {
         }
         ImGui::SeparatorText("Focus");
         int focus = int(draft.focus);
-        if (ImGui::Combo("When unfocused", &focus,
-                         "Pause emulation\0Block input\0Continue with input\0"))
+        if (Choice("When unfocused", &focus, "Pause emulation\0Block input\0Continue with input\0"))
             draft.focus = FocusBehavior(focus);
         ImGui::SliderInt("Turbo period (fields)", &draft.input.turboFrequency, 1, 8);
+    }
+
+    void PlaybackControls() {
+        int speed = int(draft.speedPercent);
+        if (ImGui::SliderInt("Normal speed", &speed, 25, 200, "%d%%"))
+            draft.speedPercent = unsigned(speed);
+        const auto fast =
+            draft.fastForwardPercent ? std::to_string(draft.fastForwardPercent) + "%" : "Uncapped";
+        if (ImGui::BeginCombo("Fast forward", fast.c_str())) {
+            if (ImGui::Selectable("Uncapped", !draft.fastForwardPercent))
+                draft.fastForwardPercent = 0;
+            for (unsigned percent = 200; percent <= 800; percent += 100)
+                if (ImGui::Selectable((std::to_string(percent) + "%").c_str(),
+                                      draft.fastForwardPercent == percent))
+                    draft.fastForwardPercent = percent;
+            ImGui::EndCombo();
+        }
+        int slow = int(draft.slowMotionPercent), skip = int(draft.fastForwardSkip);
+        if (ImGui::SliderInt("Slow motion", &slow, 25, 75, "%d%%"))
+            draft.slowMotionPercent = unsigned(slow);
+        if (ImGui::SliderInt("Fast forward picture skip", &skip, 0, 9))
+            draft.fastForwardSkip = unsigned(skip);
+        ImGui::Checkbox("Mute at altered speed", &draft.muteAlteredSpeed);
+        ImGui::TextWrapped("Speed changes affect host pacing and audio pitch. Every console field "
+                           "is emulated. Uncapped play mutes audio.");
+        ImGui::SeparatorText("Rewind");
+        const auto interval = draft.rewind.interval
+                                  ? "Every " + std::to_string(draft.rewind.interval) + " fields"
+                                  : "Disabled";
+        if (ImGui::BeginCombo("Checkpoint interval", interval.c_str())) {
+            if (ImGui::Selectable("Disabled", !draft.rewind.interval))
+                draft.rewind.interval = 0;
+            for (unsigned fields = 10; fields <= 60; fields += 10)
+                if (ImGui::Selectable(("Every " + std::to_string(fields) + " fields").c_str(),
+                                      draft.rewind.interval == fields))
+                    draft.rewind.interval = fields;
+            ImGui::EndCombo();
+        }
+        int states = int(draft.rewind.states), memory = int(draft.rewind.bytes / (1024 * 1024));
+        if (ImGui::SliderInt("Retained checkpoints", &states, 1, 320))
+            draft.rewind.states = unsigned(states);
+        if (ImGui::SliderInt("History memory (MiB)", &memory, 16, 1024))
+            draft.rewind.bytes = size_t(memory) * 1024 * 1024;
+        ImGui::TextWrapped(
+            "Old checkpoints expire at either limit. One checkpoint may be prepared in addition to "
+            "retained history. Hold Rewind to travel back, then release to play from there.");
     }
 
     void HostControls(std::string& device, int& threshold, const char* automatic,
@@ -182,23 +252,23 @@ struct PreferencesDialog::Impl {
     }
 
     void Input() {
-        if (ImGui::Combo("Player", &inputPlayer,
-                         "1\0"
-                         "2\0"
-                         "3\0"
-                         "4\0"
-                         "5\0"
-                         "6\0"
-                         "7\0"
-                         "8\0"))
+        if (Choice("Player", &inputPlayer,
+                   "1\0"
+                   "2\0"
+                   "3\0"
+                   "4\0"
+                   "5\0"
+                   "6\0"
+                   "7\0"
+                   "8\0"))
             capturing = nullptr;
         auto& player = draft.input.players[inputPlayer];
         HostControls(player.device, player.axisThreshold, "Automatic player slot");
-        if (ImGui::Combo("Binding", &inputSlot,
-                         "1\0"
-                         "2\0"
-                         "3\0"
-                         "4\0"))
+        if (Choice("Binding", &inputSlot,
+                   "1\0"
+                   "2\0"
+                   "3\0"
+                   "4\0"))
             capturing = nullptr;
         ImGui::SameLine();
         if (ImGui::Checkbox("Turbo", &inputTurbo))
@@ -242,16 +312,16 @@ struct PreferencesDialog::Impl {
     }
 
     void Peripherals() {
-        if (ImGui::Combo("Peripheral", &peripheral, "Mouse\0First gun\0Second gun\0"))
+        if (Choice("Peripheral", &peripheral, "Mouse\0First gun\0Second gun\0"))
             capturing = nullptr;
         auto& mapping = peripheral == 0 ? draft.input.mouse : draft.input.guns[peripheral - 1];
         HostControls(mapping.device, mapping.axisThreshold,
                      peripheral == 2 ? "Automatic pad 2" : "Automatic pad 1");
-        if (ImGui::Combo("Binding", &peripheralSlot,
-                         "1\0"
-                         "2\0"
-                         "3\0"
-                         "4\0"))
+        if (Choice("Binding", &peripheralSlot,
+                   "1\0"
+                   "2\0"
+                   "3\0"
+                   "4\0"))
             capturing = nullptr;
         ImGui::SameLine();
         if (ImGui::Checkbox("Turbo", &peripheralTurbo))
@@ -298,21 +368,21 @@ struct PreferencesDialog::Impl {
                 if (pointer)
                     ImGui::TextWrapped("Turn off Use pointer aim to edit relative movement.");
                 ImGui::BeginDisabled(pointer);
-                if (ImGui::Combo("Axis", &peripheralAxis, "Horizontal\0Vertical\0"))
+                if (Choice("Axis", &peripheralAxis, "Horizontal\0Vertical\0"))
                     capturing = nullptr;
                 auto& axis = mapping.axes[peripheralAxis][peripheralSlot];
                 int source = int(axis.kind);
-                if (ImGui::Combo("Source", &source,
-                                 "Unassigned\0Mouse X\0Mouse Y\0Gamepad axis\0Digital control\0")) {
+                if (Choice("Source", &source,
+                           "Unassigned\0Mouse X\0Mouse Y\0Gamepad axis\0Digital control\0")) {
                     axis.kind = AxisBinding::Kind(source);
                     axis.axis = 0;
                     axis.digital = {};
                     capturing = nullptr;
                 }
                 if (axis.kind == AxisBinding::Kind::GamepadAxis)
-                    ImGui::Combo("Pad axis", &axis.axis,
-                                 "Left stick X\0Left stick Y\0Right stick X\0Right stick Y\0Left "
-                                 "trigger\0Right trigger\0");
+                    Choice("Pad axis", &axis.axis,
+                           "Left stick X\0Left stick Y\0Right stick X\0Right stick Y\0Left "
+                           "trigger\0Right trigger\0");
                 if (axis.kind == AxisBinding::Kind::Digital)
                     BindingButton(axis.digital, mapping.device, mapping.axisThreshold);
                 ImGui::SliderInt("Gain (%)", &axis.scale, 1, 400);
@@ -383,7 +453,7 @@ struct PreferencesDialog::Impl {
         }
         ImGui::SeparatorText("Expansion");
         int expansion = int(draft.console.expansion);
-        if (ImGui::Combo("Device", &expansion, "None\0Satellaview\0"))
+        if (Choice("Device", &expansion, "None\0Satellaview\0"))
             draft.console.expansion = core::Emulator::ExpansionDevice(expansion);
     }
 
@@ -391,11 +461,11 @@ struct PreferencesDialog::Impl {
         ImGui::TextWrapped(hotkeyGamepad
                                ? "Gamepad shortcuts support buttons, signed axes and chords."
                                : "Hold modifiers and press a key. Escape cancels assignment.");
-        ImGui::Combo("Binding", &hotkeySlot,
-                     "1\0"
-                     "2\0"
-                     "3\0"
-                     "4\0");
+        Choice("Binding", &hotkeySlot,
+               "1\0"
+               "2\0"
+               "3\0"
+               "4\0");
         ImGui::SameLine();
         if (ImGui::Checkbox("Gamepad", &hotkeyGamepad)) {
             capturing = nullptr;
@@ -619,6 +689,10 @@ void PreferencesDialog::Draw() {
                 }
                 if (ImGui::BeginTabItem("Peripherals")) {
                     self.Peripherals();
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Playback")) {
+                    self.PlaybackControls();
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();

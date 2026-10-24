@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LaunchRequest.hpp"
+#include "Playback.hpp"
 #include "cheats/CheatBook.hpp"
 #include "debug/CpuDebugger.hpp"
 #include "debug/MemoryTools.hpp"
@@ -35,6 +36,14 @@ class Session {
     void Flush();
     void Reset(bool powerCycle = false);
     core::Emulator* Machine() const noexcept;
+    core::FrameStepResult StepFrame(const core::FrameStepOptions& options = {},
+                                    bool collectHistory = true);
+    Playback& Transport();
+    const Playback* TransportIfCreated() const noexcept;
+    std::array<uint8_t, 32> MovieCheats() const;
+    void SetRewind(const Playback::RewindSettings& settings);
+    bool Rewind(const core::StateOperation& operation = {});
+    void RequireEditable() const;
     const LaunchRequest* Loaded() const noexcept;
     ConsoleDevices Devices() const noexcept;
     void SetDevices(const ConsoleDevices& devices);
@@ -69,11 +78,16 @@ class Session {
     enum class RestoreAction { Load, Undo, Redo };
     void RestoreState(std::span<const uint8_t> bytes, RestoreAction action,
                       const core::StateOperation& operation);
+    void RestorePrepared(core::Emulator::PreparedStateRestore prepared, RestoreAction action,
+                         const core::StateOperation& operation);
+    Playback& EnsureTransport(State& state);
+    void RequireReplaceable() const;
     core::Emulator::Config config_;
     Outputs outputs_;
     std::array<core::ControllerDevice, 2> devices_;
     std::filesystem::path saveDirectory_;
     std::filesystem::path stateDirectory_;
+    Playback::RewindSettings rewind_;
     std::unique_ptr<State> state_;
 };
 

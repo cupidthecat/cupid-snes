@@ -35,6 +35,7 @@ struct Emulator::PreparedStateRestore::Impl {
     std::weak_ptr<uint8_t> lifetime;
     std::vector<uint8_t> bytes;
     std::unique_ptr<StateArchive> archive;
+    StatePosition position;
 };
 
 Emulator::PreparedStateRestore::PreparedStateRestore(std::unique_ptr<Impl> impl)
@@ -45,6 +46,12 @@ Emulator::PreparedStateRestore::PreparedStateRestore(PreparedStateRestore&&) noe
 Emulator::PreparedStateRestore&
 Emulator::PreparedStateRestore::operator=(PreparedStateRestore&&) noexcept = default;
 Emulator::PreparedStateRestore::~PreparedStateRestore() = default;
+
+Emulator::StatePosition Emulator::PreparedStateRestore::Position() const {
+    if (!impl_)
+        throw std::runtime_error("Prepared machine state has already been consumed");
+    return impl_->position;
+}
 
 void Emulator::PreparedStateRestore::Commit() {
     if (!impl_ || impl_->lifetime.expired())
@@ -57,7 +64,31 @@ void Emulator::InvalidatePreparedRestores() noexcept {
     restoreLifetime_.reset();
 }
 
-std::vector<uint8_t> Emulator::CaptureState(const StateOperation& operation) {
+Emulator::PreparedStateCapture::PreparedStateCapture(std::vector<uint8_t> payload,
+                                                     StatePosition position)
+    : payload_(std::move(payload)), position_(position) {
+}
+
+size_t Emulator::PreparedStateCapture::Size() const noexcept {
+    return payload_.empty() ? 0 : payload_.size() + kHeaderBytes;
+}
+
+std::vector<uint8_t> Emulator::PreparedStateCapture::Finish(const StateOperation& operation) const {
+    if (payload_.empty())
+        throw std::runtime_error("Prepared state capture is empty");
+    StateArchive header;
+    for (auto byte : kMagic)
+        header.Expect(byte);
+    header.Expect(kVersion);
+    header.Expect(uint32_t(payload_.size()));
+    for (auto byte : detail::StateDigest(payload_, operation, StatePhase::Capture))
+        header.Expect(byte);
+    auto bytes = header.Bytes();
+    bytes.insert(bytes.end(), payload_.begin(), payload_.end());
+    return bytes;
+}
+
+Emulator::PreparedStateCapture Emulator::PrepareStateCapture(const StateOperation& operation) {
     operation.Report(StatePhase::Synchronize);
     SynchronizeState(operation);
     StateArchive payload;
@@ -65,16 +96,12 @@ std::vector<uint8_t> Emulator::CaptureState(const StateOperation& operation) {
     SerializeState(payload);
     if (payload.Bytes().size() > StateArchive::MaximumBytes - kHeaderBytes)
         throw std::runtime_error("Machine state exceeds the supported size");
-    StateArchive header;
-    for (auto byte : kMagic)
-        header.Expect(byte);
-    header.Expect(kVersion);
-    header.Expect(uint32_t(payload.Bytes().size()));
-    for (auto byte : detail::StateDigest(payload.Bytes(), operation, StatePhase::Capture))
-        header.Expect(byte);
-    auto bytes = header.Bytes();
-    bytes.insert(bytes.end(), payload.Bytes().begin(), payload.Bytes().end());
-    return bytes;
+    return PreparedStateCapture(std::move(payload).TakeBytes(),
+                                {CurrentFrame(), CurrentMasterCycles()});
+}
+
+std::vector<uint8_t> Emulator::CaptureState(const StateOperation& operation) {
+    return PrepareStateCapture(operation).Finish(operation);
 }
 
 Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uint8_t> bytes,
@@ -98,7 +125,7 @@ Emulator::PreparedStateRestore Emulator::PrepareStateRestore(std::span<const uin
     header.Commit();
     prepared->archive = std::make_unique<StateArchive>(payload);
     prepared->archive->SetProgress(operation);
-    SerializeState(*prepared->archive);
+    SerializeState(*prepared->archive, &prepared->position);
     if (prepared->archive->Remaining())
         throw std::runtime_error("Unexpected data after machine state");
     if (!restoreLifetime_)
@@ -112,7 +139,7 @@ void Emulator::RestoreState(std::span<const uint8_t> bytes, const StateOperation
     prepared.Commit();
 }
 
-void Emulator::SerializeState(StateArchive& archive) {
+void Emulator::SerializeState(StateArchive& archive, StatePosition* position) {
     archive.Validate(initialized_ && cartridge_ && cpu_, "Machine state requires loaded hardware");
     archive.Validate(archive.Reading() ||
                          (atStateBoundary_ && !collectingAudio_ && !synchronizingState_),
@@ -129,7 +156,8 @@ void Emulator::SerializeState(StateArchive& archive) {
         fields.Section(4, [&](auto& part) { ppu_.SerializeState(part); });
         fields.Section(5, [&](auto& part) { smp_.SerializeState(part); });
         fields.Section(6, [&](auto& part) { dsp_.SerializeState(part); });
-        fields.Section(7, [&](auto& part) { timing_.SerializeState(part); });
+        uint64_t restoredClock = 0;
+        fields.Section(7, [&](auto& part) { restoredClock = timing_.SerializeState(part); });
         fields.Section(8, [&](auto& part) { cpuIo_.SerializeState(part); });
         fields.Section(9, [&](auto& part) { dma_.SerializeState(part); });
         fields.Section(10, [&](auto& part) { irq_.SerializeState(part); });
@@ -163,7 +191,9 @@ void Emulator::SerializeState(StateArchive& archive) {
             for (auto& word : next->stack)
                 storageFields.Bounded(word, uint32_t{0}, uint32_t{0xffffff});
         });
-        fields.Number(frameIndex_);
+        const auto restoredFrame = fields.Number(frameIndex_);
+        if (position)
+            *position = {restoredFrame, restoredClock};
         fields.Number(masterCycles_);
         fields.Number(coprocessorsSyncedClock_);
         fields.Number(coprocessorClockTarget_);

@@ -1,4 +1,5 @@
 include(${PROJECT_SOURCE_DIR}/cmake/ImGui.cmake)
+find_package(Threads REQUIRED)
 
 add_library(snes_frontend_support STATIC
   src/cheats/CheatBook.cpp
@@ -15,11 +16,14 @@ add_library(snes_frontend_support STATIC
   src/storage/InspectionBitmap.cpp
   src/storage/BatteryStorage.cpp
   src/storage/StateStorage.cpp
+  src/storage/InputMovie.cpp
   src/settings/Preferences.cpp
   src/settings/ConsoleDevices.cpp
   src/input/Hotkeys.cpp
   src/input/InputBindings.cpp
+  src/input/InputJournal.cpp
   src/session/Session.cpp
+  src/session/Playback.cpp
   src/desktop/DesktopMenu.cpp
   src/desktop/CheatDialog.cpp
   src/desktop/MemoryDialog.cpp
@@ -29,10 +33,11 @@ add_library(snes_frontend_support STATIC
   src/desktop/DesktopApplication.cpp
   src/desktop/PreferencesDialog.cpp
   src/desktop/StateManagerDialog.cpp
+  src/desktop/MovieDialog.cpp
   src/desktop/DesktopUi.cpp
 )
 target_include_directories(snes_frontend_support PUBLIC src)
-target_link_libraries(snes_frontend_support PUBLIC snes_core SDL3::SDL3)
+target_link_libraries(snes_frontend_support PUBLIC snes_core SDL3::SDL3 Threads::Threads)
 target_link_libraries(snes_frontend_support PRIVATE snes_desktop_ui_library)
 if(WIN32)
   target_link_libraries(snes_frontend_support PRIVATE user32)

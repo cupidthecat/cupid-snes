@@ -51,6 +51,9 @@ class SdlAudioOutput final : public snes::core::IAudioOutput {
     // Stop playback and discard host audio before a pause, reset or game change.
     void Clear();
     void SetVolume(int percent, bool muted = false);
+    // Zero discards host audio for uncapped play; other rates change speed and pitch.
+    // Rate changes clear queued audio and retain the requested pause/resume state.
+    void SetRate(unsigned percent);
     // Select a fresh paused stream, retaining the old stream if opening fails.
     void SelectDevice(const std::string& name);
     static std::vector<std::string> DeviceNames();
@@ -85,6 +88,7 @@ class SdlAudioOutput final : public snes::core::IAudioOutput {
     bool playing_ = false;
     int volume_ = 100;
     bool muted_ = false;
+    unsigned rate_ = 100;
 };
 
 } // namespace snes::frontend

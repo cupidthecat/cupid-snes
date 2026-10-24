@@ -48,6 +48,11 @@ class StateArchive {
         return output_;
     }
 
+    std::vector<uint8_t> TakeBytes() && {
+        Require(!Reading(), "Only captured state can release encoded bytes");
+        return std::move(output_);
+    }
+
     size_t Remaining() const noexcept {
         return input_.size() - position_;
     }

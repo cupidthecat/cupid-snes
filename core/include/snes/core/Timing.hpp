@@ -90,7 +90,7 @@ class Timing {
     // Construction
 
     explicit Timing(Region region = Region::NTSC, uint8_t cpuRevision = 2);
-    void SerializeState(detail::StateArchive& archive);
+    uint64_t SerializeState(detail::StateArchive& archive);
 
     // Configuration
 
