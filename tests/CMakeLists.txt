@@ -402,7 +402,7 @@ target_link_libraries(snes_desktop_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_desktop_tests snes_desktop_tests)
 
 add_executable(snes_desktop_application_tests test_desktop_application.cpp)
-target_link_libraries(snes_desktop_application_tests PRIVATE snes_frontend_support Threads::Threads)
+target_link_libraries(snes_desktop_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
 snes_add_check(snes_desktop_application_tests snes_desktop_application_tests)
 
 add_executable(snes_preferences_tests test_preferences.cpp)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "imgui_internal.h"
 #include <SDL3/SDL.h>
 #include <atomic>
 #include <chrono>
@@ -47,19 +48,60 @@ inline void Push(SDL_Event event) {
     Check(SDL_PushEvent(&event), "Queue application input");
 }
 
-inline void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keymod modifiers = 0) {
+inline void Frames() {
+    // Observe complete frames so queued input remains reliable on busy hosts.
+    const auto current = [](bool* pending = nullptr) {
+        int frame = 0;
+        OnMain([&] {
+            if (const auto* context = ImGui::GetCurrentContext()) {
+                frame = context->FrameCount;
+                if (pending)
+                    *pending = !context->InputEventsQueue.empty();
+            }
+        });
+        return frame;
+    };
+    const auto previous = current();
+    Wait(
+        [&] {
+            bool pending = true;
+            return current(&pending) >= previous + 2 && !pending;
+        },
+        "Application consumes queued UI input");
+}
+
+inline void Ready() {
+    Wait(
+        [] {
+            bool progress = false;
+            OnMain([&] {
+                if (ImGui::GetCurrentContext())
+                    if (const auto* window = ImGui::FindWindowByName("State operation"))
+                        progress = window->Active;
+            });
+            return !progress;
+        },
+        "State progress closes before the next interaction");
+    Frames();
+}
+
+inline void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keymod modifiers = 0,
+                SDL_Keycode key = 0, bool waitForFrames = true) {
+    Ready();
     SDL_Event event{};
     event.type = SDL_EVENT_KEY_DOWN;
     event.key.windowID = window;
     event.key.scancode = scan;
-    event.key.key = SDL_GetKeyFromScancode(scan, modifiers, false);
+    event.key.key = key ? key : SDL_GetKeyFromScancode(scan, modifiers, false);
     event.key.mod = modifiers;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
     event.type = SDL_EVENT_KEY_UP;
     event.key.mod = 0;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    if (waitForFrames) {
+        Frames();
+        Ready();
+    }
 }
 
 inline void Text(SDL_WindowID window, const char* value) {
@@ -68,7 +110,7 @@ inline void Text(SDL_WindowID window, const char* value) {
     event.text.windowID = window;
     event.text.text = value;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    Frames();
 }
 
 inline void Click(SDL_WindowID window, float x, float y) {
@@ -78,18 +120,18 @@ inline void Click(SDL_WindowID window, float x, float y) {
     event.motion.x = x;
     event.motion.y = y;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    Frames();
     event = {};
     event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
     event.button.windowID = window;
     event.button.button = SDL_BUTTON_LEFT;
     event.button.down = true;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Frames();
     event.type = SDL_EVENT_MOUSE_BUTTON_UP;
     event.button.down = false;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(90));
+    Frames();
 }
 
 inline void Quit() {

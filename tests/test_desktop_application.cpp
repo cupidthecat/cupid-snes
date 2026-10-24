@@ -1,4 +1,5 @@
 #include "SdlInputProvider.hpp"
+#include "desktop/ApplicationDriver.hpp"
 #include "desktop/DesktopApplication.hpp"
 #include "settings/Preferences.hpp"
 #include "snes/core/FilePath.hpp"
@@ -49,40 +50,13 @@ void Push(SDL_Event event) {
     Check(SDL_PushEvent(&event), "Application input can be queued");
 }
 
-void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod modifiers = 0) {
-    SDL_Event event{};
-    event.type = SDL_EVENT_KEY_DOWN;
-    event.key.windowID = window;
-    event.key.scancode = scan;
-    event.key.key = key;
-    event.key.mod = modifiers;
-    Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    event.type = SDL_EVENT_KEY_UP;
-    event.key.mod = 0;
-    Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod modifiers = 0,
+         bool waitForFrames = true) {
+    snes::tests::desktop::Key(window, scan, modifiers, key, waitForFrames);
 }
 
 void Click(SDL_WindowID window, float x, float y) {
-    SDL_Event event{};
-    event.type = SDL_EVENT_MOUSE_MOTION;
-    event.motion.windowID = window;
-    event.motion.x = x;
-    event.motion.y = y;
-    Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    event = {};
-    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    event.button.windowID = window;
-    event.button.button = SDL_BUTTON_LEFT;
-    event.button.down = true;
-    Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    event.type = SDL_EVENT_MOUSE_BUTTON_UP;
-    event.button.down = false;
-    Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    snes::tests::desktop::Click(window, x, y);
 }
 
 void ReplaceText(SDL_WindowID window, const char* text) {
@@ -92,7 +66,7 @@ void ReplaceText(SDL_WindowID window, const char* text) {
     event.text.windowID = window;
     event.text.text = text;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    snes::tests::desktop::Frames();
 }
 
 std::string Read(const std::filesystem::path& path) {
@@ -346,7 +320,7 @@ void SaveDirectoryApplication(const std::filesystem::path& directory) {
                     return closed >= 4;
                 },
                 "Cancel closes the rendered path editor and releases text input");
-            Key(window, SDL_SCANCODE_Q, SDLK_Q, SDL_KMOD_CTRL);
+            Key(window, SDL_SCANCODE_Q, SDLK_Q, SDL_KMOD_CTRL, false);
             Wait([&] { return returned.load(); }, "Ctrl+Q quits after closing the path editor");
         } catch (...) {
             failure = std::current_exception();
