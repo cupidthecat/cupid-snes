@@ -11,7 +11,7 @@ namespace snes::core {
 class MemoryBus;
 class EpsonRtc;
 namespace detail {
-class ExecutionContext;
+class StateArchive;
 }
 class Spc7110 {
 public:
@@ -20,6 +20,8 @@ public:
   Spc7110(std::span<const uint8_t> rom, std::span<uint8_t> save, bool rtc, Clock clock = {});
   ~Spc7110();
   void Reset();
+  // The owner saves the ROM identity and attached SRAM separately.
+  void SerializeState(detail::StateArchive &archive);
   void Advance(uint32_t masterClocks);
   void SetPal(bool pal);
   uint8_t Read(uint32_t address, uint8_t openBus = 0xff);
@@ -34,10 +36,11 @@ private:
   std::array<uint8_t, 64> registers_{};
   Spc7110Decoder decoder_;
   std::unique_ptr<EpsonRtc> rtc_;
-  std::unique_ptr<detail::ExecutionContext> execution_;
   uint32_t masterFrequency_ = 21'477'272;
   int64_t balance_ = 0;
-  bool idleCycle_ = false, decodePending_ = false, multiplyPending_ = false, dividePending_ = false;
+  enum class Phase : uint8_t { Begin, Decode, CheckMultiply, Multiply, CheckDivide, Divide, Idle };
+  Phase phase_ = Phase::Begin;
+  bool decodePending_ = false, multiplyPending_ = false, dividePending_ = false;
   uint8_t mode_ = 0, tileOffset_ = 0;
   uint32_t streamAddress_ = 0, decodedRow_ = 0;
   std::array<uint8_t, 32> tile_{};
@@ -52,8 +55,7 @@ private:
   void AdjustData(unsigned trigger);
   uint8_t ReadStream();
   void Synchronize();
-  void Cycle(unsigned clocks);
-  void Work();
+  void Cycle(unsigned clocks, Phase next);
   void BeginStream();
   void Multiply();
   void Divide();

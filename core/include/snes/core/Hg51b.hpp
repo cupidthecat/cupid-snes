@@ -5,6 +5,9 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Hg51b {
 public:
@@ -67,6 +70,7 @@ public:
     return state_;
   }
   void SetState(const State &state);
+  void SerializeState(detail::StateArchive &archive);
 
 protected:
   virtual bool IsRom(uint32_t address) const = 0;
@@ -88,11 +92,35 @@ private:
   static constexpr uint32_t Mask = 0xffffff, Sign = 0x800000;
   State state_;
   bool idleCycle_ = false;
+  enum class Phase : uint8_t {
+    Begin,
+    Finish,
+    ClearSuspend,
+    ClearIdle,
+    CacheLow,
+    CacheHigh,
+    DmaNext,
+    DmaRead,
+    DmaWrite,
+    LatchOpcode,
+    InstructionClock,
+    ExecuteOpcode,
+    SkipClock
+  };
+  enum class CacheReturn : uint8_t { Finish, Instruction, Execute, Skip };
+  struct Continuation {
+    Phase phase = Phase::Begin;
+    CacheReturn cacheReturn = CacheReturn::Finish;
+    uint32_t cacheAddress = 0;
+    uint16_t cacheWord = 0, opcode = 0;
+    uint32_t dmaLength = 0, dmaOffset = 0, dmaSource = 0, dmaTarget = 0;
+    uint8_t dmaValue = 0;
+  } continuation_;
   void Cycle(unsigned clocks);
   unsigned Wait(uint32_t address) const;
-  bool CacheReady();
-  void Next();
-  void Transfer();
+  void BeginCache(CacheReturn next);
+  void ReturnCache(CacheReturn next, bool ready);
+  void Next(CacheReturn next);
   void Execute(uint16_t instruction);
   uint32_t Register(unsigned address);
   void Put(unsigned address, uint32_t value);

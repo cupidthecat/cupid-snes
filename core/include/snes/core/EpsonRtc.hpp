@@ -6,11 +6,15 @@
 #include <vector>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 class EpsonRtc {
 public:
   using Clock = std::function<int64_t()>;
   explicit EpsonRtc(Clock clock = {});
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void Advance(uint32_t masterClocks);
   void SetPal(bool pal);
   uint8_t Read(unsigned port, uint8_t openBus);

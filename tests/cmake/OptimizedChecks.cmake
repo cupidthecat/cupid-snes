@@ -1,6 +1,23 @@
 option(SNES_BUNDLE_OPTIMIZED_TESTS "Link optimized checks into a shared test executable" OFF)
 
 set(SNES_OPTIMIZED_TEST_TARGETS
+  snes_sha256_tests
+  snes_msu1_state_tests
+  snes_state_archive_tests
+  snes_processor_state_tests
+  snes_audio_state_tests
+  snes_smp_state_boundary_tests
+  snes_emulator_state_tests
+  snes_ppu_state_tests
+  snes_system_state_tests
+  snes_cartridge_memory_state_tests
+  snes_spc7110_state_tests
+  snes_command_dsp_state_tests
+  snes_arm_state_tests
+  snes_cx4_state_tests
+  snes_superfx_state_tests
+  snes_gameboy_state_tests
+  snes_cartridge_state_tests
   snes_gameboy_cpu_tests
   snes_gameboy_host_tests
   snes_gameboy_clocked_io_tests
@@ -36,6 +53,7 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_competition_cartridge_tests
   snes_sdl_audio_tests
   snes_sdl_video_tests
+  snes_sdl_input_tests
   snes_bsx_tests
   snes_cartridge_command_tests
   snes_sdd1_tests
@@ -48,6 +66,14 @@ set(SNES_OPTIMIZED_TEST_TARGETS
   snes_st010_tests
   snes_spc7110_timing_tests
   snes_save_ram_tests
+  snes_session_tests
+  snes_state_storage_tests
+  snes_input_frame_progress_tests
+  snes_state_application_tests
+  snes_battery_directory_tests
+  snes_desktop_tests
+  snes_desktop_application_tests
+  snes_preferences_tests
   snes_cx4_processor_tests
   snes_sa1_tests
   snes_st018_tests

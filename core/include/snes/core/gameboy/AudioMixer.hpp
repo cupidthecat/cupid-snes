@@ -3,10 +3,15 @@
 
 #include "snes/core/audio/StreamMixer.hpp"
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class AudioMixer {
 public:
+  void SerializeState(detail::StateArchive &archive);
   using Output = audio::StreamMixer::Output;
   void SetOutput(Output output);
   void Reset(uint32_t handheldRate);

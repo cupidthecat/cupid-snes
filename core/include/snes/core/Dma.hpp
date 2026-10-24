@@ -16,6 +16,9 @@
 #include <utility>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Cartridge;
 
@@ -131,6 +134,9 @@ public:
 
   /// Reset all 8 channels to power-on state.
   void Reset();
+
+  // Capture between transfers; the owner discards suspended execution before restore.
+  void SerializeState(detail::StateArchive &archive);
 
   // Bus connection - must be set before any transfers can occur.
   // The MemoryBus pointer is non-owning and must outlive this object.

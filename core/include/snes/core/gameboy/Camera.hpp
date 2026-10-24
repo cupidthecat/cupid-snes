@@ -8,10 +8,15 @@
 #include <span>
 #include <vector>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Camera {
 public:
+  void SerializeState(detail::StateArchive &archive);
   using NoiseSource = std::function<uint8_t()>;
   Camera();
   void Reset() noexcept;

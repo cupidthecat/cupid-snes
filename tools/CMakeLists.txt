@@ -8,7 +8,7 @@ target_link_libraries(snes_trace_dump
 )
 
 add_executable(snes_rom_smoke src/rom_smoke.cpp)
-target_link_libraries(snes_rom_smoke PRIVATE snes_core)
+target_link_libraries(snes_rom_smoke PRIVATE snes_core SDL3::SDL3)
 
 add_executable(snes_rom_diagnostic src/rom_diagnostic.cpp)
-target_link_libraries(snes_rom_diagnostic PRIVATE snes_core)
+target_link_libraries(snes_rom_diagnostic PRIVATE snes_core SDL3::SDL3)

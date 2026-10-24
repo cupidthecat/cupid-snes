@@ -1,5 +1,6 @@
 #include "snes/core/Bsx.hpp"
 #include "snes/core/BsMemory.hpp"
+#include "snes/core/detail/StateArchive.hpp"
 
 #include <algorithm>
 #include <array>
@@ -122,6 +123,19 @@ Bsx::Bsx(Bsx &&) noexcept = default;
 Bsx &Bsx::operator=(Bsx &&) noexcept = default;
 void Bsx::Reset() {
   impl_->Reset();
+}
+void Bsx::SerializeState(detail::StateArchive &archive) {
+  archive.Expect(uint64_t(impl_->bios.size()));
+  archive.Expect(uint64_t(impl_->pack.size()));
+  archive.Expect(uint64_t(impl_->sram.size()));
+  archive.Fixed(std::span<uint8_t>(impl_->psram));
+  for (auto *registers : {&impl_->pending, &impl_->active})
+    for (auto &value : *registers) {
+      const auto next = archive.Number(value);
+      archive.Validate((next & 0x7f) == 0, "Invalid broadcast mapper bit");
+    }
+  impl_->flash.SerializeState(archive);
+  impl_->receiver.SerializeState(archive);
 }
 void Bsx::InitializePageBuffers(PowerOnState &state) {
   impl_->flash.InitializePageBuffers(state);

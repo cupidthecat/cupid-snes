@@ -1,5 +1,73 @@
 include(cmake/OptimizedChecks.cmake)
 
+add_executable(snes_sha256_tests test_sha256.cpp)
+target_link_libraries(snes_sha256_tests PRIVATE snes_core)
+snes_add_check(snes_sha256_tests snes_sha256_tests)
+
+add_executable(snes_msu1_state_tests test_msu1_state.cpp)
+target_link_libraries(snes_msu1_state_tests PRIVATE snes_core)
+snes_add_check(snes_msu1_state_tests snes_msu1_state_tests)
+
+add_executable(snes_state_archive_tests test_state_archive.cpp)
+target_link_libraries(snes_state_archive_tests PRIVATE snes_core)
+snes_add_check(snes_state_archive_tests snes_state_archive_tests)
+
+add_executable(snes_processor_state_tests test_processor_state.cpp)
+target_link_libraries(snes_processor_state_tests PRIVATE snes_core)
+snes_add_check(snes_processor_state_tests snes_processor_state_tests)
+
+add_executable(snes_audio_state_tests test_audio_state.cpp)
+target_link_libraries(snes_audio_state_tests PRIVATE snes_core)
+snes_add_check(snes_audio_state_tests snes_audio_state_tests)
+
+add_executable(snes_smp_state_boundary_tests test_smp_state_boundary.cpp)
+target_link_libraries(snes_smp_state_boundary_tests PRIVATE snes_core)
+snes_add_check(snes_smp_state_boundary_tests snes_smp_state_boundary_tests)
+
+add_executable(snes_emulator_state_tests test_emulator_state.cpp)
+target_link_libraries(snes_emulator_state_tests PRIVATE snes_core)
+snes_add_check(snes_emulator_state_tests snes_emulator_state_tests)
+
+add_executable(snes_ppu_state_tests test_ppu_state.cpp)
+target_link_libraries(snes_ppu_state_tests PRIVATE snes_core)
+snes_add_check(snes_ppu_state_tests snes_ppu_state_tests)
+
+add_executable(snes_system_state_tests test_system_state.cpp)
+target_link_libraries(snes_system_state_tests PRIVATE snes_core)
+snes_add_check(snes_system_state_tests snes_system_state_tests)
+
+add_executable(snes_cartridge_memory_state_tests test_cartridge_memory_state.cpp)
+target_link_libraries(snes_cartridge_memory_state_tests PRIVATE snes_core)
+snes_add_check(snes_cartridge_memory_state_tests snes_cartridge_memory_state_tests)
+
+add_executable(snes_spc7110_state_tests test_spc7110_state.cpp)
+target_link_libraries(snes_spc7110_state_tests PRIVATE snes_core)
+snes_add_check(snes_spc7110_state_tests snes_spc7110_state_tests)
+
+add_executable(snes_command_dsp_state_tests test_command_dsp_state.cpp)
+target_link_libraries(snes_command_dsp_state_tests PRIVATE snes_core)
+snes_add_check(snes_command_dsp_state_tests snes_command_dsp_state_tests)
+
+add_executable(snes_arm_state_tests test_arm_state.cpp)
+target_link_libraries(snes_arm_state_tests PRIVATE snes_core)
+snes_add_check(snes_arm_state_tests snes_arm_state_tests)
+
+add_executable(snes_cx4_state_tests test_cx4_state.cpp)
+target_link_libraries(snes_cx4_state_tests PRIVATE snes_core)
+snes_add_check(snes_cx4_state_tests snes_cx4_state_tests)
+
+add_executable(snes_superfx_state_tests test_superfx_state.cpp)
+target_link_libraries(snes_superfx_state_tests PRIVATE snes_core)
+snes_add_check(snes_superfx_state_tests snes_superfx_state_tests)
+
+add_executable(snes_gameboy_state_tests test_gameboy_state.cpp)
+target_link_libraries(snes_gameboy_state_tests PRIVATE snes_core)
+snes_add_check(snes_gameboy_state_tests snes_gameboy_state_tests)
+
+add_executable(snes_cartridge_state_tests test_cartridge_state.cpp)
+target_link_libraries(snes_cartridge_state_tests PRIVATE snes_core)
+snes_add_check(snes_cartridge_state_tests snes_cartridge_state_tests)
+
 add_executable(snes_core_tests
   test_main.cpp
 )
@@ -166,9 +234,9 @@ add_executable(snes_light_gun_tests test_light_guns.cpp)
 target_link_libraries(snes_light_gun_tests PRIVATE snes_core)
 snes_add_check(snes_light_gun_tests snes_light_gun_tests)
 
-add_executable(snes_sdl_input_tests test_sdl_input.cpp ../frontend/src/SdlInputProvider.cpp)
+add_executable(snes_sdl_input_tests test_sdl_input.cpp)
 target_include_directories(snes_sdl_input_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_input_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_input_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_sdl_input_tests snes_sdl_input_tests)
 
 add_executable(snes_cpu_regression_tests test_cpu_regressions.cpp)
@@ -240,27 +308,58 @@ add_executable(snes_dsp_batch_tests test_dsp_batch.cpp)
 target_link_libraries(snes_dsp_batch_tests PRIVATE snes_core)
 snes_add_check(snes_dsp_batch_tests snes_dsp_batch_tests)
 
-add_executable(snes_sdl_audio_tests test_sdl_audio.cpp ../frontend/src/SdlAudioOutput.cpp)
+add_executable(snes_sdl_audio_tests test_sdl_audio.cpp)
 
 add_executable(snes_frame_pacing_tests test_frame_pacing.cpp)
 target_include_directories(snes_frame_pacing_tests PRIVATE ../frontend/src)
 target_link_libraries(snes_frame_pacing_tests PRIVATE snes_core)
 snes_add_check(snes_frame_pacing_tests snes_frame_pacing_tests)
 
-add_executable(snes_sdl_video_tests test_sdl_video.cpp ../frontend/src/SdlVideoOutput.cpp)
+add_executable(snes_sdl_video_tests test_sdl_video.cpp)
 target_include_directories(snes_sdl_video_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_video_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_video_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_sdl_video_tests snes_sdl_video_tests)
 
-add_executable(snes_save_ram_tests test_save_ram.cpp ../frontend/src/SaveRamFile.cpp)
+add_executable(snes_save_ram_tests test_save_ram.cpp)
 target_include_directories(snes_save_ram_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_save_ram_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_save_ram_tests PRIVATE snes_frontend_support)
 snes_add_check(snes_save_ram_tests snes_save_ram_tests)
 target_include_directories(snes_sdl_audio_tests PRIVATE ../frontend/src)
-target_link_libraries(snes_sdl_audio_tests PRIVATE snes_core SDL3::SDL3)
+target_link_libraries(snes_sdl_audio_tests PRIVATE snes_frontend_support)
 foreach(rate 32000 32040 44100 48000)
   snes_add_check(snes_sdl_audio_${rate} snes_sdl_audio_tests ${rate})
 endforeach()
+
+add_executable(snes_session_tests test_session.cpp)
+target_link_libraries(snes_session_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_session_tests snes_session_tests)
+
+add_executable(snes_state_storage_tests test_state_storage.cpp)
+target_link_libraries(snes_state_storage_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_state_storage_tests snes_state_storage_tests)
+
+add_executable(snes_input_frame_progress_tests test_input_frame_progress.cpp)
+target_link_libraries(snes_input_frame_progress_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_input_frame_progress_tests snes_input_frame_progress_tests)
+
+add_executable(snes_state_application_tests test_state_application.cpp)
+target_link_libraries(snes_state_application_tests PRIVATE snes_frontend_support snes_desktop_ui_library Threads::Threads)
+snes_add_check(snes_state_application_tests snes_state_application_tests)
+add_executable(snes_battery_directory_tests test_battery_directories.cpp)
+target_link_libraries(snes_battery_directory_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_battery_directory_tests snes_battery_directory_tests)
+
+add_executable(snes_desktop_tests test_desktop.cpp)
+target_link_libraries(snes_desktop_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_desktop_tests snes_desktop_tests)
+
+add_executable(snes_desktop_application_tests test_desktop_application.cpp)
+target_link_libraries(snes_desktop_application_tests PRIVATE snes_frontend_support Threads::Threads)
+snes_add_check(snes_desktop_application_tests snes_desktop_application_tests)
+
+add_executable(snes_preferences_tests test_preferences.cpp)
+target_link_libraries(snes_preferences_tests PRIVATE snes_frontend_support)
+snes_add_check(snes_preferences_tests snes_preferences_tests)
 
 # Opt in with an existing diagnostic checkout; ROMs are never fetched by a build.
 set(SNES_DIAGNOSTIC_ROM_DIR "" CACHE PATH "Root of an external SnesTests checkout")

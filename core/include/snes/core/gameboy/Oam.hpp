@@ -4,10 +4,15 @@
 #include <array>
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Oam {
 public:
+  void SerializeState(detail::StateArchive &archive);
   void Reset(bool secondModel) noexcept;
   uint8_t Read(uint8_t address) const noexcept;
   void Write(uint8_t address, uint8_t value) noexcept;

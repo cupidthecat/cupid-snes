@@ -1,18 +1,10 @@
 // SDL3 input provider interface.
 
 #pragma once
-// Reads the SDL keyboard state array each frame and maps scancodes to
-// SNES controller buttons.  Default layout (easily reconfigurable):
-//
-//   D-pad    → Arrow keys
-//   A        → X          B → Z
-//   X        → S          Y → A
-//   L        → Q          R → W
-//   Start    → Enter      Select → Right Shift
-//
-// Call SDL_PumpEvents() before Poll() so the keyboard state is current.
+// Maps host controls to console devices. Pump SDL events before polling.
 
 #include "VideoGeometry.hpp"
+#include "input/InputBindings.hpp"
 #include "snes/core/Platform.hpp"
 
 #include <SDL3/SDL.h>
@@ -23,24 +15,16 @@ namespace snes::frontend {
 
 class SdlInputProvider final : public snes::core::IInputProvider {
 public:
-  /// Per-button scancode bindings (all configurable).
-  struct KeyMap {
-    SDL_Scancode up = SDL_SCANCODE_UP;
-    SDL_Scancode down = SDL_SCANCODE_DOWN;
-    SDL_Scancode left = SDL_SCANCODE_LEFT;
-    SDL_Scancode right = SDL_SCANCODE_RIGHT;
-    SDL_Scancode a = SDL_SCANCODE_X;
-    SDL_Scancode b = SDL_SCANCODE_Z;
-    SDL_Scancode x = SDL_SCANCODE_S;
-    SDL_Scancode y = SDL_SCANCODE_A;
-    SDL_Scancode l = SDL_SCANCODE_Q;
-    SDL_Scancode r = SDL_SCANCODE_W;
-    SDL_Scancode start = SDL_SCANCODE_RETURN;
-    SDL_Scancode select = SDL_SCANCODE_RSHIFT;
+  using KeyMap = KeyboardMap;
+  struct Gamepad {
+    SDL_JoystickID id = 0;
+    std::string name, key;
   };
+  static std::vector<Gamepad> ConnectedGamepads();
 
   explicit SdlInputProvider();
   explicit SdlInputProvider(const KeyMap &keyMap);
+  explicit SdlInputProvider(const InputBindings &bindings);
   ~SdlInputProvider() override;
 
   // IInputProvider
@@ -53,14 +37,29 @@ public:
     gunFocused_ = focused;
   }
 
-  /// Replace the current key mapping at runtime.
-  void SetKeyMap(const KeyMap &keyMap) noexcept {
-    keyMap_ = keyMap;
+  void SetBindings(const InputBindings &bindings);
+  void AdvanceFrame() noexcept override {
+    turboPhase_ = (turboPhase_ + 1) % (2 * unsigned(bindings_.turboFrequency));
   }
-
-  /// Access the current key mapping.
-  const KeyMap &GetKeyMap() const noexcept {
-    return keyMap_;
+  void SetEnabled(bool enabled) noexcept {
+    if (enabled_ == enabled)
+      return;
+    enabled_ = enabled;
+    ResetSampling();
+  }
+  void ResetSampling() noexcept {
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    mouseState_ = {};
+    mouseFractionX_ = mouseFractionY_ = 0;
+    lastMouseFrame_ = lastMotionFrame_ = lastDeviceFrame_ = uint64_t(-1);
+    lastGunFrame_.fill(uint64_t(-1));
+  }
+  void SetUiCapture(bool keyboard, bool pointer) noexcept {
+    if (captureKeyboard_ == keyboard && capturePointer_ == pointer)
+      return;
+    captureKeyboard_ = keyboard;
+    capturePointer_ = pointer;
+    ResetSampling();
   }
 
 private:
@@ -90,18 +89,31 @@ private:
   static ScriptRanges ParseScript();
   bool ScriptPressed(Button button, uint64_t frameIndex) const noexcept;
 
-  KeyMap keyMap_;
+  InputBindings bindings_;
+  bool enabled_ = true;
+  bool captureKeyboard_ = false, capturePointer_ = false;
   ScriptRanges scriptedRanges_;
-  std::array<SDL_Gamepad *, 8> gamepads_{};
+  std::vector<SDL_Gamepad *> gamepads_{8};
+  std::vector<std::string> gamepadKeys_{8};
   void RefreshGamepads(uint64_t frameIndex);
+  SDL_Gamepad *ResolveGamepad(const std::string &device, int automatic);
+  bool Pressed(const InputBinding &binding, SDL_Gamepad *pad, int threshold) const;
+  bool Pressed(const InputAlternatives &bindings, SDL_Gamepad *pad, int threshold) const;
+  bool MappedButton(const InputAlternatives &normal, const InputAlternatives &turbo,
+                    SDL_Gamepad *pad, int threshold) const;
+  float ReadAxis(const AxisAlternatives &bindings, SDL_Gamepad *pad, int threshold, uint64_t frame);
+  void SampleMotion(uint64_t frame);
   uint64_t lastDeviceFrame_ = uint64_t(-1);
+  unsigned turboPhase_ = 0;
+  std::array<float, 2> motion_{};
+  uint64_t lastMotionFrame_ = uint64_t(-1);
   float mouseFractionX_ = 0, mouseFractionY_ = 0;
   snes::core::MouseState mouseState_;
   uint64_t lastMouseFrame_ = uint64_t(-1);
   VideoViewport gunViewport_;
   bool gunFocused_ = false;
-  int secondGunX_ = 128, secondGunY_ = 112;
-  uint64_t lastGunFrame_ = uint64_t(-1);
+  std::array<std::array<float, 2>, 2> gunPosition_{{{128, 112}, {128, 112}}};
+  std::array<uint64_t, 2> lastGunFrame_{uint64_t(-1), uint64_t(-1)};
 };
 
 } // namespace snes::frontend

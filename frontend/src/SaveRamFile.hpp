@@ -14,6 +14,9 @@ public:
   std::vector<uint8_t> Load(size_t expectedSize);
   std::vector<uint8_t> LoadUpTo(size_t maximumSize);
   void Flush(std::span<const uint8_t> data);
+  const std::filesystem::path &Path() const noexcept {
+    return path_;
+  }
 
 private:
   std::vector<uint8_t> Read(size_t size);

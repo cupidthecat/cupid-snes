@@ -30,6 +30,9 @@ namespace snes::core {
 class PpuBackground;
 class PpuObject;
 class PowerOnState;
+namespace detail {
+class StateArchive;
+}
 
 // Ppu - PPU register model
 class Ppu {
@@ -59,6 +62,7 @@ public:
   const Config &Configuration() const noexcept {
     return config_;
   }
+  void SerializeState(detail::StateArchive &archive);
 
   // Bus interface - called from MemoryBus via handler callbacks
   //   addr is the full 24-bit address (only $2100-$213F are dispatched here)

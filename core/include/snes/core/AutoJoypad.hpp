@@ -38,6 +38,7 @@ public:
 
   /// Reset all state to power-on defaults.
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
 
   // Timing interface
 

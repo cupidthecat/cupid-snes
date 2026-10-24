@@ -23,6 +23,7 @@ public:
                std::span<const uint8_t> firmware, Layout layout = Layout::LoRom);
   ~Cx4Processor();
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   RetainedStorage CaptureStorage() const noexcept;
   void InitializeStorage(const RetainedStorage &storage);
   void SetPal(bool pal);

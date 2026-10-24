@@ -25,7 +25,7 @@ The implementation details and validation boundaries are documented below. The [
 
 ## Build
 
-Build from the repository directory with CMake 3.21 or newer, Ninja, and a C++20 compiler. CMake uses an installed SDL3 when it finds one. Otherwise it fetches SDL3 release 3.2.8 and builds it as a static library, so the first configure may need network access.
+Build from the repository directory with CMake 3.21 or newer, Ninja, and a C++20 compiler. CMake uses an installed SDL3 when it finds one. Otherwise it fetches SDL3 release 3.2.8 and builds it as a static library. The desktop UI uses Dear ImGui 1.92.5, fetched from a release archive with a checked SHA-256 digest. The first configure needs network access for missing dependencies.
 
 The repository provides Debug and Release presets. The usual Release build and test commands are:
 
@@ -39,7 +39,7 @@ Use the `debug` preset and `out/build/debug` when you need an instrumented devel
 
 ## Run a game
 
-The SDL frontend takes a ROM path. It accepts ordinary `.sfc` and `.smc` images, including images with a 512-byte copier header when the loader can identify the header.
+Launch the SDL frontend without arguments to open the desktop window, or pass a ROM path. It accepts ordinary `.sfc` and `.smc` images, including images with a 512-byte copier header when the loader can identify the header. Use Ctrl+O or drop a file into the window to open a game. [Desktop controls](docs/desktop.md) covers menus, pause, frame advance, reset, fullscreen, screenshots, and save handling.
 
 ```powershell
 .\out\build\release\frontend\snes_frontend.exe "C:\path\to\game.sfc"

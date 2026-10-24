@@ -14,6 +14,7 @@ public:
   NecDsp(FirmwareKind firmware, Board board);
   bool LoadFirmware(std::span<const uint8_t> bytes);
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void SetPal(bool pal);
   void Advance(uint32_t masterClocks);
   void MapCpu(MemoryBus &bus, uint8_t slot) const;

@@ -133,6 +133,7 @@ bool Cartridge::Load(std::span<const uint8_t> image, std::string *) {
   }
   const unsigned tpp1RamCode = program[0x152];
   rom_ = std::move(program);
+  stateIdentity_.reset();
   mapper_ = mapper;
   battery_ = battery;
   clock_ = clock;

@@ -2,6 +2,7 @@
 #include "snes/core/PowerOnState.hpp"
 #include "snes/core/Timing.hpp"
 #include "snes/core/detail/ExecutionContext.hpp"
+#include "snes/core/detail/Sha256.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -12,6 +13,7 @@ St018Processor::St018Processor(std::span<const uint8_t> firmware) {
   if (firmware.size() != firmware_.size())
     throw std::invalid_argument("Invalid ST018 firmware size");
   std::copy(firmware.begin(), firmware.end(), firmware_.begin());
+  firmwareDigest_ = detail::Sha256(firmware_);
   Reset();
 }
 
@@ -19,6 +21,11 @@ St018Processor::~St018Processor() = default;
 
 void St018Processor::Restart() {
   execution_.reset();
+  phase_ = Phase::Begin;
+  instruction_ = {};
+  replaying_ = false;
+  recording_ = true;
+  replayIndex_ = 0;
   Arm6::Reset();
   ready_ = signal_ = inputReady_ = outputReady_ = false;
   timer_ = timerLatch_ = 0;
@@ -53,14 +60,7 @@ void St018Processor::Synchronize() {
   if (balance_ >= 0)
     return;
   if (!execution_) {
-    execution_ = std::make_unique<detail::ExecutionContext>([this] {
-      while (reset_)
-        Cycle(1);
-      Cycle(65536);
-      ready_ = true;
-      for (;;)
-        RunInstruction();
-    });
+    execution_ = std::make_unique<detail::ExecutionContext>([this] { RunWorker(); });
   }
   execution_->Resume();
 }
@@ -74,7 +74,10 @@ void St018Processor::Cycle(unsigned clocks) {
 }
 
 void St018Processor::IdleArm() {
-  Cycle(1);
+  if (recording_)
+    BeginAccess(AccessKind::Idle);
+  else
+    Cycle(1);
 }
 
 uint8_t St018Processor::Status() const {
@@ -118,7 +121,18 @@ void St018Processor::Write(uint32_t address, uint8_t value) {
 }
 
 uint32_t St018Processor::ReadArm(unsigned access, uint32_t address) {
-  Cycle(1);
+  if (!recording_) {
+    Cycle(1);
+    return ReadMemory(access, address);
+  }
+  if (const auto *record = BeginAccess(AccessKind::Read, access, address))
+    return record->result;
+  const auto result = ReadMemory(access, address);
+  instruction_.accesses[instruction_.count - 1].result = result;
+  return result;
+}
+
+uint32_t St018Processor::ReadMemory(unsigned access, uint32_t address) {
   const unsigned width = access & Width;
   const auto memory = [&](std::span<const uint8_t> bytes, unsigned offset) -> uint32_t {
     if (width == Byte)
@@ -159,7 +173,17 @@ uint32_t St018Processor::ReadArm(unsigned access, uint32_t address) {
 }
 
 void St018Processor::WriteArm(unsigned access, uint32_t address, uint32_t value) {
-  Cycle(1);
+  if (!recording_) {
+    Cycle(1);
+    WriteMemory(access, address, value);
+    return;
+  }
+  if (BeginAccess(AccessKind::Write, access, address, value))
+    return;
+  WriteMemory(access, address, value);
+}
+
+void St018Processor::WriteMemory(unsigned access, uint32_t address, uint32_t value) {
   if ((address >> 29) == 7) {
     const unsigned width = access & Width;
     if (width == Byte)
@@ -197,4 +221,61 @@ void St018Processor::WriteArm(unsigned access, uint32_t address, uint32_t value)
   }
 }
 
+void St018Processor::RunWorker() {
+  // A restored worker starts just after the clock yield retained in its phase.
+  if (phase_ == Phase::ResetClock)
+    phase_ = Phase::Begin;
+  else if (phase_ == Phase::StartupClock) {
+    ready_ = true;
+    phase_ = Phase::Instruction;
+  } else if (phase_ == Phase::Instruction) {
+    RestoreExecutionState(instruction_.start);
+    replayIndex_ = 0;
+    replaying_ = true;
+    recording_ = true;
+    RunInstruction();
+  }
+  for (;;) {
+    if (phase_ == Phase::Begin) {
+      if (reset_) {
+        phase_ = Phase::ResetClock;
+        Cycle(1);
+        phase_ = Phase::Begin;
+        continue;
+      }
+      phase_ = Phase::StartupClock;
+      Cycle(65536);
+      ready_ = true;
+      phase_ = Phase::Instruction;
+    }
+    instruction_.count = 0;
+    replaying_ = false;
+    // Every access costs one clock. Only instructions close enough to yield
+    // need a starting pipeline and a journal for rebuilding suspended work.
+    recording_ = balance_ >= -int64_t(MaximumAccesses) * masterFrequency_;
+    if (recording_)
+      instruction_.start = CaptureExecutionState();
+    RunInstruction();
+  }
+}
+
+const St018Processor::AccessRecord *St018Processor::BeginAccess(AccessKind kind, unsigned access,
+                                                                uint32_t address, uint32_t data) {
+  if (replaying_) {
+    const auto &record = instruction_.accesses[replayIndex_++];
+    if (record.kind != kind || record.access != access || record.address != address ||
+        record.data != data)
+      throw std::logic_error("Invalid ARM instruction continuation");
+    if (replayIndex_ < instruction_.count)
+      return &record;
+    // The final access already paid its clock but has not touched the bus yet.
+    replaying_ = false;
+    return nullptr;
+  }
+  if (instruction_.count == MaximumAccesses)
+    throw std::logic_error("ARM instruction exceeds its bus access limit");
+  instruction_.accesses[instruction_.count++] = {kind, access, address, data, 0};
+  Cycle(1);
+  return nullptr;
+}
 } // namespace snes::core

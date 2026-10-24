@@ -1,4 +1,36 @@
 add_library(snes_core
+  src/state/StateArchive.cpp
+  src/state/SystemState.cpp
+  src/state/EmulatorState.cpp
+  src/state/ProcessorState.cpp
+  src/state/AudioState.cpp
+  src/state/DspState.cpp
+  src/state/StreamState.cpp
+  src/state/PpuState.cpp
+  src/state/BusState.cpp
+  src/state/TimingState.cpp
+  src/state/InputState.cpp
+  src/state/Sha256.cpp
+  src/state/ClockState.cpp
+  src/state/CartridgeMemoryState.cpp
+  src/state/CartridgeState.cpp
+  src/state/Msu1State.cpp
+  src/state/DecoderState.cpp
+  src/state/Spc7110State.cpp
+  src/state/CommandDspState.cpp
+  src/state/MapDspState.cpp
+  src/state/SignalProcessorState.cpp
+  src/state/ArmState.cpp
+  src/state/St018State.cpp
+  src/state/Hg51bState.cpp
+  src/state/Cx4State.cpp
+  src/state/SuperFxState.cpp
+  src/state/gameboy/CpuState.cpp
+  src/state/gameboy/PeripheralState.cpp
+  src/state/gameboy/CartridgeState.cpp
+  src/state/gameboy/VideoState.cpp
+  src/state/gameboy/AudioState.cpp
+  src/state/gameboy/MachineState.cpp
   src/cartridge/Cartridge.cpp
   src/cartridge/gameboy/Adapter.cpp
   src/cartridge/gameboy/Audio.cpp
@@ -26,6 +58,8 @@ add_library(snes_core
   src/cartridge/NecDsp.cpp
   src/cartridge/NecDspBoard.cpp
   src/cartridge/Msu1.cpp
+  src/cartridge/msu1/Resource.cpp
+  src/cartridge/msu1/Stream.cpp
   src/cartridge/BsMemory.cpp
   src/cartridge/BroadcastCartridge.cpp
   src/cartridge/Sdd1.cpp
@@ -80,6 +114,7 @@ add_library(snes_core
   src/dma/Dma.cpp
   src/timing/Timing.cpp
   src/system/Emulator.cpp
+  src/system/FrameExecution.cpp
   src/system/Compatibility.cpp
   src/system/ExecutionContext.cpp
   src/system/Logging.cpp

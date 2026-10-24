@@ -4,10 +4,15 @@
 #include <array>
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class StartupState {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Memory {
     std::array<uint8_t, 8192> work{};
     std::array<uint8_t, 127> high{};

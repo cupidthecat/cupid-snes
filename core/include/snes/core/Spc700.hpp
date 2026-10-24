@@ -17,6 +17,10 @@
 
 namespace snes::core {
 
+namespace detail {
+class StateArchive;
+}
+
 class Spc700 {
 public:
   Spc700();
@@ -92,9 +96,13 @@ public:
     return cycles_;
   }
   [[nodiscard]] bool InstructionInProgress() const noexcept;
+  // Finish only the instruction already in flight. A stopped CPU remains stopped.
+  void SynchronizeState();
+  void SerializeState(detail::StateArchive &archive);
 
 protected:
   uint64_t cycles_ = 0; // Total cycles consumed
+  void DiscardExecution() noexcept;
 
   void *AllocateCoroutineFrame(std::size_t size);
   static void ReleaseCoroutineFrame(void *frame) noexcept;

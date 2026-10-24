@@ -21,6 +21,10 @@
 
 namespace snes::core {
 
+namespace detail {
+class StateArchive;
+}
+
 // Processor65816  - reusable 65C816 CPU core
 class Processor65816 {
 public:
@@ -93,6 +97,9 @@ public:
 
   // Instruction execution - runs one full instruction
   void instruction();
+
+  // The owner must finish its current instruction before writing state.
+  void SerializeState(detail::StateArchive &archive);
 
   // Register accessors
   const Registers &regs() const noexcept {

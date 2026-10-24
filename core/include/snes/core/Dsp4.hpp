@@ -6,12 +6,16 @@
 #include <vector>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 // Stateful byte port for road, window and object projection commands.
 class Dsp4 {
 public:
   Dsp4() = default;
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   uint8_t Read(uint16_t address);
   void Write(uint16_t address, uint8_t value);
   static bool Selects(uint32_t address) noexcept;
@@ -82,7 +86,7 @@ private:
 
   std::array<uint8_t, 96> input_{};
   std::vector<uint8_t> output_;
-  size_t received_ = 0, needed_ = 0, cursor_ = 0, outputCursor_ = 0;
+  uint32_t received_ = 0, needed_ = 0, cursor_ = 0, outputCursor_ = 0;
   unsigned commandBytes_ = 0;
   uint16_t command_ = 0;
   bool commandReady_ = true;

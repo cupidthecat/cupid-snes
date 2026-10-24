@@ -1,6 +1,8 @@
 // Top-level emulator lifecycle and subsystem interface.
 
 #pragma once
+
+#include "snes/core/StateOperation.hpp"
 // Owns every hardware subsystem and wires them together:
 //   CPU (65816)  ↔  MemoryBus  ↔  PPU / APU / DMA / Cartridge
 //   Timing → DRAM refresh, HDMA, NMI/IRQ polling, auto-joypad
@@ -92,6 +94,8 @@ public:
   void AttachVideoOutput(IVideoOutput *output);
   void AttachAudioOutput(IAudioOutput *output);
   void AttachInputProvider(IInputProvider *input);
+  // The host clock binding applies to current and future handheld loads.
+  void SetGameBoyTimeSource(std::function<uint64_t()> source);
   void AddTraceSink(ITraceSink *sink);
 
   bool LoadCartridge(std::span<const uint8_t> romData, std::string *error = nullptr);
@@ -115,14 +119,23 @@ public:
                                          const std::array<std::string, 4> &paths,
                                          std::string *error = nullptr);
   bool LoadMemoryPack(std::span<const uint8_t> data) {
-    return cartridge_ && cartridge_->LoadMemoryPack(data);
+    const bool loaded = cartridge_ && cartridge_->LoadMemoryPack(data);
+    if (loaded)
+      InvalidatePreparedRestores();
+    return loaded;
   }
   bool LoadMemoryPackMetadata(std::span<const uint8_t> bytes) {
-    return cartridge_ && cartridge_->LoadMemoryPackMetadata(bytes);
+    const bool loaded = cartridge_ && cartridge_->LoadMemoryPackMetadata(bytes);
+    if (loaded)
+      InvalidatePreparedRestores();
+    return loaded;
   }
   bool LoadBroadcastStream(uint16_t channel, uint8_t sequence, std::span<const uint8_t> data) {
-    return config_.expansionDevice == ExpansionDevice::Satellaview &&
-           broadcastReceiver_.LoadStream(channel, sequence, data);
+    const bool loaded = config_.expansionDevice == ExpansionDevice::Satellaview &&
+                        broadcastReceiver_.LoadStream(channel, sequence, data);
+    if (loaded)
+      InvalidatePreparedRestores();
+    return loaded;
   }
   bool SetBroadcastTimeSource(std::function<BroadcastTime()> source) {
     if (config_.expansionDevice != ExpansionDevice::Satellaview)
@@ -162,8 +175,33 @@ public:
 
   // Call between emulation steps. Retains RAM, media and platform attachments.
   bool Reset();
+  bool PowerCycle();
 
   FrameStepResult StepFrame(const FrameStepOptions &options = {});
+
+  class PreparedStateRestore {
+  public:
+    PreparedStateRestore(PreparedStateRestore &&) noexcept;
+    PreparedStateRestore &operator=(PreparedStateRestore &&) noexcept;
+    ~PreparedStateRestore();
+    void Commit();
+
+  private:
+    friend class Emulator;
+    struct Impl;
+    explicit PreparedStateRestore(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+  };
+
+  // Call between emulation steps. Capture may complete pending hardware work
+  // and deliver crossed fields. Restore retains the target's platform bindings.
+  std::vector<uint8_t> CaptureState(const StateOperation &operation = {});
+  PreparedStateRestore PrepareStateRestore(std::span<const uint8_t> bytes,
+                                           const StateOperation &operation = {});
+  void RestoreState(std::span<const uint8_t> bytes, const StateOperation &operation = {});
+  const VideoFrame &LastFrame() const noexcept {
+    return videoOutputFrame_;
+  }
 
   uint64_t CurrentFrame() const noexcept;
   uint64_t CurrentMasterCycles() const noexcept;
@@ -212,8 +250,16 @@ private:
   bool LoadCartridgeWithFirmware(std::span<const uint8_t> romData,
                                  const CartridgeFirmware *firmware, std::string *error);
   void ResetHardware(bool warm);
+  bool Restart(bool warm);
   void AdvanceClocks(uint32_t clocks);
   void SynchronizeDevices(bool communication = false);
+  void RouteDspSamples(int firstSample);
+  void SynchronizeState(const StateOperation &operation);
+  void SerializeState(detail::StateArchive &archive);
+  void BeginFrame();
+  FrameStepResult FinishFrame();
+  void ResumeFrameExecution(bool instructionBoundary);
+  void InvalidatePreparedRestores() noexcept;
   void ConfigureAudioStreams();
   void AttachMsu1(const std::string &path);
   void SynchronizeExpansionAudio(uint64_t elapsed);
@@ -280,6 +326,15 @@ private:
   bool pendingHdmaRun_ = false;
   bool servicingHdma_ = false;
   bool dmaArmed_ = false;
+
+  enum class YieldReason { None, Frame, Instruction };
+  YieldReason yieldReason_ = YieldReason::None;
+  bool atStateBoundary_ = true;
+  bool synchronizingState_ = false;
+  bool frameOpen_ = false;
+  InputState frameInput_{};
+  std::shared_ptr<uint8_t> restoreLifetime_;
+  std::function<uint64_t()> handheldTimeSource_;
 };
 
 } // namespace snes::core

@@ -4,6 +4,7 @@
 #include "snes/core/detail/ExecutionContext.hpp"
 
 #include <bit>
+#include <limits>
 #include <stdexcept>
 
 namespace snes::core {
@@ -42,14 +43,18 @@ void Cx4Processor::SetPal(bool pal) {
 }
 
 void Cx4Processor::Advance(uint32_t masterClocks, bool synchronize) {
-  balance_ -= int64_t(masterClocks) * 20'000'000;
+  const auto elapsed = int64_t(masterClocks) * 20'000'000;
+  if (balance_ < std::numeric_limits<int64_t>::min() + elapsed)
+    throw std::overflow_error("Cx4 elapsed clocks exceed the supported range");
+  balance_ -= elapsed;
   if (delayedSync_ && !synchronize)
     return;
   if (balance_ < 0 && CanAdvanceIdle()) {
     // No pending event can change halted state. Retain the same final clock edge
     // without resuming the worker for each otherwise empty processor cycle.
-    const int64_t clocks = (-balance_ + masterFrequency_ - 1) / masterFrequency_;
-    balance_ += clocks * masterFrequency_;
+    const uint64_t debt = uint64_t(-(balance_ + 1)) + 1;
+    const uint64_t clocks = debt / masterFrequency_ + (debt % masterFrequency_ != 0);
+    balance_ = int64_t(clocks * masterFrequency_ - debt);
     return;
   }
   Synchronize();

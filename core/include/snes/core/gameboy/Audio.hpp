@@ -6,10 +6,15 @@
 #include <array>
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Audio final : private SoundChannels::Output {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Output {
     virtual ~Output() = default;
     virtual void Sample(uint64_t clock, int16_t left, int16_t right) = 0;

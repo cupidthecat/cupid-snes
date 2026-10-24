@@ -82,6 +82,8 @@ public:
   virtual LightGunState PollLightGun(int /*port*/, int /*gun*/, uint64_t /*frameIndex*/) {
     return {};
   }
+  // Notify one completed display field, including fields completed during capture.
+  virtual void AdvanceFrame() noexcept {}
 };
 
 class ITimingSource {

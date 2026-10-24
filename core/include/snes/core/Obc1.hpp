@@ -6,12 +6,17 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Obc1 {
 public:
   explicit Obc1(std::span<uint8_t> ram) : ram_(ram) {
     Reset();
   }
+  // Cartridge RAM remains owned and serialized by the caller.
+  void SerializeState(detail::StateArchive &archive);
   static bool Selects(uint32_t address) noexcept {
     const unsigned bank = (address >> 16) & 0xff;
     return (address & 0x40e000) == 0x006000 ||

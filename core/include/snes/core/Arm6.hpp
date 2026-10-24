@@ -4,6 +4,9 @@
 #include <cstdint>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Arm6 {
 public:
@@ -23,6 +26,7 @@ public:
     std::array<std::array<uint32_t, 2>, 4> bank{};
     std::array<uint32_t, 5> saved{};
     uint32_t status = 0;
+    bool operator==(const State &) const = default;
   };
 
   virtual ~Arm6() = default;
@@ -32,8 +36,21 @@ public:
     return state_;
   }
   void SetState(const State &state);
+  void SerializeState(detail::StateArchive &archive);
 
 protected:
+  struct ExecutionState {
+    State registers;
+    uint32_t fetched = 0, decoded = 0, decodedAddress = 0;
+    bool reload = true, sequential = false, carry = false;
+    bool operator==(const ExecutionState &) const = default;
+  };
+  ExecutionState CaptureExecutionState() const noexcept {
+    return {state_, fetched_, decoded_, decodedAddress_, reload_, sequential_, carry_};
+  }
+  void RestoreExecutionState(const ExecutionState &state) noexcept;
+  static void SerializeExecutionState(detail::StateArchive &archive, ExecutionState &state);
+  ExecutionState SerializeArmState(detail::StateArchive &archive);
   virtual uint32_t ReadArm(unsigned access, uint32_t address) = 0;
   virtual void WriteArm(unsigned access, uint32_t address, uint32_t value) = 0;
   virtual void IdleArm() = 0;

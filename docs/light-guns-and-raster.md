@@ -19,9 +19,11 @@ The frontend accepts Super Scope, one or two Justifiers, and MACS rifle on conso
 | Offscreen aim | Hold O or move outside the picture | Hold U |
 | Scope cursor | Right mouse button | None |
 | Scope turbo switch | T toggles | None |
-| Scope pause | P | None |
+| Scope pause | Space | None |
 
-Green and magenta crosshairs show the two aim positions. They are drawn over the displayed picture and are absent from saved probe frames. Unfocused windows release the gun buttons and report offscreen aim. The frontend rejects a relative mouse on port one when port two uses a gun, since both would need the same host pointer.
+Green and magenta crosshairs show the two aim positions. They are drawn over the displayed picture and are absent from saved probe frames. File > Preferences > Peripherals remaps buttons and relative axes for each gun. The first gun can use absolute pointer aim or relative movement; the second defaults to three aim positions per field with I/J/K/L. P remains the desktop pause shortcut, independently of the Scope's pause button.
+
+The selected focus policy controls background button input. Absolute pointer aim reports offscreen when the window is unfocused, hidden, or minimized. Relative keyboard or gamepad aim remains available when background input is allowed. The frontend rejects a relative mouse on port one when port two uses a gun, since both would need the same host pointer.
 
 Aiming follows the centered picture when the window resizes. Letterbox borders count as offscreen. High resolution uses the same 256 horizontal aim positions; interlaced output maps back to 224 or 239 visible rows. Windows smaller than the native picture scale down to fit.
 

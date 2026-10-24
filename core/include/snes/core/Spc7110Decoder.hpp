@@ -4,10 +4,14 @@
 #include <functional>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 class Spc7110Decoder {
 public:
   using Reader = std::function<uint8_t(uint32_t)>;
   explicit Spc7110Decoder(Reader reader);
+  void SerializeState(detail::StateArchive &archive);
   void Initialize(unsigned mode, uint32_t origin);
   uint32_t NextRow();
   unsigned BitDepth() const noexcept {

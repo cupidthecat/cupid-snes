@@ -6,10 +6,15 @@
 #include <optional>
 #include <span>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Tpp1 {
 public:
+  void SerializeState(detail::StateArchive &archive);
   void Reset(uint64_t timestamp) noexcept;
   unsigned RomBank() const noexcept {
     return bankWritten_ ? romBank_ : 1;

@@ -58,6 +58,10 @@ public:
     return dmaActive_;
   }
 
+  // Finish retained work at a portable operation boundary, preserving clock lead.
+  void SynchronizeState();
+  void SerializeState(detail::StateArchive &archive);
+
 private:
   void RunPending();
   enum class Side { Cpu, Sa1 };
@@ -93,6 +97,7 @@ private:
   bool conversionActive_ = false;
   uint8_t conversionRows_ = 0;
   uint8_t conversionBuffer_ = 0;
+  bool synchronizingState_ = false, atStateBoundary_ = true;
 
   // Destroy the suspended stack before the memory and register state it uses.
   std::unique_ptr<detail::ExecutionContext> execution_;

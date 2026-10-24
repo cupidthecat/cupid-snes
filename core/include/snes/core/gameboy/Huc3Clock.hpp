@@ -5,10 +5,15 @@
 #include <cstdint>
 #include <span>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Huc3Clock {
 public:
+  void SerializeState(detail::StateArchive &archive);
   void Reset(uint64_t timestamp) noexcept;
   uint8_t Read() const noexcept {
     return flags_ == 2 ? 1 : read_;

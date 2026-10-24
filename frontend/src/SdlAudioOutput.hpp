@@ -16,6 +16,8 @@
 
 #include <SDL3/SDL.h>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace snes::frontend {
 
@@ -24,6 +26,7 @@ public:
   struct Config {
     int sampleRate = snes::core::AudioTiming::SampleRate;
     int channels = 2; // stereo
+    std::string deviceName;
   };
 
   explicit SdlAudioOutput();
@@ -44,6 +47,13 @@ public:
 
   /// Pause the audio device.
   void Pause();
+
+  // Stop playback and discard host audio before a pause, reset or game change.
+  void Clear();
+  void SetVolume(int percent, bool muted = false);
+  // Select a fresh paused stream, retaining the old stream if opening fails.
+  void SelectDevice(const std::string &name);
+  static std::vector<std::string> DeviceNames();
 
   /// Returns true if the audio stream was created successfully.
   bool IsValid() const noexcept {
@@ -72,6 +82,8 @@ private:
   int targetQueuedBytes_ = 0;
   bool playbackRequested_ = false;
   bool playing_ = false;
+  int volume_ = 100;
+  bool muted_ = false;
 };
 
 } // namespace snes::frontend

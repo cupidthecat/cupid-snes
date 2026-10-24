@@ -7,6 +7,9 @@
 #include <vector>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class PowerOnState;
 
@@ -15,6 +18,8 @@ public:
   // The cartridge owns the image and keeps its allocation stable.
   BsMemory(std::span<uint8_t> image, bool readOnly);
   void Reset();
+  // The owner saves the attached image separately from the controller state.
+  void SerializeState(detail::StateArchive &archive);
   void InitializePageBuffers(PowerOnState &state);
   void SetWritable(bool writable);
   void SetPal(bool pal);

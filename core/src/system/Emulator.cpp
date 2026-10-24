@@ -1,6 +1,7 @@
 // Top-level subsystem wiring, cartridge loading, and frame execution.
 
 #include "snes/core/Emulator.hpp"
+#include "snes/core/FilePath.hpp"
 #include "snes/core/Logging.hpp"
 #include "snes/core/SnesCpu.hpp"
 #include "snes/core/detail/Compatibility.hpp"
@@ -19,7 +20,7 @@ namespace snes::core {
 
 namespace {
 std::optional<std::vector<uint8_t>> ReadImage(const std::string &path, std::string *error) {
-  std::ifstream file(path, std::ios::binary);
+  std::ifstream file(FilePath(path), std::ios::binary);
   if (!file) {
     if (error)
       *error = "Unable to open ROM file: " + path;
@@ -78,12 +79,14 @@ Emulator::Emulator(Config config)
 }
 
 Emulator::~Emulator() {
+  InvalidatePreparedRestores();
   StopFrameExecution();
 }
 
 // Platform attachment
 
 void Emulator::SetExpansionDevice(ExpansionDevice device) {
+  InvalidatePreparedRestores();
   config_.expansionDevice = device;
   broadcastReceiver_.Reset();
 }
@@ -100,6 +103,12 @@ void Emulator::AttachInputProvider(IInputProvider *input) {
   inputProvider_ = input;
 }
 
+void Emulator::SetGameBoyTimeSource(std::function<uint64_t()> source) {
+  handheldTimeSource_ = std::move(source);
+  if (cartridge_)
+    cartridge_->SetGameBoyTimeSource(handheldTimeSource_);
+}
+
 void Emulator::AddTraceSink(ITraceSink *sink) {
   if (sink == nullptr) {
     return;
@@ -110,6 +119,7 @@ void Emulator::AddTraceSink(ITraceSink *sink) {
 // Cartridge loading
 
 void Emulator::ReplaceCartridge(Cartridge &&cartridge) {
+  InvalidatePreparedRestores();
   StopFrameExecution();
   if (cartridge_)
     if (auto storage = cartridge_->CaptureCx4Storage())
@@ -174,7 +184,7 @@ bool Emulator::LoadCartridgeFromFile(const std::string &path, std::string *error
     return false;
   CartridgeFirmware adjacentFirmware;
   auto *firmware = config_.cartridgeFirmware.get();
-  const auto directory = std::filesystem::path(path).parent_path() / "firmware";
+  const auto directory = FilePath(path).parent_path() / "firmware";
   std::error_code fileError;
   if (!firmware && std::filesystem::is_directory(directory, fileError)) {
     if (!adjacentFirmware.LoadDirectory(directory, error))
@@ -189,7 +199,7 @@ bool Emulator::LoadCartridgeFromFile(const std::string &path, std::string *error
 
 void Emulator::AttachMsu1(const std::string &path) {
   auto msu1 = std::make_unique<Msu1>();
-  if (msu1->Open(path)) {
+  if (msu1->Open(FilePath(path))) {
     msu1_ = std::move(msu1);
     // Complete pending cartridge work before accessing the shared audio timeline.
     const auto slot = bus_.RegisterHandler(
@@ -212,7 +222,7 @@ void Emulator::AttachMsu1(const std::string &path) {
 
 bool Emulator::LoadSuperGameBoy(std::span<const uint8_t> bios, std::span<const uint8_t> game,
                                 std::span<const uint8_t> boot, std::string *error) {
-  auto cartridge = Cartridge::FromSuperGameBoy(bios, game, boot, error);
+  auto cartridge = Cartridge::FromSuperGameBoy(bios, game, boot, error, handheldTimeSource_);
   if (!cartridge)
     return false;
   ReplaceCartridge(std::move(*cartridge));
@@ -300,7 +310,7 @@ bool Emulator::LoadCompetitionCartridgeFromFiles(CompetitionBoard::Settings sett
   }
   CartridgeFirmware adjacentFirmware;
   auto *firmware = config_.cartridgeFirmware.get();
-  const auto directory = std::filesystem::path(paths[0]).parent_path() / "firmware";
+  const auto directory = FilePath(paths[0]).parent_path() / "firmware";
   std::error_code fileError;
   if (!firmware && std::filesystem::is_directory(directory, fileError)) {
     if (!adjacentFirmware.LoadDirectory(directory, error))
@@ -323,8 +333,11 @@ const Cartridge *Emulator::LoadedCartridge() const noexcept {
 
 void Emulator::InitSubsystems() {
   msu1_.reset();
-  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy)
+  if (cartridge_->Header().chip == EnhancementChip::SuperGameBoy) {
+    if (handheldTimeSource_)
+      cartridge_->SetGameBoyTimeSource(handheldTimeSource_);
     cartridge_->InitializeGameBoyStartup(handheldStartup_);
+  }
   // 1. Inter-subsystem connections
   dsp_.SetRam(smp_.Ram());
   smp_.SetDsp(dsp_);
@@ -515,7 +528,7 @@ void Emulator::InitSubsystems() {
     autoJoypad_.Ports().LatchLightGuns();
     ppu_.VBlankBegin();
     SynchronizeDevices();
-    if (execution_ && execution_->Running() && !singleInstruction_)
+    if (execution_ && execution_->Running() && (!singleInstruction_ || synchronizingState_))
       SuspendFrame();
   };
 
@@ -591,10 +604,29 @@ void Emulator::InitSubsystems() {
 }
 
 bool Emulator::Reset() {
+  return Restart(true);
+}
+
+bool Emulator::PowerCycle() {
+  return Restart(false);
+}
+
+bool Emulator::Restart(bool warm) {
+  InvalidatePreparedRestores();
   if (!initialized_)
     return false;
   StopFrameExecution();
-  ResetHardware(true);
+  bus_.ResetRegisters();
+  cartridge_->Reset();
+  if (dsp1_)
+    dsp1_->Reset();
+  if (dsp2_)
+    dsp2_->Reset();
+  if (srtc_)
+    srtc_->Reset();
+  if (msu1_)
+    msu1_->Reset();
+  ResetHardware(warm);
   return true;
 }
 
@@ -613,16 +645,6 @@ void Emulator::ResetHardware(bool warm) {
   if (compatibility.initializeWram)
     std::fill_n(bus_.WramData(), MemoryBus::WramSize, uint8_t{0xff});
   if (warm) {
-    bus_.ResetRegisters();
-    cartridge_->Reset();
-    if (dsp1_)
-      dsp1_->Reset();
-    if (dsp2_)
-      dsp2_->Reset();
-    if (srtc_)
-      srtc_->Reset();
-    if (msu1_)
-      msu1_->Reset();
     dsp_.SoftReset();
   } else {
     dsp_.Power();
@@ -680,7 +702,7 @@ void Emulator::ResetHardware(bool warm) {
   cpu_->Reset();
 }
 
-// StepFrame - run one complete video frame
+// StepFrame - advance to the next display event.
 
 FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   // Stub path - no cartridge loaded yet
@@ -739,75 +761,9 @@ FrameStepResult Emulator::StepFrame(const FrameStepOptions &options) {
   }
 
   // Real frame loop
-  autoJoypad_.Ports().PollLightGuns();
-  const auto input = inputProvider_ ? inputProvider_->PollController(0, frameIndex_) : InputState{};
-
-  // Prepare DSP audio buffer for this frame
-  audioOutputBuffer_.interleavedStereo.clear();
-  collectingAudio_ = audioOutput_ != nullptr;
-  dsp_.ResetSamplesWritten();
-  dsp_.SetOutput(audioBuf_.data(), kAudioBufSamples);
-
-  if (!execution_) {
-    execution_ = std::make_unique<detail::ExecutionContext>([this]() {
-      try {
-        for (;;) {
-          cpu_->Step();
-          if (singleInstruction_)
-            execution_->Suspend();
-        }
-      } catch (...) {
-        cpu_->stepSuspended_ = false;
-        throw;
-      }
-    });
-  }
-  singleInstruction_ = false;
-  execution_->Resume();
-  collectingAudio_ = false;
-  // End-of-frame processing
-
-  // RenderFrame is now called from VBlankBegin() - no separate call here.
-  // The previous duplicate call consumed V=1 from the next frame, causing
-  // alternating 1-line / 223-line renders and incorrect scroll values.
-
-  // Submit the aligned stereo stream.
-  if (audioOutput_) {
-    auto &audio = audioOutputBuffer_;
-    audio.sampleRate = AudioTiming::SampleRate;
-    audioOutput_->Submit(audio);
-  }
-
-  // Present video - extract only the visible region from the PPU's
-  // internal buffer. Visible rows are written starting at output row 0,
-  // so the frontend can copy them directly without preserving the hidden
-  // 240-line border area.
-  if (videoOutput_) {
-    auto &frame = videoOutputFrame_;
-    frame.width = ppu_.FrameWidth();
-    frame.height = ppu_.FrameHeight();
-    const uint32_t *src = ppu_.OutputData();
-    if (src) {
-      frame.pixels.resize(static_cast<size_t>(frame.width) * frame.height);
-      for (uint32_t y = 0; y < frame.height; y++) {
-        const uint32_t *row = src + static_cast<size_t>(y) * Ppu::OutputWidth;
-        std::copy_n(row, frame.width, frame.pixels.data() + y * frame.width);
-      }
-    } else {
-      frame.pixels.assign(static_cast<size_t>(frame.width) * frame.height, 0xFF000000);
-    }
-    videoOutput_->Present(frame);
-  }
-
-  // Update counters
-  masterCycles_ = timing_.MasterClocksElapsed();
-  ++frameIndex_;
-
-  return FrameStepResult{
-      .frameIndex = frameIndex_,
-      .masterCycles = masterCycles_,
-      .latchedInput = input,
-  };
+  BeginFrame();
+  ResumeFrameExecution(false);
+  return FinishFrame();
 }
 
 void Emulator::AdvanceClocks(uint32_t clocks) {
@@ -891,11 +847,15 @@ void Emulator::SynchronizeExpansionAudio(uint64_t elapsed) {
 void Emulator::SynchronizeDevices(bool communication) {
   if (!communication)
     return;
-  const bool adapter = cartridge_->Header().chip == EnhancementChip::SuperGameBoy;
   const int firstSample = dsp_.SamplesWritten();
   // Exchange with the sound processor at scanlines and communication accesses.
   // A handoff can finish the current sound bus phase beyond the console deadline.
   smp_.SynchronizeCpu(coprocessorCompletedClock_, timing_.MasterClockHz());
+  RouteDspSamples(firstSample);
+}
+
+void Emulator::RouteDspSamples(int firstSample) {
+  const bool adapter = cartridge_->Header().chip == EnhancementChip::SuperGameBoy;
   for (int sample = firstSample; sample < dsp_.SamplesWritten(); ++sample) {
     const auto left = audioBuf_[sample * 2];
     const auto right = audioBuf_[sample * 2 + 1];
@@ -912,6 +872,7 @@ void Emulator::SynchronizeDevices(bool communication) {
 }
 
 void Emulator::SuspendFrame() {
+  yieldReason_ = YieldReason::Frame;
   cpu_->stepSuspended_ = true;
   execution_->Suspend();
   cpu_->stepSuspended_ = false;
@@ -932,6 +893,11 @@ void Emulator::StopFrameExecution() {
     cpu_->stepSuspended_ = false;
   singleInstruction_ = false;
   // Cancellation unwinds any DMA guards before a reset or cartridge reload.
+  atStateBoundary_ = true;
+  synchronizingState_ = false;
+  frameOpen_ = false;
+  collectingAudio_ = false;
+  yieldReason_ = YieldReason::None;
   servicingHdma_ = false;
   dmaArmed_ = false;
 }

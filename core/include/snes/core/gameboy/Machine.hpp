@@ -12,10 +12,15 @@
 #include <memory>
 #include <utility>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Machine final : private Cpu::Bus, private ClockedIo::Bus {
 public:
+  void SerializeState(detail::StateArchive &archive);
   enum class Access { Cpu, Dma };
   struct Devices {
     virtual ~Devices() = default;

@@ -3,6 +3,8 @@
 #include "snes/core/MemoryBus.hpp"
 #include "snes/core/Timing.hpp"
 
+#include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace snes::core::gameboy {
@@ -49,7 +51,10 @@ uint32_t Adapter::ClockRate() const noexcept {
 
 void Adapter::Advance(uint32_t masterClocks, bool synchronize) {
   // Charge time under the current divider before a control write can reset it.
-  clockCredit_ += int64_t(masterClocks) * ClockRate();
+  const auto elapsed = int64_t(masterClocks) * ClockRate();
+  if (clockCredit_ > std::numeric_limits<int64_t>::max() - elapsed)
+    throw std::overflow_error("Handheld oscillator credit is outside the supported range");
+  clockCredit_ += elapsed;
   if (!synchronize)
     return;
   while (clockCredit_ > 0) {

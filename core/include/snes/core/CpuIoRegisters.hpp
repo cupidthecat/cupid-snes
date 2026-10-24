@@ -17,6 +17,9 @@
 #include <functional>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 // Callback typedefs for cross-component interaction
 
@@ -69,6 +72,7 @@ public:
 
   /// Reset all registers to power-on state
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
 
   // Bus read/write - these are called by MemoryBus handlers
   // The openBus parameter is the shared CPU memory data latch.

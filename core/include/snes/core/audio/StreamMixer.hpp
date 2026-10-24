@@ -8,6 +8,10 @@
 #include <functional>
 #include <vector>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::audio {
 
 class StreamMixer {
@@ -19,6 +23,8 @@ public:
   // A zero rate disables this input. Each call discards its queued history.
   void SetRate(Input input, uint32_t rate);
   void Write(Input input, double left, double right);
+  // The output callback stays attached while queued samples and phases restore.
+  void SerializeState(detail::StateArchive &archive);
 
 private:
   using Frame = std::array<double, 2>;

@@ -6,14 +6,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
+#include <memory>
 #include <span>
 #include <string>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Msu1 {
 public:
+  Msu1() = default;
+  Msu1(const Msu1 &) = delete;
+  Msu1 &operator=(const Msu1 &) = delete;
+  Msu1(Msu1 &&) noexcept = default;
+  Msu1 &operator=(Msu1 &&) noexcept = default;
+  void SerializeState(detail::StateArchive &archive);
   using StereoSample = std::array<int16_t, 2>;
   using OutputFrame = std::array<float, 2>;
   static constexpr uint32_t SampleRate = 44100;
@@ -46,18 +55,24 @@ private:
     void Close();
     bool Read(uint64_t offset, std::span<uint8_t> destination);
     bool IsOpen() const noexcept {
-      return file_.is_open();
+      return bool(resource_);
     }
     uint64_t Size() const noexcept {
-      return size_;
+      return state_.size;
     }
+    bool SerializeState(detail::StateArchive &archive, const std::filesystem::path &path,
+                        bool reuse);
 
   private:
-    std::ifstream file_;
-    std::array<uint8_t, 8192> cache_{};
-    uint64_t size_ = 0;
-    uint64_t cacheOffset_ = 0;
-    size_t cacheSize_ = 0;
+    struct Resource;
+    struct State {
+      std::array<uint8_t, 8192> cache{};
+      std::array<uint8_t, 32> identity{};
+      uint64_t size = 0, mediaSize = 0, cacheOffset = 0;
+      uint32_t cacheSize = 0;
+      bool opened = false;
+    } state_;
+    std::shared_ptr<Resource> resource_;
   };
 
   struct ResumePoint {
@@ -79,6 +94,7 @@ private:
   uint32_t dataSeek_ = 0;
   uint64_t dataOffset_ = 0;
   uint16_t track_ = 0;
+  uint16_t openedTrack_ = 0;
   uint8_t status_ = 0;
   uint8_t volume_ = 0;
   uint64_t audioPosition_ = 0;

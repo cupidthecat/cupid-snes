@@ -8,10 +8,15 @@
 #include <functional>
 #include <utility>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Video {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Output {
     virtual ~Output() = default;
     virtual void BeginFrame() = 0;

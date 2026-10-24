@@ -28,8 +28,8 @@ void MotionEeprom::Reset() noexcept {
 }
 
 void MotionEeprom::SetMotion(double x, double y) noexcept {
-  motionX_ = x;
-  motionY_ = y;
+  motionX_ = std::isfinite(x) ? x : 0;
+  motionY_ = std::isfinite(y) ? y : 0;
 }
 
 uint8_t MotionEeprom::Read(uint16_t address) const noexcept {

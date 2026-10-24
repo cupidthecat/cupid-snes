@@ -6,6 +6,9 @@
 #include <span>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class SuperFx {
 public:
@@ -35,6 +38,7 @@ public:
   void AdvanceMasterClocks(uint32_t clocks);
   // STOP and acknowledge reads drive this output independently of writable SFR bits.
   bool CpuIrqPending() const noexcept;
+  void SerializeState(detail::StateArchive &archive);
 
 private:
   struct Impl;

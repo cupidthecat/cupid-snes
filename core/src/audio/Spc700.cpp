@@ -31,10 +31,7 @@ void Spc700::ReleaseCoroutineFrame(void *frame) noexcept {
 }
 
 void Spc700::Power() {
-  executor_.Reset();
-  activeCoroutine_ = {};
-  pendingCycle_ = {};
-  atInstructionBoundary_ = true;
+  DiscardExecution();
   r.pc = 0xFFC0; // IPL ROM entry point
   r.a = 0x00;
   r.y = 0x00;
@@ -44,6 +41,13 @@ void Spc700::Power() {
   r.wait = false;
   r.stop = false;
   cycles_ = 0;
+}
+
+void Spc700::DiscardExecution() noexcept {
+  executor_.Reset();
+  activeCoroutine_ = {};
+  pendingCycle_ = {};
+  atInstructionBoundary_ = true;
 }
 
 // Memory access helpers
@@ -932,6 +936,11 @@ Spc700::Routine Spc700::InstrStop() {
 
 bool Spc700::InstructionInProgress() const noexcept {
   return static_cast<bool>(executor_) && !atInstructionBoundary_;
+}
+
+void Spc700::SynchronizeState() {
+  while (InstructionInProgress())
+    StepCycle();
 }
 
 void Spc700::BeginInstruction() {

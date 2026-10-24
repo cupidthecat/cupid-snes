@@ -18,6 +18,7 @@ public:
 
   // Reset control and mosaic state while retaining fetched column data.
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
   void BeginLine(uint16_t line, bool field, const Ppu::IO &io,
                  Ppu::RenderModel model = Ppu::RenderModel::Progressive);
   // Consume successive two-master-clock edges. True marks a complete output dot.

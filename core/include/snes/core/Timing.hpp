@@ -33,6 +33,9 @@
 #include <functional>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 // Region - NTSC vs PAL
 enum class Region : uint8_t {
@@ -87,6 +90,7 @@ public:
   // Construction
 
   explicit Timing(Region region = Region::NTSC, uint8_t cpuRevision = 2);
+  void SerializeState(detail::StateArchive &archive);
 
   // Configuration
 

@@ -21,6 +21,9 @@
 #include <memory>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Cartridge;
 class CpuIoRegisters;
@@ -100,6 +103,7 @@ public:
   void Reset();
   // Reset CPU-facing latches without changing memory or address dispatch.
   void ResetRegisters();
+  void SerializeState(detail::StateArchive &archive);
 
   // WRAM direct access (for DMA, WMDATA, testing)
   uint8_t *WramData() noexcept {

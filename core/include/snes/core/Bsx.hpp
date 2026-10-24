@@ -27,6 +27,8 @@ public:
   // Reset the controller/protocol without erasing any RAM or flash. Injected
   // broadcast assets and the time provider remain installed.
   void Reset();
+  // The cartridge saves the borrowed BIOS identity, pack and SRAM separately.
+  void SerializeState(detail::StateArchive &archive);
   void InitializePageBuffers(PowerOnState &state);
   void SetPal(bool pal);
   void Advance(uint32_t masterClocks, bool synchronizeProcessor = true);

@@ -11,6 +11,9 @@
 #include <cstring>
 
 namespace snes::core {
+namespace detail {
+class StateArchive;
+}
 
 class Dsp1 {
 public:
@@ -22,6 +25,7 @@ public:
   uint8_t GetDr();
   void SetDr(uint8_t value);
   void Reset();
+  void SerializeState(detail::StateArchive &archive);
 
 private:
   enum FsmMajorState { WAIT_COMMAND, READ_DATA, WRITE_DATA };
@@ -63,10 +67,10 @@ private:
   bool statusReadHigh_ = false;
   uint16_t dr_;
   unsigned fsmMajorState_;
-  uint8_t command_;
-  uint8_t dataCounter_;
-  int16_t readBuffer_[MAX_READS];
-  int16_t writeBuffer_[MAX_WRITES];
+  uint8_t command_ = 0;
+  uint8_t dataCounter_ = 0;
+  int16_t readBuffer_[MAX_READS]{};
+  int16_t writeBuffer_[MAX_WRITES]{};
   bool freeze_;
 
   void fsmStep(bool read, uint8_t &data);

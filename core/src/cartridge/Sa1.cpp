@@ -64,6 +64,8 @@ void Sa1::Reset() {
   dmaActive_ = false;
   conversionActive_ = false;
   conversionRows_ = conversionBuffer_ = 0;
+  synchronizingState_ = false;
+  atStateBoundary_ = true;
 }
 
 void Sa1::SetPal(bool enabled) noexcept {
@@ -145,14 +147,32 @@ void Sa1::RunPending() {
   if (!execution_) {
     execution_ = std::make_unique<detail::ExecutionContext>([this] {
       for (;;) {
+        atStateBoundary_ = false;
         if (dmaActive_)
           StepDma();
         else
           StepProcessor();
+        atStateBoundary_ = true;
+        if (synchronizingState_)
+          execution_->Suspend();
       }
     });
   }
   execution_->Resume();
+}
+
+void Sa1::SynchronizeState() {
+  RunPending();
+  if (!execution_ || atStateBoundary_)
+    return;
+  synchronizingState_ = true;
+  try {
+    execution_->Resume();
+  } catch (...) {
+    synchronizingState_ = false;
+    throw;
+  }
+  synchronizingState_ = false;
 }
 
 void Sa1::StepProcessor() {
@@ -177,6 +197,10 @@ void Sa1::instructionWait() {
       idle();
       return;
     }
+    if (synchronizingState_) {
+      idle();
+      return;
+    }
     lastCycle();
     idle();
   }
@@ -185,6 +209,8 @@ void Sa1::instructionWait() {
 void Sa1::instructionStop() {
   regs().stp = true;
   for (;;) {
+    if (synchronizingState_)
+      return;
     lastCycle();
     idle();
     if (!regs().stp)
@@ -302,7 +328,7 @@ void Sa1::Clock(uint32_t masterClocks) {
     const auto clocks = std::min(masterClocks, 2u);
     executedClocks_ += clocks;
     // Publish timer and bus effects only when this native step resumes.
-    if (executedClocks_ >= requestedClocks_)
+    if (!synchronizingState_ && executedClocks_ >= requestedClocks_)
       execution_->Suspend();
     AdvanceTimer(clocks);
     masterClocks -= clocks;

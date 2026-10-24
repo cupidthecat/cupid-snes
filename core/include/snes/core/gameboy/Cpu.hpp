@@ -3,10 +3,15 @@
 
 #include <cstdint>
 
+namespace snes::core::detail {
+class StateArchive;
+}
+
 namespace snes::core::gameboy {
 
 class Cpu {
 public:
+  void SerializeState(detail::StateArchive &archive);
   struct Bus {
     virtual ~Bus() = default;
     // The bus places register effects around the current machine cycle.

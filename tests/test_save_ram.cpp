@@ -160,10 +160,13 @@ void HandheldStorage(const fs::path &directory) {
 } // namespace
 
 int main() {
-  const auto directory =
+  const auto base =
       fs::temp_directory_path() / ("snes-save-test-" + std::to_string(SDL_GetTicksNS()));
-  if (!fs::create_directory(directory))
-    return 2;
+  auto directory = base;
+  for (unsigned suffix = 0; !fs::create_directory(directory); ++suffix) {
+    directory = base;
+    directory += "-" + std::to_string(suffix);
+  }
   struct Cleanup {
     fs::path path;
     ~Cleanup() {

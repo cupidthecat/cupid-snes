@@ -36,6 +36,7 @@ public:
 
   /// Execute an instruction or pending reset and return its CPU master clocks.
   uint32_t Step();
+  void SerializeState(detail::StateArchive &archive);
 
   /// External interrupt requests
   void RequestNmi();

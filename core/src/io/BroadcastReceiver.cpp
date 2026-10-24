@@ -1,4 +1,6 @@
 #include "snes/core/BroadcastReceiver.hpp"
+#include "snes/core/detail/Sha256.hpp"
+#include "snes/core/detail/StateArchive.hpp"
 #include <algorithm>
 #include <array>
 #include <ctime>
@@ -33,13 +35,18 @@ struct BroadcastReceiver::Impl {
     bool prefixEnabled = false, dataEnabled = false, loaded = false, first = false;
     uint8_t nextSequence = 0;
     StreamKey asset{};
-    size_t cursor = 0, remaining = 0;
+    uint32_t cursor = 0, remaining = 0;
+  };
+
+  struct Asset {
+    std::vector<uint8_t> bytes;
+    std::array<uint8_t, 32> digest;
   };
 
   std::array<uint8_t, 24> radio{};
   bool recordedStreams = false;
   std::array<Receiver, 2> receivers{};
-  std::map<StreamKey, std::vector<uint8_t>> assets;
+  std::map<StreamKey, Asset> assets;
   std::function<BroadcastTime()> timeSource;
   std::array<uint8_t, 23> clockRecord{};
   unsigned clockIndex = 0;
@@ -70,7 +77,7 @@ struct BroadcastReceiver::Impl {
     if (!state.loaded)
       return;
     state.asset = key;
-    state.remaining = (asset->second.size() + 21) / 22;
+    state.remaining = uint32_t((asset->second.bytes.size() + 21) / 22);
     state.first = true;
     radio[receiver * 6 + 5] = 0;
   }
@@ -137,7 +144,7 @@ struct BroadcastReceiver::Impl {
         return 1;
       if (!state.remaining)
         SelectAsset(receiver);
-      return uint8_t(std::min(state.remaining, size_t(127)));
+      return uint8_t(std::min(state.remaining, uint32_t{127}));
     case 3:
       if (!state.prefixEnabled)
         return 0;
@@ -160,9 +167,9 @@ struct BroadcastReceiver::Impl {
       if (!state.loaded)
         return 0;
       const auto asset = assets.find(state.asset);
-      if (asset == assets.end() || state.cursor >= asset->second.size())
+      if (asset == assets.end() || state.cursor >= asset->second.bytes.size())
         return 0xff;
-      return asset->second[state.cursor++];
+      return asset->second.bytes[state.cursor++];
     }
     case 5:
       return std::exchange(radio[reg], 0);
@@ -237,6 +244,40 @@ BroadcastReceiver::~BroadcastReceiver() = default;
 void BroadcastReceiver::Reset() {
   impl_->Reset();
 }
+void BroadcastReceiver::SerializeState(detail::StateArchive &archive) {
+  archive.Expect(impl_->recordedStreams);
+  archive.Expect(uint32_t(impl_->assets.size()));
+  for (const auto &[key, asset] : impl_->assets) {
+    archive.Expect(key.first);
+    archive.Expect(key.second);
+    archive.Expect(uint32_t(asset.bytes.size()));
+    for (auto byte : asset.digest)
+      archive.Expect(byte);
+  }
+  archive.Array(impl_->radio);
+  for (auto &receiver : impl_->receivers) {
+    archive.Number(receiver.prefixEnabled);
+    archive.Number(receiver.dataEnabled);
+    const auto loaded = archive.Number(receiver.loaded);
+    archive.Number(receiver.first);
+    archive.Number(receiver.nextSequence);
+    const auto channel = archive.Number(receiver.asset.first);
+    const auto sequence = archive.Number(receiver.asset.second);
+    const auto cursor = archive.Number(receiver.cursor);
+    const auto remaining = archive.Number(receiver.remaining);
+    if (loaded) {
+      const auto asset = impl_->assets.find({channel, sequence});
+      archive.Validate(asset != impl_->assets.end(), "Missing broadcast reception asset");
+      const auto size = asset->second.bytes.size();
+      archive.Validate(cursor <= size && remaining <= (size + 21) / 22,
+                       "Invalid broadcast reception position");
+    } else {
+      archive.Validate(cursor == 0 && remaining == 0, "Invalid unloaded broadcast receiver");
+    }
+  }
+  archive.Array(impl_->clockRecord);
+  archive.Bounded(impl_->clockIndex, 0u, impl_->recordedStreams ? 22u : 17u);
+}
 bool BroadcastReceiver::Selects(uint32_t address) noexcept {
   const unsigned bank = (address >> 16) & 0x7f;
   const unsigned offset = address & 0xffff;
@@ -263,7 +304,8 @@ bool BroadcastReceiver::LoadStream(uint16_t channel, uint8_t sequence,
   if (payload.empty())
     impl_->assets.erase(key);
   else
-    impl_->assets[key] = std::vector<uint8_t>(payload.begin(), payload.end());
+    impl_->assets[key] = {std::vector<uint8_t>(payload.begin(), payload.end()),
+                          detail::Sha256(payload)};
   for (auto &receiver : impl_->receivers) {
     if (receiver.loaded && receiver.asset == key) {
       receiver.loaded = false;

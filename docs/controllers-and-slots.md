@@ -2,18 +2,22 @@
 
 ## Controller setup
 
-Each console port accepts `pad`, `mouse`, `multitap`, or `none`. Both default to `pad`. Port two also accepts `scope`, `justifier`, `justifiers`, and `rifle`; see [light-gun setup and controls](light-guns-and-raster.md).
+Each console port accepts `pad`, `mouse`, `multitap`, or `none`. Both default to `pad`. File > Preferences > Devices saves the choices and changes connected devices without restarting the game. Port two also accepts `scope`, `justifier`, `justifiers`, and `rifle`; see [light-gun setup and controls](light-guns-and-raster.md). Command-line flags override the named choices for that run; Apply in the editor saves the active choices.
 
 ```powershell
 .\out\build\release\frontend\snes_frontend.exe --port1=mouse "C:\games\game.sfc"
 .\out\build\release\frontend\snes_frontend.exe --port2=multitap "C:\games\game.sfc"
 ```
 
-The keyboard and first host gamepad control player one. Additional host gamepads control subsequent players in connection order. The keyboard uses arrow keys, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start, and Right Shift for Select. Host gamepad face buttons map by position: south/east/west/north become B/A/Y/X. The left stick also controls the directional pad.
+By default, the keyboard and first host gamepad control player one. Additional host gamepads control subsequent players in connection order. The keyboard uses arrow keys, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start, and Right Shift for Select. Host gamepad face buttons map by position: south/east/west/north become B/A/Y/X. The left stick also controls the directional pad. File > Preferences > Input remaps all eight players, with four alternative controls per button. Each alternative accepts a key, gamepad button, signed gamepad axis, or mouse button.
 
 A multitap takes four consecutive player slots. With a pad on port one and a multitap on port two, players two through five use the multitap. Two multitaps expose eight players. A mouse or empty port reserves one player slot. Disconnecting a host gamepad releases its buttons and preserves the other assignments; a new device takes the first vacant slot.
 
-Mouse mode captures relative movement in the window. Escape exits. The frontend supports one host mouse on either console port; the core can receive separate mouse input for both ports.
+The Paths preference page can place battery files in a shared folder. Sufami Turbo slot saves keep each game's basename, so two games with the same save filename cannot share that folder while loaded together. A folder change retains the current machine and its battery data; see [battery files](desktop.md#battery-files).
+
+Each player can use its automatic gamepad slot, disable gamepad input, or select a particular connected gamepad. Explicit selections use the device GUID and its serial number or system path when available. Devices with neither use an ordinal; identical devices without a unique identity may need reselection after an application restart. A missing selected gamepad leaves its controls released. Keyboard and mouse alternatives remain independent of gamepad selection. Axis thresholds accept 1 through 32767; a control activates only when its magnitude exceeds the selected threshold.
+
+Mouse mode captures relative movement in the window. Escape exits. The frontend supports one host mouse on either console port; the core can receive separate mouse input for both ports. File > Preferences > Peripherals remaps mouse buttons and movement axes, including gamepad or digital sources, gain, and reversal. The Input page also provides separate turbo bindings for each player's non-directional buttons; see [desktop preferences](desktop.md#preferences).
 
 ## Serial behavior
 

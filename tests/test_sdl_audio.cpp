@@ -81,6 +81,57 @@ void PlaybackPrimesAndRecovers() {
   audio.Resume();
   Expect(WaitForDrain(audio), "explicit resume plays a queued buffer");
 }
+
+void GameChangesDiscardAudio() {
+  SdlAudioOutput audio;
+  audio.Submit(Tone(2400));
+  Expect(audio.QueuedBytes() > 0, "the previous game has queued audio");
+  audio.Clear();
+  Expect(!audio.IsPlaying() && audio.QueuedBytes() == 0 && !audio.HasPendingOutput(),
+         "changing games discards queued input and resampler output");
+  audio.Submit(Tone(2400));
+  const auto queued = audio.QueuedBytes();
+  SDL_Delay(30);
+  Expect(audio.QueuedBytes() == queued, "new game audio waits for an explicit resume");
+  audio.Resume();
+  Expect(WaitForDrain(audio), "new game audio primes and plays after resume");
+}
+
+void MutedPlaybackKeepsPacing() {
+  SdlAudioOutput::Config config;
+  config.deviceName = "A missing playback device";
+  SdlAudioOutput audio(config);
+  auto buffer = Tone(2400);
+  const auto original = buffer.interleavedStereo;
+  audio.SetVolume(175, true);
+  audio.Resume();
+  audio.Submit(buffer);
+  Expect(WaitForDrain(audio), "muted playback still drains and paces emulation");
+  Expect(buffer.interleavedStereo == original,
+         "host volume and mute preserve generated audio samples");
+  audio.SetVolume(175);
+  audio.Submit(buffer);
+  Expect(WaitForDrain(audio), "unmuting preserves the running audio stream");
+}
+void SwitchPlaybackDevice() {
+  SdlAudioOutput audio;
+  audio.SetVolume(137, true);
+  audio.Submit(Tone(2400));
+  audio.SelectDevice("A missing replacement device");
+  Expect(audio.QueuedBytes() == 0 && !audio.IsPlaying(),
+         "device changes discard old host audio and wait for resume");
+  audio.Resume();
+  audio.Submit(Tone(2400));
+  Expect(WaitForDrain(audio), "replacement audio devices prime and play normally");
+  const auto names = SdlAudioOutput::DeviceNames();
+  if (!names.empty()) {
+    audio.SelectDevice(names.front());
+    audio.SetVolume(100, false);
+    audio.Resume();
+    audio.Submit(Tone(2400));
+    Expect(WaitForDrain(audio), "enumerated output devices can be selected at runtime");
+  }
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -93,6 +144,9 @@ int main(int argc, char **argv) {
   try {
     QueuePreservesInput();
     PlaybackPrimesAndRecovers();
+    GameChangesDiscardAudio();
+    MutedPlaybackKeepsPacing();
+    SwitchPlaybackDevice();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     ++failures;

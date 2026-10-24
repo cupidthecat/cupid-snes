@@ -1,7 +1,9 @@
 // Headless ROM boot, frame, and output smoke test.
 
 #include "snes/core/Emulator.hpp"
+#include "snes/core/FilePath.hpp"
 #include "snes/core/SnesCpu.hpp"
+#include <SDL3/SDL_main.h>
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -47,7 +49,7 @@ struct Output : IVideoOutput, IAudioOutput, IInputProvider {
     return input;
   }
   bool Save(const char *path) {
-    std::ofstream file(path, std::ios::binary);
+    std::ofstream file(FilePath(path), std::ios::binary);
     auto word = [&](uint32_t value, unsigned bytes) {
       for (unsigned i = 0; i < bytes; ++i)
         file.put(static_cast<char>(value >> (8 * i)));
