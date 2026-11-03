@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <stdexcept>
 
 using snes::core::AudioBuffer;
 using snes::frontend::SdlAudioOutput;
@@ -45,16 +46,16 @@ bool WaitForDrain(SdlAudioOutput& audio) {
 void QueuePreservesInput() {
     SdlAudioOutput audio;
     Expect(audio.NeedsSamples(), "an empty queue requests an emulated frame");
-    constexpr int primeFrames = 1923;
+    constexpr int primeFrames = 2564;
     audio.Submit(Tone(primeFrames - 1));
-    Expect(audio.NeedsSamples(), "a queue below 60 ms requests more input");
+    Expect(audio.NeedsSamples(), "a queue below 80 ms requests more input");
     audio.Submit(Tone(1));
-    Expect(!audio.NeedsSamples(), "60 ms of queued input stops frame production");
-    audio.Submit(Tone(1920));
-    Expect(audio.QueuedBytes() == (primeFrames + 1920) * 2 * sizeof(float),
+    Expect(!audio.NeedsSamples(), "80 ms of queued input stops frame production");
+    audio.Submit(Tone(2564));
+    Expect(audio.QueuedBytes() == (primeFrames + 2564) * 2 * sizeof(float),
            "queue size uses input bytes even when the device resamples");
     audio.Submit(Tone(532));
-    Expect(audio.QueuedBytes() == (primeFrames + 1920 + 532) * 2 * sizeof(float),
+    Expect(audio.QueuedBytes() == (primeFrames + 2564 + 532) * 2 * sizeof(float),
            "a full queue preserves the next audio block");
 }
 
@@ -65,20 +66,20 @@ void PlaybackPrimesAndRecovers() {
     const int initial = audio.QueuedBytes();
     SDL_Delay(80);
     Expect(audio.QueuedBytes() == initial, "startup waits for a buffer before playing");
-    audio.Submit(Tone(1920));
+    audio.Submit(Tone(2564));
     Expect(WaitForDrain(audio), "a primed stream drains down to resampler padding");
     int tail = audio.QueuedBytes();
     audio.Submit(Tone(320));
     SDL_Delay(80);
     Expect(audio.QueuedBytes() == tail + 320 * 2 * sizeof(float),
            "an underrun refills the buffer before restarting");
-    audio.Submit(Tone(1920));
+    audio.Submit(Tone(2564));
     Expect(WaitForDrain(audio), "playback resumes after underrun recovery");
     audio.Pause();
     tail = audio.QueuedBytes();
-    audio.Submit(Tone(2240));
+    audio.Submit(Tone(2884));
     SDL_Delay(80);
-    Expect(audio.QueuedBytes() == tail + 2240 * 2 * sizeof(float),
+    Expect(audio.QueuedBytes() == tail + 2884 * 2 * sizeof(float),
            "submitting a full buffer does not override an explicit pause");
     audio.Resume();
     Expect(WaitForDrain(audio), "explicit resume plays a queued buffer");
@@ -86,12 +87,12 @@ void PlaybackPrimesAndRecovers() {
 
 void GameChangesDiscardAudio() {
     SdlAudioOutput audio;
-    audio.Submit(Tone(2400));
+    audio.Submit(Tone(3204));
     Expect(audio.QueuedBytes() > 0, "the previous game has queued audio");
     audio.Clear();
     Expect(!audio.IsPlaying() && audio.QueuedBytes() == 0 && !audio.HasPendingOutput(),
            "changing games discards queued input and resampler output");
-    audio.Submit(Tone(2400));
+    audio.Submit(Tone(3204));
     const auto queued = audio.QueuedBytes();
     SDL_Delay(30);
     Expect(audio.QueuedBytes() == queued, "new game audio waits for an explicit resume");
@@ -103,7 +104,7 @@ void MutedPlaybackKeepsPacing() {
     SdlAudioOutput::Config config;
     config.deviceName = "A missing playback device";
     SdlAudioOutput audio(config);
-    auto buffer = Tone(2400);
+    auto buffer = Tone(3204);
     const auto original = buffer.interleavedStereo;
     audio.SetVolume(175, true);
     audio.Resume();
@@ -119,35 +120,35 @@ void MutedPlaybackKeepsPacing() {
 void SwitchPlaybackDevice() {
     SdlAudioOutput audio;
     audio.SetVolume(137, true);
-    audio.Submit(Tone(2400));
+    audio.Submit(Tone(3204));
     audio.SelectDevice("A missing replacement device");
     Expect(audio.QueuedBytes() == 0 && !audio.IsPlaying(),
            "device changes discard old host audio and wait for resume");
     audio.Resume();
-    audio.Submit(Tone(2400));
+    audio.Submit(Tone(3204));
     Expect(WaitForDrain(audio), "replacement audio devices prime and play normally");
     const auto names = SdlAudioOutput::DeviceNames();
     if (!names.empty()) {
         audio.SelectDevice(names.front());
         audio.SetVolume(100, false);
         audio.Resume();
-        audio.Submit(Tone(2400));
+        audio.Submit(Tone(3204));
         Expect(WaitForDrain(audio), "enumerated output devices can be selected at runtime");
     }
 }
 
 void AlteredRates() {
     SdlAudioOutput audio;
-    auto buffer = Tone(2400);
+    auto buffer = Tone(3204);
     const auto original = buffer.interleavedStereo;
     for (unsigned rate : {25u, 50u, 100u, 200u, 400u, 800u}) {
         audio.SetRate(rate);
         audio.Submit(buffer);
-        Expect(std::abs(audio.QueuedMilliseconds() - 100000.0 * 2400 / 32040 / rate) < 0.001,
+        Expect(std::abs(audio.QueuedMilliseconds() - 100000.0 * 3204 / 32040 / rate) < 0.001,
                "Queue duration follows the host consumption rate");
         audio.SelectDevice("");
         audio.Resume();
-        audio.Submit(Tone(int((1923u * rate + 99) / 100 + 64)));
+        audio.Submit(Tone(int((2564u * rate + 99) / 100 + 64)));
         Expect(WaitForDrain(audio), "Each supported speed primes and drains a fresh audio device");
         audio.Pause();
         audio.Clear();
@@ -163,22 +164,50 @@ void AlteredRates() {
     Expect(WaitForDrain(audio), "Leaving uncapped mode restores requested audio playback");
     Expect(buffer.interleavedStereo == original, "Speed changes preserve the core's PCM samples");
 }
+
+void LargeDeviceBuffer() {
+    SdlAudioOutput audio;
+    // Backends may round the requested rate or buffer size.
+    SDL_AudioSpec device{};
+    int deviceFrames = 0;
+    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &device, &deviceFrames) ||
+        device.freq <= 0 || deviceFrames <= 0)
+        throw std::runtime_error("Cannot query the dummy playback device");
+    const auto minimum = (uint64_t(deviceFrames) * 2000 + device.freq - 1) / device.freq;
+    Expect(audio.TargetQueueMilliseconds() >= minimum,
+           "the target covers two device callbacks in device milliseconds");
+    audio.Resume();
+    audio.Submit(Tone(1923));
+    Expect(!audio.IsPlaying() && audio.NeedsSamples(),
+           "large device buffers do not start with only 60 ms queued");
+    const auto frames = (uint64_t(32040) * audio.TargetQueueMilliseconds() + 999) / 1000;
+    audio.Submit(Tone(int(frames)));
+    Expect(audio.IsPlaying(), "large device buffers start after sufficient priming");
+    Expect(WaitForDrain(audio), "large device buffers deliver all queued input");
+    audio.Submit(Tone(1923));
+    Expect(!audio.IsPlaying(), "large device buffers re-prime after an underrun");
+}
 } // namespace
 
 int main(int argc, char** argv) {
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     SDL_SetHint(SDL_HINT_AUDIO_FREQUENCY, argc > 1 ? argv[1] : "48000");
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, argc > 2 ? "4096" : "512");
     if (!SDL_Init(SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
     try {
-        QueuePreservesInput();
-        PlaybackPrimesAndRecovers();
-        GameChangesDiscardAudio();
-        MutedPlaybackKeepsPacing();
-        SwitchPlaybackDevice();
-        AlteredRates();
+        if (argc > 2) {
+            LargeDeviceBuffer();
+        } else {
+            QueuePreservesInput();
+            PlaybackPrimesAndRecovers();
+            GameChangesDiscardAudio();
+            MutedPlaybackKeepsPacing();
+            SwitchPlaybackDevice();
+            AlteredRates();
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         ++failures;

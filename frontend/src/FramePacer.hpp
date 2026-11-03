@@ -12,7 +12,7 @@ namespace snes::frontend {
 class FramePacer {
   public:
     // Keep callback headroom when preparation briefly exceeds one picture interval.
-    static constexpr uint32_t kTargetAudioQueueMilliseconds = 60;
+    static constexpr uint32_t kTargetAudioQueueMilliseconds = 80;
 
     void Reset() noexcept {
         active_ = false;
@@ -22,7 +22,8 @@ class FramePacer {
     }
 
     uint64_t Schedule(uint64_t now, uint64_t masterClocks, uint32_t clockHz,
-                      double queuedMilliseconds, double speed = 1.0) {
+                      double queuedMilliseconds, double speed = 1.0,
+                      double targetQueuedMilliseconds = kTargetAudioQueueMilliseconds) {
         if (clockHz == 0)
             throw std::invalid_argument("Frame clock frequency must be positive");
         if (!std::isfinite(speed) || speed < 0.01 || speed > 100)
@@ -35,7 +36,7 @@ class FramePacer {
 
         // The input queue drains in device-sized blocks. Average those steps
         // before correcting playback speed, with at most a 0.5% adjustment.
-        queueError_ += (queuedMilliseconds - kTargetAudioQueueMilliseconds - queueError_) / 64.0;
+        queueError_ += (queuedMilliseconds - targetQueuedMilliseconds - queueError_) / 64.0;
         const double adjustment = 1.0 + std::clamp(queueError_ / 2000.0, -0.005, 0.005);
         const double period =
             double(masterClocks) * 1'000'000'000.0 / clockHz / speed * adjustment +
@@ -46,18 +47,18 @@ class FramePacer {
         deadline_ += whole;
 
         // Keep the clock phase when computation runs slightly past its deadline.
-        // A full interval of lateness starts a fresh cadence, preventing a backlog
-        // of overdue pictures after a slow frame or suspended window.
-        if (deadline_ < now && now - deadline_ >= whole)
+        // Retain up to four intervals so bursts of slow frames can catch up
+        // before the audio queue drains. Longer stalls start a fresh cadence.
+        if (deadline_ < now && now - deadline_ >= whole * 4)
             deadline_ = now;
         return deadline_;
     }
 
     void Presented(uint64_t now) noexcept {
         // Renderer completion and timer wakeups can arrive partway through a
-        // picture interval. Retain the console clock across those delays. A full
-        // interval of lateness starts the next deadline at this picture.
-        if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_)
+        // picture interval. Retain short bursts of delay so subsequent frames
+        // can replenish audio. A long stall starts a fresh cadence.
+        if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_ * 4)
             deadline_ = now;
     }
 
