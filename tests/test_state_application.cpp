@@ -1,4 +1,5 @@
 #include "SdlInputProvider.hpp"
+#include "desktop/ApplicationDriver.hpp"
 #include "desktop/DesktopApplication.hpp"
 #include "imgui_internal.h"
 #include "settings/Preferences.hpp"
@@ -19,6 +20,7 @@
 
 namespace fs = std::filesystem;
 using namespace snes::frontend;
+using snes::tests::desktop::Frames;
 
 namespace {
 void Check(bool value, const char* message) {
@@ -65,6 +67,7 @@ ProgressWindow ReadProgress() {
 void Ready() {
     Wait([] { return !ReadProgress().active; },
          "State progress closes before the next interaction");
+    Frames();
 }
 
 void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod modifiers = 0) {
@@ -75,11 +78,11 @@ void Key(SDL_WindowID window, SDL_Scancode scan, SDL_Keycode key, SDL_Keymod mod
     event.key.key = key;
     event.key.mod = modifiers;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Frames();
     event.type = SDL_EVENT_KEY_UP;
     event.key.mod = 0;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Frames();
     Ready();
 }
 
@@ -96,18 +99,18 @@ void Click(SDL_WindowID window, float x, float y, bool settle = true) {
     event.motion.x = x;
     event.motion.y = y;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    Frames();
     event = {};
     event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
     event.button.windowID = window;
     event.button.button = SDL_BUTTON_LEFT;
     event.button.down = true;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    Frames();
     event.type = SDL_EVENT_MOUSE_BUTTON_UP;
     event.button.down = false;
     Push(event);
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    Frames();
     if (settle)
         Ready();
 }
@@ -367,7 +370,7 @@ void Workflow(const fs::path& directory, const fs::path& pictures) {
             text.text.windowID = window;
             text.text.text = "Renamed state";
             Push(text);
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            Frames();
             Click(window, left + 114, top + 393);
             const auto renamed = states.Path({false, "Renamed state"});
             Wait([&] { return fs::exists(renamed) && !fs::exists(named); },
