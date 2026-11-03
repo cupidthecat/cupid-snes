@@ -278,7 +278,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 if (now >= nextProgressFrame || ui.StateOperationCancelled()) {
                     ui.Frame();
                     video.Redraw();
-                    nextProgressFrame = now + 16'000'000;
+                    // Leave time for the operation after a slow software-rendered frame.
+                    nextProgressFrame = SDL_GetTicksNS() + 16'000'000;
                 }
                 return !ui.StateOperationCancelled();
             });

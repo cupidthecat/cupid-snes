@@ -912,7 +912,8 @@ void PreviewWorkflow(const fs::path& directory, const fs::path& pictures) {
             Click(window, left + 70, top + 140);
             Wait([&] { return PreviewPixel(window) == smallColor; },
                  "Selection replaces the previous preview safely");
-            Click(window, left + 70, top + 140);
+            // Preview validation can outlast the double-click interval on a busy host.
+            Click(window, left + 28, top + 329);
             Check(ReadUiText().find("does not match") != std::string::npos,
                   "Successful preview reading preserves a rejected load's visible error");
             if (!pictures.empty())
