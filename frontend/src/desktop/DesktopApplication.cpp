@@ -1258,7 +1258,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 picturePending = false;
                 continue;
             }
-            if (audio.IsPlaying() && audio.QueuedMilliseconds() >= 80.0) {
+            if (audio.IsPlaying() &&
+                audio.QueuedMilliseconds() >= audio.TargetQueueMilliseconds() * 1.5) {
                 pacer.Reset();
                 SDL_Delay(1);
                 continue;
@@ -1294,7 +1295,8 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 presentationTime =
                     pacer.Schedule(SDL_GetTicksNS(), emulator->CurrentMasterCycles() - before,
                                    emulator->GetTiming().MasterClockHz(),
-                                   audio.QueuedMilliseconds(), double(playbackRate) / 100);
+                                   audio.QueuedMilliseconds(), double(playbackRate) / 100,
+                                   audio.TargetQueueMilliseconds());
                 picturePending = true;
             } else {
                 pacer.Reset();

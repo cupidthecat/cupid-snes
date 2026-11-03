@@ -4,6 +4,7 @@
 
 #include "FramePacer.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -20,8 +21,6 @@ SdlAudioOutput::SdlAudioOutput(const Config& config) {
         throw std::invalid_argument("Audio requires stereo input at 1 to 192000 Hz");
     }
     sampleRate_ = config.sampleRate;
-    targetQueuedBytes_ = ((sampleRate_ * FramePacer::kTargetAudioQueueMilliseconds + 999) / 1000) *
-                         2 * sizeof(float);
     SelectDevice(config.deviceName);
 }
 
@@ -181,7 +180,21 @@ bool SdlAudioOutput::HasPendingOutput() const {
 }
 
 bool SdlAudioOutput::NeedsSamples() const {
-    return !rate_ || QueuedBytes() < (int64_t(targetQueuedBytes_) * rate_ + 99) / 100;
+    const auto frames = (uint64_t(sampleRate_) * TargetQueueMilliseconds() + 999) / 1000;
+    const auto bytes = frames * 2 * sizeof(float);
+    return !rate_ || uint64_t(QueuedBytes()) < (bytes * rate_ + 99) / 100;
+}
+
+uint32_t SdlAudioOutput::TargetQueueMilliseconds() const {
+    SDL_AudioSpec spec{};
+    int frames = 0;
+    if (!SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream_), &spec, &frames))
+        throw std::runtime_error(std::string("Audio format query failed: ") + SDL_GetError());
+    if (spec.freq <= 0 || frames <= 0)
+        throw std::runtime_error("Audio device returned an invalid buffer size");
+    // Query the current device format: the backend can change its buffer size.
+    const auto milliseconds = (uint64_t(frames) * 2000 + spec.freq - 1) / spec.freq;
+    return uint32_t(std::max<uint64_t>(FramePacer::kTargetAudioQueueMilliseconds, milliseconds));
 }
 
 double SdlAudioOutput::QueuedMilliseconds() const {

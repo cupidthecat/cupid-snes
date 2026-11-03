@@ -397,6 +397,7 @@ target_include_directories(snes_sdl_audio_tests PRIVATE ../frontend/src)
 target_link_libraries(snes_sdl_audio_tests PRIVATE snes_frontend_support)
 foreach(rate 32000 32040 44100 48000)
   snes_add_check(snes_sdl_audio_${rate} snes_sdl_audio_tests ${rate})
+  snes_add_check(snes_sdl_audio_large_${rate} snes_sdl_audio_tests ${rate} large)
 endforeach()
 
 add_executable(snes_session_tests test_session.cpp)

@@ -281,10 +281,44 @@ void PreparationSpikesKeepAudioFed() {
         }
     }
 }
+
+// Large device blocks must not exhaust the queue between console pictures.
+void LargeAudioCallbacks() {
+    const auto clocks = Timing::kMasterClocksPerFrameNTSC;
+    const double frameNs = double(clocks) * 1'000'000'000 / Timing::kMasterClockHz;
+    for (double callbackMs : {42.666667, 85.333333, 128.0}) {
+        const double targetMs = std::max(60.0, std::ceil(2 * callbackMs));
+        FramePacer pacer;
+        double queuedMs = targetMs;
+        uint64_t shown = 1'000'000'000;
+        double nextCallback = double(shown);
+        pacer.Schedule(shown, 0, Timing::kMasterClockHz, queuedMs, 1.0, targetMs);
+        const auto drain = [&](uint64_t until) {
+            while (nextCallback <= double(until)) {
+                queuedMs -= callbackMs;
+                Check(queuedMs > 0, "Large audio callbacks cannot underrun steady playback");
+                nextCallback += callbackMs * 1'000'000;
+            }
+        };
+        for (unsigned frame = 0; frame < 1800; ++frame) {
+            const auto ready = shown + 6'000'000;
+            drain(ready);
+            queuedMs += frameNs / 1'000'000;
+            const auto due =
+                pacer.Schedule(ready, clocks, Timing::kMasterClockHz, queuedMs, 1.0, targetMs);
+            shown = std::max(ready, due);
+            drain(shown);
+            pacer.Presented(shown);
+            Check(queuedMs < targetMs * 1.5,
+                  "Large callbacks do not repeatedly trigger the backlog limiter");
+        }
+    }
+}
 } // namespace
 
 int main() {
     try {
+        LargeAudioCallbacks();
         ConsoleClockDeadlines();
         AlteredSpeedDeadlines();
         StallsAndMultipleFields();

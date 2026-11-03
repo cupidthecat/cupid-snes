@@ -22,7 +22,8 @@ class FramePacer {
     }
 
     uint64_t Schedule(uint64_t now, uint64_t masterClocks, uint32_t clockHz,
-                      double queuedMilliseconds, double speed = 1.0) {
+                      double queuedMilliseconds, double speed = 1.0,
+                      double targetQueuedMilliseconds = kTargetAudioQueueMilliseconds) {
         if (clockHz == 0)
             throw std::invalid_argument("Frame clock frequency must be positive");
         if (!std::isfinite(speed) || speed < 0.01 || speed > 100)
@@ -35,7 +36,7 @@ class FramePacer {
 
         // The input queue drains in device-sized blocks. Average those steps
         // before correcting playback speed, with at most a 0.5% adjustment.
-        queueError_ += (queuedMilliseconds - kTargetAudioQueueMilliseconds - queueError_) / 64.0;
+        queueError_ += (queuedMilliseconds - targetQueuedMilliseconds - queueError_) / 64.0;
         const double adjustment = 1.0 + std::clamp(queueError_ / 2000.0, -0.005, 0.005);
         const double period =
             double(masterClocks) * 1'000'000'000.0 / clockHz / speed * adjustment +

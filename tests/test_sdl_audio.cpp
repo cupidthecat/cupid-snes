@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <stdexcept>
 
 using snes::core::AudioBuffer;
 using snes::frontend::SdlAudioOutput;
@@ -163,22 +164,50 @@ void AlteredRates() {
     Expect(WaitForDrain(audio), "Leaving uncapped mode restores requested audio playback");
     Expect(buffer.interleavedStereo == original, "Speed changes preserve the core's PCM samples");
 }
+
+void LargeDeviceBuffer() {
+    SdlAudioOutput audio;
+    // Backends may round the requested rate or buffer size.
+    SDL_AudioSpec device{};
+    int deviceFrames = 0;
+    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &device, &deviceFrames) ||
+        device.freq <= 0 || deviceFrames <= 0)
+        throw std::runtime_error("Cannot query the dummy playback device");
+    const auto minimum = (uint64_t(deviceFrames) * 2000 + device.freq - 1) / device.freq;
+    Expect(audio.TargetQueueMilliseconds() >= minimum,
+           "the target covers two device callbacks in device milliseconds");
+    audio.Resume();
+    audio.Submit(Tone(1923));
+    Expect(!audio.IsPlaying() && audio.NeedsSamples(),
+           "large device buffers do not start with only 60 ms queued");
+    const auto frames = (uint64_t(32040) * audio.TargetQueueMilliseconds() + 999) / 1000;
+    audio.Submit(Tone(int(frames)));
+    Expect(audio.IsPlaying(), "large device buffers start after sufficient priming");
+    Expect(WaitForDrain(audio), "large device buffers deliver all queued input");
+    audio.Submit(Tone(1923));
+    Expect(!audio.IsPlaying(), "large device buffers re-prime after an underrun");
+}
 } // namespace
 
 int main(int argc, char** argv) {
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     SDL_SetHint(SDL_HINT_AUDIO_FREQUENCY, argc > 1 ? argv[1] : "48000");
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, argc > 2 ? "4096" : "512");
     if (!SDL_Init(SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
     try {
-        QueuePreservesInput();
-        PlaybackPrimesAndRecovers();
-        GameChangesDiscardAudio();
-        MutedPlaybackKeepsPacing();
-        SwitchPlaybackDevice();
-        AlteredRates();
+        if (argc > 2) {
+            LargeDeviceBuffer();
+        } else {
+            QueuePreservesInput();
+            PlaybackPrimesAndRecovers();
+            GameChangesDiscardAudio();
+            MutedPlaybackKeepsPacing();
+            SwitchPlaybackDevice();
+            AlteredRates();
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         ++failures;

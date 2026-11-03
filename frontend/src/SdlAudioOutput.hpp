@@ -78,12 +78,14 @@ class SdlAudioOutput final : public snes::core::IAudioOutput {
 
     double QueuedMilliseconds() const;
 
+    /// Cover at least two device callbacks, with a 60 ms minimum.
+    uint32_t TargetQueueMilliseconds() const;
+
   private:
     void StartIfReady();
 
     SDL_AudioStream* stream_ = nullptr;
     int sampleRate_ = snes::core::AudioTiming::SampleRate;
-    int targetQueuedBytes_ = 0;
     bool playbackRequested_ = false;
     bool playing_ = false;
     int volume_ = 100;
