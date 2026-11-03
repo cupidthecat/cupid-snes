@@ -78,7 +78,7 @@ class SdlAudioOutput final : public snes::core::IAudioOutput {
 
     double QueuedMilliseconds() const;
 
-    /// Cover at least two device callbacks, with a 60 ms minimum.
+    /// Cover at least two device callbacks, with a 80 ms minimum.
     uint32_t TargetQueueMilliseconds() const;
 
   private:

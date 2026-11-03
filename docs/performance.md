@@ -20,6 +20,12 @@ With deferred GSU execution enabled, Dirt Racer reached 87.80 fields/s and Yoshi
 
 With low entropy and seed 1, a later Kirby's Dream Land replay reached 97.03 fields/s on the first adapter and 96.28 fields/s on the second. Each used 1,200 warmup fields and 3,600 measured fields with normal scanline video and audible output. Median field times were 10.255 and 10.330 ms, with p95 times of 10.962 and 11.163 ms. Every measured field was presented, and all generated native stereo frames were delivered: 1,919,238 and 1,919,239 respectively. Separate 2,400-field captures checked five games on both models with low entropy, plus two games on both models with deterministic and high entropy. All 270 checkpoints retained complete memory, processor, video, PCM, count, clock and battery checks. Other workspace activity continued during timing.
 
+## Linux power management
+
+The desktop optionally requests [GameMode](https://github.com/FeralInteractive/gamemode) while a loaded game is running. It releases the request when playback pauses or the desktop closes. GameMode applies the host's configured performance policy and restores it after clients leave. Install the GameMode service and client library to enable this support; the emulator also runs without them. Set `SNES_GAMEMODE=0` to disable the request.
+
+A local Intel laptop running the power-saver profile completed a continuous headless Super Baseball replay near 9 ms per field. Adding an 8 ms sleep between fields raised typical computation to 25 ms, reproducing the desktop slowdown. A live GameMode run reduced computation enough to meet presentation deadlines. Power management can therefore affect paced playback even when continuous headless throughput exceeds full speed.
+
 ## Release compiler optimization
 
 Release and RelWithDebInfo builds enable link-time optimization when the compiler and linker support it. This lets the compiler optimize calls across the core's source files. CMake checks support during configuration and uses normal compilation if the check fails. Debug builds and the separately configured SDL dependency keep their existing settings.

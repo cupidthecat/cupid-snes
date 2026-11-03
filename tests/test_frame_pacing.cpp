@@ -48,12 +48,13 @@ void AlteredSpeedDeadlines() {
         for (double speed : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0}) {
             FramePacer pacer;
             uint64_t deadline = 1'000'000'000, clocks = 0;
-            pacer.Schedule(deadline, 0, hz, 60, speed);
+            pacer.Schedule(deadline, 0, hz, FramePacer::kTargetAudioQueueMilliseconds, speed);
             for (unsigned frame = 0; frame < 600; ++frame) {
                 const auto elapsed = frame % 7 == 6 ? Timing::kMasterClocksPerFramePAL * 3ull
                                                     : Timing::kMasterClocksPerFrameNTSC;
                 clocks += elapsed;
-                deadline = pacer.Schedule(deadline + 1000, elapsed, hz, 60, speed);
+                deadline = pacer.Schedule(deadline + 1000, elapsed, hz,
+                                          FramePacer::kTargetAudioQueueMilliseconds, speed);
                 const double expected = double(clocks) * 1'000'000'000 / hz / speed;
                 Check(std::abs(double(deadline - 1'000'000'000) - expected) < 1.1,
                       "Altered speed preserves every console clock and fractional deadline");
@@ -99,12 +100,12 @@ void DelayedPresentation() {
         pacer.Presented(late);
         const auto next = pacer.Schedule(late + 2'000'000, clocks, Timing::kMasterClockHz,
                                          FramePacer::kTargetAudioQueueMilliseconds);
-        if (double(delay) < period)
+        if (double(delay) < period * 4)
             Check(std::abs(double(next - due) - period) < 1.1,
-                  "A renderer delay within one picture retains the console clock");
+                  "A renderer delay within the recovery window retains the console clock");
         else
             Check(std::abs(double(next - late) - period) < 1.1,
-                  "A full-picture stall cannot bunch subsequent overdue pictures");
+                  "A long presentation stall cannot bunch subsequent overdue pictures");
     }
 
     // Timer wake-up noise must not accumulate into a slower emulation clock.
@@ -133,16 +134,16 @@ void DelayedComputation() {
         const auto ready = epoch + uint64_t(period) + delay;
         const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz,
                                         FramePacer::kTargetAudioQueueMilliseconds);
-        if (double(delay) < period)
+        if (double(delay) < period * 4)
             Check(std::abs(double(due - epoch) - period) < 1.1,
-                  "Computation slightly past its deadline retains the console clock");
+                  "Computation within the recovery window retains the console clock");
         else
-            Check(due == ready, "A full-picture computation stall starts a fresh cadence");
+            Check(due == ready, "A long computation stall starts a fresh cadence");
         pacer.Presented(ready);
         const auto next = pacer.Schedule(ready + 2'000'000, clocks, Timing::kMasterClockHz,
                                          FramePacer::kTargetAudioQueueMilliseconds);
-        const double elapsed = double(next - (double(delay) < period ? epoch : ready));
-        Check(std::abs(elapsed - period * (double(delay) < period ? 2 : 1)) < 1.1,
+        const double elapsed = double(next - (double(delay) < period * 4 ? epoch : ready));
+        Check(std::abs(elapsed - period * (double(delay) < period * 4 ? 2 : 1)) < 1.1,
               "Computation recovery retains short delays and clears long stalls");
     }
 }
@@ -178,7 +179,7 @@ void BatchedAudioDemand() {
                       double(due - shown) <= frameNs * 1.0051,
                   "Audio callbacks and variable computation cannot bunch normal presentations");
             drain(due);
-            Check(queuedMs < 80, "Clock drift must not grow an unbounded audio backlog");
+            Check(queuedMs < 110, "Clock drift must not grow an unbounded audio backlog");
             pacer.Presented(due);
             shown = due;
         }
@@ -210,7 +211,7 @@ void RendererDelaysKeepAudioFed() {
             shown = due + (frame % 20 == 0 ? 8'000'000 : 0);
             drain(shown);
             pacer.Presented(shown);
-            Check(queuedMs < 80, "Renderer recovery keeps the audio backlog bounded");
+            Check(queuedMs < 110, "Renderer recovery keeps the audio backlog bounded");
         }
     }
 }
@@ -240,7 +241,7 @@ void VariableComputationKeepsAudioFed() {
             shown = std::max(ready, due) + 350'000;
             drain(shown);
             pacer.Presented(shown);
-            Check(queuedMs < 80, "Variable computation keeps the audio backlog bounded");
+            Check(queuedMs < 110, "Variable computation keeps the audio backlog bounded");
         }
     }
 }
@@ -282,6 +283,33 @@ void PreparationSpikesKeepAudioFed() {
     }
 }
 
+void BurstsOfSlowFramesKeepAudioFed() {
+    const auto clocks = Timing::kMasterClocksPerFrameNTSC;
+    const double frameNs = double(clocks) * 1'000'000'000 / Timing::kMasterClockHz;
+    FramePacer pacer;
+    double queuedMs = FramePacer::kTargetAudioQueueMilliseconds;
+    uint64_t shown = 1'000'000'000;
+    double callback = double(shown);
+    pacer.Schedule(shown, 0, Timing::kMasterClockHz, queuedMs);
+    const auto drain = [&](uint64_t until) {
+        while (callback <= double(until)) {
+            queuedMs -= 23.22;
+            Check(queuedMs > 0, "Short bursts of slow frames do not force audio to re-prime");
+            callback += 23'220'000;
+        }
+    };
+    for (unsigned frame = 0; frame < 6000; ++frame) {
+        const auto ready = shown + (frame % 10 < 3 ? 26'000'000 : 8'000'000);
+        drain(ready);
+        queuedMs += frameNs / 1'000'000;
+        const auto due = pacer.Schedule(ready, clocks, Timing::kMasterClockHz, queuedMs);
+        shown = std::max(ready, due) + 300'000;
+        drain(shown);
+        pacer.Presented(shown);
+        Check(queuedMs < 100, "Recovery keeps the audio queue bounded");
+    }
+}
+
 // Large device blocks must not exhaust the queue between console pictures.
 void LargeAudioCallbacks() {
     const auto clocks = Timing::kMasterClocksPerFrameNTSC;
@@ -318,6 +346,7 @@ void LargeAudioCallbacks() {
 
 int main() {
     try {
+        BurstsOfSlowFramesKeepAudioFed();
         LargeAudioCallbacks();
         ConsoleClockDeadlines();
         AlteredSpeedDeadlines();

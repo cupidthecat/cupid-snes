@@ -3,6 +3,7 @@
 #include "DesktopUi.hpp"
 #include "FileDialogs.hpp"
 #include "FramePacer.hpp"
+#include "PerformanceMode.hpp"
 #include "SdlAudioOutput.hpp"
 #include "SdlInputProvider.hpp"
 #include "SdlVideoOutput.hpp"
@@ -113,6 +114,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
         menu.SetHotkeys(preferences.hotkeys);
         FileDialogs dialogs(video.Window());
         FramePacer pacer;
+        PerformanceMode performance;
         bool running = true, paused = false, dialogWasPaused = false, picturePending = false;
         bool quitPending = false;
         bool focusPaused = false;
@@ -1157,6 +1159,7 @@ int RunDesktop(core::Emulator::Config config, const DeviceOverrides& overrides,
                 refresh();
             }
             const bool focused = updateFocus(false);
+            performance.SetActive(emulator && !paused && !focusPaused);
             input.SetUiCapture(ui.WantsKeyboard(), ui.WantsPointer());
             if (!focused || ui.WantsKeyboard() || ui.WantsPointer())
                 menu.ResetHotkeys();

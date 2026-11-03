@@ -12,7 +12,7 @@ namespace snes::frontend {
 class FramePacer {
   public:
     // Keep callback headroom when preparation briefly exceeds one picture interval.
-    static constexpr uint32_t kTargetAudioQueueMilliseconds = 60;
+    static constexpr uint32_t kTargetAudioQueueMilliseconds = 80;
 
     void Reset() noexcept {
         active_ = false;
@@ -47,18 +47,18 @@ class FramePacer {
         deadline_ += whole;
 
         // Keep the clock phase when computation runs slightly past its deadline.
-        // A full interval of lateness starts a fresh cadence, preventing a backlog
-        // of overdue pictures after a slow frame or suspended window.
-        if (deadline_ < now && now - deadline_ >= whole)
+        // Retain up to four intervals so bursts of slow frames can catch up
+        // before the audio queue drains. Longer stalls start a fresh cadence.
+        if (deadline_ < now && now - deadline_ >= whole * 4)
             deadline_ = now;
         return deadline_;
     }
 
     void Presented(uint64_t now) noexcept {
         // Renderer completion and timer wakeups can arrive partway through a
-        // picture interval. Retain the console clock across those delays. A full
-        // interval of lateness starts the next deadline at this picture.
-        if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_)
+        // picture interval. Retain short bursts of delay so subsequent frames
+        // can replenish audio. A long stall starts a fresh cadence.
+        if (active_ && now > deadline_ && now - deadline_ >= periodNanoseconds_ * 4)
             deadline_ = now;
     }
 
